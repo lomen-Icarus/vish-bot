@@ -5,13 +5,16 @@ import type { ScheduleService } from "../schedule/service.js";
 import type { Renderer } from "../render/image.js";
 import type { AskService } from "../ai/ask.js";
 import type { TeacherService } from "../portal/teachers.js";
+import type { NewsScanner } from "../news/scanner.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
-  kind: "suggest" | "broadcast" | "broadcast-target" | "ask" | "teacher";
+  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher";
   /** For broadcast: captured message to forward. */
   chatId?: number;
   messageId?: number;
+  /** For broadcast: chosen audience (all | topic:<t> | c<course>). */
+  target?: string;
   expiresAt: number;
 }
 
@@ -22,6 +25,7 @@ export interface Deps {
   renderer: Renderer | null;
   ask: AskService | null;
   teachers: TeacherService | null;
+  news: NewsScanner | null;
   pending: Map<number, PendingState>;
   startedAt: Date;
 }

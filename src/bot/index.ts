@@ -9,6 +9,8 @@ import { askHandlers } from "./handlers/ask.js";
 import { teacherHandlers } from "./handlers/teachers.js";
 import { streamHandlers } from "./handlers/stream.js";
 import { newsHandlers } from "./handlers/news.js";
+import { calendarHandlers } from "./handlers/calendar.js";
+import { sourceHandlers } from "./handlers/sources.js";
 import { logger } from "../logger.js";
 import { mainKeyboard } from "./keyboards.js";
 
@@ -47,10 +49,12 @@ export function createBot(deps: Deps): Bot<BotContext> {
   });
 
   bot.use(adminHandlers);
+  bot.use(sourceHandlers);
   bot.use(miscHandlers);
   bot.use(askHandlers);
   bot.use(teacherHandlers);
   bot.use(streamHandlers);
+  bot.use(calendarHandlers);
   bot.use(settingsHandlers);
   bot.use(scheduleHandlers);
 
@@ -89,6 +93,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "changes", description: "Последние изменения" },
     { command: "group", description: "Выбрать группу" },
     { command: "teachers", description: "Расписание преподавателя" },
+    { command: "calendar", description: "Пары в календарь телефона (.ics)" },
     { command: "stream", description: "Режим потока: все группы курса" },
     { command: "settings", description: "Уведомления и напоминания" },
     { command: "help", description: "Что умеет бот" },
@@ -96,7 +101,15 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
   if (deps.ask) common.push({ command: "ask", description: "Спросить про расписание своими словами" });
   common.push({ command: "suggest", description: "Отправить новость медиа-ВИШ" });
   await bot.api.setMyCommands(common);
-  const admin = [...common, { command: "admin", description: "Админка" }, { command: "poll", description: "Опросить портал сейчас" }, { command: "broadcast", description: "Рассылка" }, { command: "health", description: "Состояние бота" }];
+  const admin = [
+    ...common,
+    { command: "admin", description: "Админка" },
+    { command: "broadcast", description: "Рассылка" },
+    { command: "sources", description: "Источники новостей" },
+    { command: "news_scan", description: "Сканировать новости сейчас" },
+    { command: "poll", description: "Опросить портал сейчас" },
+    { command: "health", description: "Состояние бота" },
+  ];
   for (const id of deps.config.ADMIN_IDS) {
     try {
       await bot.api.setMyCommands(admin, { scope: { type: "chat", chat_id: id } });

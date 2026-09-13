@@ -11,6 +11,7 @@ import { startScheduler } from "./scheduler/index.js";
 import { createRenderer } from "./render/image.js";
 import { AskService } from "./ai/ask.js";
 import { TeacherService } from "./portal/teachers.js";
+import { NewsScanner } from "./news/scanner.js";
 import type { Deps } from "./bot/context.js";
 
 async function main(): Promise<void> {
@@ -38,14 +39,18 @@ async function main(): Promise<void> {
       : null;
   if (!teachers) logger.info("teacher schedules disabled: PORTAL_LOGIN/PORTAL_PASSWORD not set");
 
-  const deps: Deps = { config, repo, service, renderer, ask, teachers, pending: new Map(), startedAt: new Date() };
+  const deps: Deps = { config, repo, service, renderer, ask, teachers, news: null, pending: new Map(), startedAt: new Date() };
   const bot = createBot(deps);
   await bot.init();
+  deps.news = config.ANTHROPIC_API_KEY
+    ? new NewsScanner(config.ANTHROPIC_API_KEY, repo, bot.api, { lookbackHours: config.NEWS_LOOKBACK_HOURS, maxPerTopic: config.NEWS_MAX_PER_TOPIC, vkToken: config.VK_SERVICE_TOKEN, model: config.AI_MODEL })
+    : null;
+  if (!deps.news) logger.info("news scanner disabled: ANTHROPIC_API_KEY not set");
   logger.info({ username: bot.botInfo.username }, "bot authorised");
   await registerCommands(bot, deps);
 
-  const notifier = new Notifier(bot.api, repo, service, renderer);
-  const scheduler = startScheduler({ service, notifier, repo, busyCron: config.POLL_CRON_BUSY, idleCron: config.POLL_CRON_IDLE });
+  const notifier = new Notifier(bot.api, repo, service, renderer, config.ADMIN_IDS);
+  const scheduler = startScheduler({ service, notifier, repo, busyCron: config.POLL_CRON_BUSY, idleCron: config.POLL_CRON_IDLE, newsCron: config.NEWS_SCAN_CRON, news: deps.news });
 
   const runner = run(bot, { runner: { fetch: { allowed_updates: ["message", "callback_query", "inline_query", "my_chat_member", "channel_post"] } } });
   logger.info("polling Telegram for updates");

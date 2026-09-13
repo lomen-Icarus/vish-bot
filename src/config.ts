@@ -46,11 +46,16 @@ const schema = z.object({
   PORTAL_PASSWORD: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   /** Telegram channel/chat ids whose posts are relayed to topic subscribers by hashtag. */
   NEWS_CHANNEL_IDS: idList,
+  /** VK service token (app "service key") for wall.get on VK sources. */
+  VK_SERVICE_TOKEN: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  NEWS_SCAN_CRON: z.string().default("30 10 * * *"),
+  NEWS_LOOKBACK_HOURS: z.coerce.number().int().positive().default(32),
+  NEWS_MAX_PER_TOPIC: z.coerce.number().int().positive().default(8),
   DB_PATH: z.string().default("./data/vish-bot.sqlite"),
   POLL_CRON_BUSY: z.string().default("*/5 7-21 * * 1-6"),
   POLL_CRON_IDLE: z.string().default("*/30 * * * *"),
   ANTHROPIC_API_KEY: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
-  AI_MODEL: z.string().default("claude-opus-5"),
+  AI_MODEL: z.string().default("claude-sonnet-5"),
   AI_DAILY_LIMIT_PER_USER: z.coerce.number().int().nonnegative().default(10),
   AI_DAILY_LIMIT_GLOBAL: z.coerce.number().int().nonnegative().default(300),
   PORTAL_TLS_INSECURE: z

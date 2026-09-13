@@ -6,6 +6,56 @@ import type { LocalDate } from "../time.js";
 
 export type ScheduleFormat = "text" | "image" | "both";
 
+export interface NewsSource {
+  id: number;
+  kind: "tg" | "vk" | "web";
+  ref: string;
+  title: string | null;
+  enabled: boolean;
+  lastScannedAt: string | null;
+  lastError: string | null;
+}
+interface NewsSourceRow {
+  id: number;
+  kind: string;
+  ref: string;
+  title: string | null;
+  enabled: number;
+  last_scanned_at: string | null;
+  last_error: string | null;
+}
+function rowToSource(r: NewsSourceRow): NewsSource {
+  return { id: r.id, kind: r.kind as NewsSource["kind"], ref: r.ref, title: r.title, enabled: r.enabled === 1, lastScannedAt: r.last_scanned_at, lastError: r.last_error };
+}
+
+export interface NewsItem {
+  id: number;
+  sourceId: number;
+  externalId: string;
+  url: string | null;
+  publishedAt: string;
+  text: string;
+  photoUrl: string | null;
+  topic: string | null;
+  title: string | null;
+  sentCount: number;
+}
+interface NewsItemRow {
+  id: number;
+  source_id: number;
+  external_id: string;
+  url: string | null;
+  published_at: string;
+  text: string;
+  photo_url: string | null;
+  topic: string | null;
+  title: string | null;
+  sent_count: number;
+}
+function rowToItem(r: NewsItemRow): NewsItem {
+  return { id: r.id, sourceId: r.source_id, externalId: r.external_id, url: r.url, publishedAt: r.published_at, text: r.text, photoUrl: r.photo_url, topic: r.topic, title: r.title, sentCount: r.sent_count };
+}
+
 export interface User {
   id: number;
   username: string | null;
@@ -164,8 +214,8 @@ export class Repo {
     const ts = nowIso();
     this.db
       .prepare(
-        `INSERT INTO users (id, username, first_name, created_at, updated_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO users (id, username, first_name, notify_notices, created_at, updated_at, last_seen_at)
+         VALUES (?, ?, ?, 0, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET username = excluded.username, first_name = excluded.first_name,
            last_seen_at = excluded.last_seen_at, blocked = 0`,
       )
@@ -441,6 +491,78 @@ export class Repo {
          ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1, input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens`,
       )
       .run(userId, day, inputTokens, outputTokens);
+  }
+
+  // ---------- AI log ----------
+  logAi(userId: number, question: string, answer: string): number {
+    const r = this.db.prepare("INSERT INTO ai_log (user_id, question, answer, created_at) VALUES (?, ?, ?, ?)").run(userId, question, answer, nowIso());
+    return r.lastInsertRowid;
+  }
+
+  aiLogEntry(id: number): { id: number; userId: number; question: string; answer: string; reported: boolean } | null {
+    const r = this.db.prepare("SELECT * FROM ai_log WHERE id = ?").get(id) as { id: number; user_id: number; question: string; answer: string; reported: number } | undefined;
+    return r ? { id: r.id, userId: r.user_id, question: r.question, answer: r.answer, reported: r.reported === 1 } : null;
+  }
+
+  markAiReported(id: number): void {
+    this.db.prepare("UPDATE ai_log SET reported = 1 WHERE id = ?").run(id);
+  }
+
+  // ---------- news sources / items ----------
+  listNewsSources(onlyEnabled = false): NewsSource[] {
+    const rows = this.db.prepare(`SELECT * FROM news_sources ${onlyEnabled ? "WHERE enabled = 1" : ""} ORDER BY id`).all() as NewsSourceRow[];
+    return rows.map(rowToSource);
+  }
+
+  addNewsSource(kind: NewsSource["kind"], ref: string, title: string | null): NewsSource {
+    this.db
+      .prepare("INSERT INTO news_sources (kind, ref, title, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(ref) DO UPDATE SET enabled = 1, title = COALESCE(excluded.title, news_sources.title)")
+      .run(kind, ref, title, nowIso());
+    const row = this.db.prepare("SELECT * FROM news_sources WHERE ref = ?").get(ref) as NewsSourceRow;
+    return rowToSource(row);
+  }
+
+  deleteNewsSource(id: number): boolean {
+    return this.db.prepare("DELETE FROM news_sources WHERE id = ?").run(id).changes > 0;
+  }
+
+  markSourceScanned(id: number, error: string | null): void {
+    this.db.prepare("UPDATE news_sources SET last_scanned_at = ?, last_error = ? WHERE id = ?").run(nowIso(), error, id);
+  }
+
+  /** Insert an item unless the same external id was seen before; returns the new id or null. */
+  insertNewsItem(item: { sourceId: number; externalId: string; url: string | null; publishedAt: string; text: string; photoUrl: string | null }): number | null {
+    const exists = this.db.prepare("SELECT id FROM news_items WHERE source_id = ? AND external_id = ?").get(item.sourceId, item.externalId);
+    if (exists) return null;
+    const r = this.db
+      .prepare("INSERT INTO news_items (source_id, external_id, url, published_at, text, photo_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(item.sourceId, item.externalId, item.url, item.publishedAt, item.text, item.photoUrl, nowIso());
+    return r.lastInsertRowid;
+  }
+
+  setNewsTopic(id: number, topic: string | null, title: string | null): void {
+    this.db.prepare("UPDATE news_items SET topic = ?, title = ? WHERE id = ?").run(topic, title, id);
+  }
+
+  bumpNewsSent(id: number, count: number): void {
+    this.db.prepare("UPDATE news_items SET sent_count = sent_count + ? WHERE id = ?").run(count, id);
+  }
+
+  newsItem(id: number): NewsItem | null {
+    const r = this.db.prepare("SELECT * FROM news_items WHERE id = ?").get(id) as NewsItemRow | undefined;
+    return r ? rowToItem(r) : null;
+  }
+
+  addNewsComplaint(itemId: number, userId: number): number {
+    this.db.prepare("INSERT OR IGNORE INTO news_complaints (item_id, user_id, created_at) VALUES (?, ?, ?)").run(itemId, userId, nowIso());
+    const r = this.db.prepare("SELECT COUNT(*) AS c FROM news_complaints WHERE item_id = ?").get(itemId) as { c: number };
+    return r.c;
+  }
+
+  newsStats(sinceIso: string): { items: number; sent: number; complaints: number } {
+    const a = this.db.prepare("SELECT COUNT(*) AS c, COALESCE(SUM(sent_count), 0) AS s FROM news_items WHERE created_at >= ?").get(sinceIso) as { c: number; s: number };
+    const b = this.db.prepare("SELECT COUNT(*) AS c FROM news_complaints WHERE created_at >= ?").get(sinceIso) as { c: number };
+    return { items: a.c, sent: a.s, complaints: b.c };
   }
 
   // ---------- poll runs ----------

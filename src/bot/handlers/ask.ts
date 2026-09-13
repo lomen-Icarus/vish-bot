@@ -1,4 +1,4 @@
-import { Composer } from "grammy";
+import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { BTN } from "../keyboards.js";
 import { clearPending, setPending, takePending } from "../context.js";
@@ -26,7 +26,9 @@ async function answer(ctx: BotContext, question: string): Promise<void> {
   try {
     const res = await ask.answer({ question, group, subgroup: ctx.user.subgroup, userId: ctx.user.id });
     ctx.deps.repo.bumpAiUsage(ctx.user.id, day, res.inputTokens, res.outputTokens);
-    await ctx.reply(res.text, { parse_mode: "HTML" }).catch(() => ctx.reply(res.text.replace(/<[^>]+>/g, "")));
+    const logId = ctx.deps.repo.logAi(ctx.user.id, question, res.text);
+    const kb = new InlineKeyboard().text("👎 Ответ неверный", `aiw:${logId}`);
+    await ctx.reply(res.text, { parse_mode: "HTML", reply_markup: kb }).catch(() => ctx.reply(res.text.replace(/<[^>]+>/g, ""), { reply_markup: kb }));
   } catch (err) {
     logger.error({ err }, "ask failed");
     await ctx.reply(`Не получилось ответить: ${esc(String(err)).slice(0, 200)}`, { parse_mode: "HTML" });
@@ -47,6 +49,29 @@ askHandlers.hears(BTN.ask, async (ctx) => {
   if (!ctx.deps.ask) return void (await ctx.reply("Вопросы своими словами пока выключены."));
   setPending(ctx.deps, ctx.user.id, { kind: "ask" }, 3 * 60_000);
   await ctx.reply("Спрашивай про расписание своими словами. Отмена: /cancel");
+});
+
+askHandlers.callbackQuery(/^aiw:(\d+)$/, async (ctx) => {
+  const entry = ctx.deps.repo.aiLogEntry(Number(ctx.match[1]));
+  if (!entry) return void (await ctx.answerCallbackQuery({ text: "Запись не найдена" }));
+  if (entry.reported) return void (await ctx.answerCallbackQuery({ text: "Уже передано админу, спасибо" }));
+  ctx.deps.repo.markAiReported(entry.id);
+  await ctx.answerCallbackQuery({ text: "Спасибо, передал админу" });
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text("✅ Жалоба отправлена", "noop") });
+  } catch {
+    /* ignore */
+  }
+  const from = ctx.from;
+  const group = needGroup(ctx);
+  const report = `❌ <b>ИИ ответил неверно</b> (${from.username ? `@${esc(from.username)}` : esc(from.first_name)}${group ? `, ${esc(group.title)}` : ""}, id <code>${from.id}</code>)\n\n<b>Вопрос:</b> ${esc(entry.question)}\n\n<b>Ответ:</b>\n${entry.answer}`;
+  for (const adminId of ctx.deps.config.ADMIN_IDS) {
+    try {
+      await ctx.api.sendMessage(adminId, report.slice(0, 4000), { parse_mode: "HTML" });
+    } catch (err) {
+      logger.warn({ err: String(err), adminId }, "ai report delivery failed");
+    }
+  }
 });
 
 askHandlers.on("message:text", async (ctx, next) => {

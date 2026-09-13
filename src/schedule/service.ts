@@ -105,7 +105,9 @@ export class ScheduleService {
 
   /** Groups of one intake year (two digits), e.g. 23 -> ВИШ-11-23 … ВИШ-14-23. */
   stream(intake: number): LogicalGroup[] {
-    return this.groups().filter((g) => g.intake === intake);
+    return this.groups()
+      .filter((g) => g.intake === intake)
+      .sort((a, b) => a.number - b.number || a.title.localeCompare(b.title, "ru"));
   }
 
   /** Distinct intake years that have groups, newest first. */

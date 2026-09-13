@@ -24,6 +24,8 @@ export interface StreamRow {
   /** Short labels of groups attending this exact lesson, in stream order. */
   groups: string[];
   groupKeys: string[];
+  /** Smallest group number among attendees; rows inside a slot are ordered by it. */
+  minNumber: number;
 }
 
 /** "ВИШ-12-23" -> "12-23", "ВИШ-11-23 (ЭиЭА)" -> "11-23 ЭиЭА". */
@@ -43,16 +45,19 @@ export function mergeStream(groups: LogicalGroup[], byGroup: Map<string, Occurre
       const key = rowKey(o);
       let row = rows.get(key);
       if (!row) {
-        row = { date: o.date, slot: o.slot, start: o.start, end: o.end, subject: o.subject, type: o.type, room: o.room, isDistance: o.isDistance, subgroup: o.subgroup, status: o.status, groups: [], groupKeys: [] };
+        row = { date: o.date, slot: o.slot, start: o.start, end: o.end, subject: o.subject, type: o.type, room: o.room, isDistance: o.isDistance, subgroup: o.subgroup, status: o.status, groups: [], groupKeys: [], minNumber: g.number };
         rows.set(key, row);
       }
       if (!row.groupKeys.includes(g.key)) {
         row.groups.push(shortGroupLabel(g));
         row.groupKeys.push(g.key);
+        row.minNumber = Math.min(row.minNumber, g.number);
       }
     }
   }
-  return [...rows.values()].sort((a, b) => a.date.localeCompare(b.date) || (a.start ?? 0) - (b.start ?? 0) || (a.slot ?? 0) - (b.slot ?? 0) || a.subject.localeCompare(b.subject, "ru"));
+  return [...rows.values()].sort(
+    (a, b) => a.date.localeCompare(b.date) || (a.start ?? 0) - (b.start ?? 0) || (a.slot ?? 0) - (b.slot ?? 0) || a.minNumber - b.minNumber || (a.subgroup ?? 0) - (b.subgroup ?? 0) || a.subject.localeCompare(b.subject, "ru"),
+  );
 }
 
 function rowLine(r: StreamRow, ownKey: string | null): string {

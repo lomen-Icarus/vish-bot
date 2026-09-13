@@ -32,9 +32,34 @@ export interface WeekRenderInput {
   subgroup: number | null;
 }
 
+export interface StreamRenderRow {
+  slot: number | null;
+  start: number | null;
+  end: number | null;
+  subject: string;
+  type: string;
+  room: string | null;
+  isDistance: boolean;
+  subgroup: number | null;
+  status: Occurrence["status"];
+  groups: string[];
+  /** Whether the viewer's own group attends this row. */
+  mine: boolean;
+}
+
+export interface StreamRenderInput {
+  intake: number;
+  date: LocalDate;
+  rows: StreamRenderRow[];
+  weekInfo: WeekInfo;
+  today: LocalDate;
+  now?: WallClock;
+}
+
 export interface Renderer {
   renderDay(input: DayRenderInput): Promise<Buffer>;
   renderWeek(input: WeekRenderInput): Promise<Buffer>;
+  renderStreamDay(input: StreamRenderInput): Promise<Buffer>;
 }
 
 // ---------- tiny element helper (satori consumes React-like objects) ----------
@@ -220,6 +245,69 @@ export async function createRenderer(): Promise<Renderer | null> {
         header(weekdayName(date), subtitleFor(date, weekInfo, today), group, accent),
         h("div", { display: "flex", flexDirection: "column", width: "100%", marginTop: 34 }, ...body),
         footer(active.length ? `${active.length} ${plural(active.length)}${span ? `  ·  ${span}` : ""}` : "", `tt.chuvsu.ru  ·  ${now ? fmtHHMM(now.minutes) : ""}`),
+      ]);
+      return toPng(tree);
+    },
+
+    async renderStreamDay(input) {
+      const { intake, date, rows, weekInfo, today, now } = input;
+      const accent = WEEKDAY_ACCENT[new Date(date).getUTCDay() || 7] ?? THEME.accent;
+      const pseudo: LogicalGroup = { key: "", title: `Поток 20${intake}`, prefix: "", number: 0, intake, course: 0, portalIds: [], portalNames: [] };
+      // Group rows by slot/time.
+      const slots: Array<{ key: string; slot: number | null; start: number | null; end: number | null; rows: StreamRenderRow[] }> = [];
+      for (const r of rows) {
+        const key = `${r.slot ?? "-"}|${r.start ?? "-"}`;
+        const last = slots[slots.length - 1];
+        if (last && last.key === key) last.rows.push(r);
+        else slots.push({ key, slot: r.slot, start: r.start, end: r.end, rows: [r] });
+      }
+      const blocks = slots.map((s) => {
+        const ongoing = !!now && now.date === date && s.start != null && s.end != null && now.minutes >= s.start && now.minutes < s.end;
+        return h(
+          "div",
+          { display: "flex", flexDirection: "row", width: "100%", marginTop: 16, backgroundColor: ongoing ? THEME.card2 : THEME.card, borderRadius: 24, padding: "20px 24px", border: ongoing ? "2px solid #4ade8066" : `2px solid ${THEME.card}` },
+          h(
+            "div",
+            { display: "flex", flexDirection: "column", width: 140 },
+            text(s.start != null ? fmtHHMM(s.start) : "—", { fontSize: 34, fontWeight: 700, color: THEME.fg, lineHeight: 1 }),
+            text(s.end != null ? fmtHHMM(s.end) : "", { fontSize: 22, fontWeight: 500, color: THEME.muted, marginTop: 6 }),
+            s.slot != null ? text(`${s.slot} пара`, { fontSize: 20, fontWeight: 500, color: THEME.dim, marginTop: 8 }) : null,
+          ),
+          h(
+            "div",
+            { display: "flex", flexDirection: "column", flex: 1 },
+            ...s.rows.map((r, i) =>
+              h(
+                "div",
+                { display: "flex", flexDirection: "row", alignItems: "flex-start", width: "100%", marginTop: i === 0 ? 0 : 14, opacity: r.status === "moved" ? 0.55 : 1 },
+                h("div", { display: "flex", width: 8, borderRadius: 8, backgroundColor: typeColor(r.type), marginRight: 18, alignSelf: "stretch" }),
+                h(
+                  "div",
+                  { display: "flex", flexDirection: "column", flex: 1 },
+                  h(
+                    "div",
+                    { display: "flex", flexDirection: "row", flexWrap: "wrap", alignItems: "center" },
+                    ...r.groups.map((g) =>
+                      h(
+                        "div",
+                        { display: "flex", padding: "4px 12px", borderRadius: 999, backgroundColor: r.mine ? accent + "33" : THEME.line, marginRight: 8, marginBottom: 6, border: r.mine ? `2px solid ${accent}` : `2px solid ${THEME.line}` },
+                        text(g, { fontSize: 20, fontWeight: 700, color: r.mine ? THEME.fg : THEME.muted }),
+                      ),
+                    ),
+                  ),
+                  text(r.subject, { fontSize: 28, fontWeight: 700, color: THEME.fg, lineHeight: 1.2, textDecoration: r.status === "moved" ? "line-through" : "none" }),
+                  text([lessonTypeLabel(r.type), r.isDistance ? "дистанционно" : r.room ? `ауд. ${r.room}` : "", r.subgroup ? `${r.subgroup} подгруппа` : ""].filter(Boolean).join("  ·  "), { fontSize: 22, fontWeight: 500, color: THEME.muted, marginTop: 4 }),
+                ),
+              ),
+            ),
+          ),
+        );
+      });
+      const body = blocks.length ? blocks : [h("div", { display: "flex", flexDirection: "column", alignItems: "center", width: "100%", padding: "80px 0" }, text("У потока пар нет", { fontSize: 52, fontWeight: 800, color: THEME.fg }))];
+      const tree = page([
+        header(weekdayName(date), subtitleFor(date, weekInfo, today), pseudo, accent),
+        h("div", { display: "flex", flexDirection: "column", width: "100%", marginTop: 30 }, ...body),
+        footer(rows.some((r) => r.mine) ? "выделена твоя группа" : "", `tt.chuvsu.ru  ·  ${now ? fmtHHMM(now.minutes) : ""}`),
       ]);
       return toPng(tree);
     },

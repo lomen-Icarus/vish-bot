@@ -15,6 +15,7 @@ export class Notifier {
     private readonly repo: Repo,
     private readonly service: ScheduleService,
     private readonly renderer: Renderer | null,
+    private readonly adminIds: number[] = [],
   ) {}
 
   async send(user: User, html: string, opts: { photo?: Buffer; kind: string; silent?: boolean }): Promise<boolean> {
@@ -54,12 +55,16 @@ export class Notifier {
     }
     for (const [groupKey, list] of byGroup) {
       if (groupKey === "*") {
+        // Portal banner changes go to admins (who can broadcast them) and to users who opted in.
         const notice = list[list.length - 1]!;
         const text = formatNotice((notice.payload as { text: string }).text);
-        for (const u of this.repo.listUsers({ onlyActive: true })) {
-          if (!u.notifyNotices) continue;
-          if (await this.send(u, text, { kind: "notice" })) delivered++;
+        const targets = new Map<number, User>();
+        for (const id of this.adminIds) {
+          const u = this.repo.getUser(id);
+          if (u) targets.set(u.id, u);
         }
+        for (const u of this.repo.listUsers({ onlyActive: true })) if (u.notifyNotices) targets.set(u.id, u);
+        for (const u of targets.values()) if (await this.send(u, text, { kind: "notice" })) delivered++;
         this.repo.markEventsNotified(list.map((r) => r.id));
         continue;
       }
