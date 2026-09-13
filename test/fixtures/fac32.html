@@ -1,0 +1,96 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ru" lang="ru">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" /><link rel="stylesheet" href="/javascript/jquery-ui-1.10.1/themes/start/jquery-ui.css" type="text/css" media="screen" />
+
+<script type="text/javascript" src="/javascript/jquery-1.12.4/jquery-1.12.4.min.js"></script>
+<script type="text/javascript" src="/javascript/jquery-ui-1.10.1/jquery-ui-1.10.1.custom.js"></script>
+<script type="text/javascript" src="/javascript/jquery-1.9.1/jquery-migrate-1.1.1.js"></script>
+
+<script type="text/javascript" src="/js/uhpv-full.js"></script><link href="/css/site.css" media="screen" rel="stylesheet" type="text/css" />
+<link href="/css/special.css" media="screen" rel="stylesheet" type="text/css" /><title>Расписание занятий</title></head>
+<body style="min-width: 1250px;">
+<div id="logo" style="background-color: white;" class="unspecial">
+<!--    
+    <div id="finevision_banner" onclick="finevision.activate_navbar()" style="cursor: pointer; z-index: 9999; background: rgb(255, 255, 255); border: 2px solid rgb(0, 0, 0); float: right; position: fixed; top: 0px; left: auto; right: 0px;">
+        <img width="128" src="http://finevision.ru/static/banner1.jpg"></div>
+-->
+    <center><a href="https://www.chuvsu.ru" title="www.chuvsu.ru"><img src="/images/logo.jpg" ></a></center>
+</div>
+<div id="banner" style="background-color: lightcoral; border: 2px solid red; color: white; text-align: center; font-size: 30px; margin-top: 5px; margin-bottom: 5px; width: 100%; height: 70px; ">
+ВНИМАНИЕ! Учебные занятия проводятся в смешанном формате с применением дистанционных образовательных технологий
+</div>
+    <table style="width: 100%;"><tr><td align="right"> 
+<div style="float: right; width: 100%; background-color: lightyellow;">Вы вошли как <font id="uname">Гость. </font><a href="/auth/logout">Выйти</a></div>            </td></tr></table>
+    <div id="header">
+    <div style="float: right; background-color: white; margin: 5px 5px;">
+        <a id="specialButton" href="#" >
+            <img src="/images/special.png" alt="ВЕРСИЯ ДЛЯ СЛАБОВИДЯЩИХ" title="ВЕРСИЯ ДЛЯ СЛАБОВИДЯЩИХ" />
+        </a>        
+    </div>    
+<div id="path" class="sbtext">
+<a href="/">Расписание занятий</a> &nbsp;&nbsp;/&nbsp;&nbsp; ВИШ</div>
+</div>
+<div id="content" >
+<style>
+    .ui-widget-overlay {
+        opacity: .1;
+    }
+
+.wordwrap { 
+   white-space: pre-wrap;      /* CSS3 */   
+   white-space: -moz-pre-wrap; /* Firefox */    
+   white-space: -pre-wrap;     /* Opera <7 */   
+   white-space: -o-pre-wrap;   /* Opera 7 */    
+   word-wrap: break-word;      /* IE */
+   word-break: break-word;
+}
+.pbut { background-color: #3473a4; width: 180px; height: 40px; font-family: "Tahoma"; font-size: 13px; color: white; margin-top: 20px; float: right; cursor: pointer;}
+.htext {font-family: 'Arial'; font-size: 24px; color: #666666;}
+</style>
+<div style=''>
+<form id="tt" method="post"><table width="100%">
+    <tr><td valign="top">    
+<div style="float: left;">
+<span class='htext sbtext'>факультет: <span style="color: blue;">Высшая инженерная школа</span></span>    
+<p><h3>очная форма обучения</h3><p><table width="100%"><tr><td  width="10%" valign="top" ><span style="color: blue;">Бакалавриат</span></td><td><button name="gr10145" id="gr10145" type="button" value="ВИШ-11-26" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10145);$("#tt").submit();'>ВИШ-11-26</button><button name="gr10146" id="gr10146" type="button" value="ВИШ-12-26" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10146);$("#tt").submit();'>ВИШ-12-26</button><button name="gr10147" id="gr10147" type="button" value="ВИШ-13-26" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10147);$("#tt").submit();'>ВИШ-13-26</button><button name="gr10148" id="gr10148" type="button" value="ВИШ-14-26" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10148);$("#tt").submit();'>ВИШ-14-26</button><button name="gr10149" id="gr10149" type="button" value="ВИШ-15-26" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10149);$("#tt").submit();'>ВИШ-15-26</button><p><button name="gr9590" id="gr9590" type="button" value="ВИШ-11-25" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(9590);$("#tt").submit();'>ВИШ-11-25</button><button name="gr9591" id="gr9591" type="button" value="ВИШ-12-25" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(9591);$("#tt").submit();'>ВИШ-12-25</button><button name="gr9592" id="gr9592" type="button" value="ВИШ-13-25" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(9592);$("#tt").submit();'>ВИШ-13-25</button><button name="gr9593" id="gr9593" type="button" value="ВИШ-14-25" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(9593);$("#tt").submit();'>ВИШ-14-25</button><button name="gr9594" id="gr9594" type="button" value="ВИШ-15-25" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(9594);$("#tt").submit();'>ВИШ-15-25</button><p><button name="gr8821" id="gr8821" type="button" value="ВИШ-11-24" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8821);$("#tt").submit();'>ВИШ-11-24</button><button name="gr8822" id="gr8822" type="button" value="ВИШ-12-24" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8822);$("#tt").submit();'>ВИШ-12-24</button><button name="gr8823" id="gr8823" type="button" value="ВИШ-13-24" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8823);$("#tt").submit();'>ВИШ-13-24</button><button name="gr8824" id="gr8824" type="button" value="ВИШ-14-24" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8824);$("#tt").submit();'>ВИШ-14-24</button><button name="gr8826" id="gr8826" type="button" value="ВИШ-15-24" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8826);$("#tt").submit();'>ВИШ-15-24</button><p><button name="gr8541" id="gr8541" type="button" value="ВИШ-11-23 (ЭиЭА)" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8541);$("#tt").submit();'>ВИШ-11-23 (ЭиЭА)</button><button name="gr8265" id="gr8265" type="button" value="ВИШ-11-23(РЗиАЭС)" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8265);$("#tt").submit();'>ВИШ-11-23(РЗиАЭС)</button><button name="gr8524" id="gr8524" type="button" value="ВИШ-12-23" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8524);$("#tt").submit();'>ВИШ-12-23</button><button name="gr10528" id="gr10528" type="button" value="ВИШ-12-23иот (11.03.04)" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10528);$("#tt").submit();'>ВИШ-12-23иот (11.03.04)</button><button name="gr10521" id="gr10521" type="button" value="ВИШ-12-23иот (13.03.02)" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10521);$("#tt").submit();'>ВИШ-12-23иот (13.03.02)</button><button name="gr8526" id="gr8526" type="button" value="ВИШ-13-23" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8526);$("#tt").submit();'>ВИШ-13-23</button><button name="gr10517" id="gr10517" type="button" value="ВИШ-13-23иот" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10517);$("#tt").submit();'>ВИШ-13-23иот</button><button name="gr8268" id="gr8268" type="button" value="ВИШ-14-23" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(8268);$("#tt").submit();'>ВИШ-14-23</button><p></td></tr></table><p><h3>очно-заочная форма обучения</h3><p><table width="100%"><tr><td  width="10%" valign="top" ><span style="color: blue;">Бакалавриат</span></td><td><button name="gr10614" id="gr10614" type="button" value="ОЗВИШ-11-26" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10614);$("#tt").submit();'>ОЗВИШ-11-26</button><button name="gr10613" id="gr10613" type="button" value="ОЗВИШ-13-26" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(10613);$("#tt").submit();'>ОЗВИШ-13-26</button><p><button name="gr9827" id="gr9827" type="button" value="ОЗВИШ-12-25" style="width: 180px; margin-left: 5px; background-color: #D3D6FF; cursor: pointer;" class="nicebut" onClick='$("#hgr").val(9827);$("#tt").submit();'>ОЗВИШ-12-25</button><p></td></tr></table></div>
+        </td><td valign="top" width="200" style='border-left: 1px solid #e0e0e0;' class="unspecial">
+<div style="float: right;  width: 160px; font-family: 'Arial'; font-size: 13px; color: #000000; margin-left: 20px; margin-right: 20px; margin-top: 10px;  text-align: center;">
+<nobr><label ><input type="radio" name="pertt" id="pertt-1" value="1" checked />ВО</label>&nbsp;&nbsp;<label ><input type="radio" name="pertt" id="pertt-2" value="2" />СПО</label></nobr><br /> 
+    <table id="tt1" width='100%'>    
+<tr><td><div style="height: 20px; background-color: #e0e0e0; padding-top: 5px;">1 пара&ensp;08:20 - 09:40<br></div></td></tr><tr><td><div style="height: 20px; background-color: white; padding-top: 5px;">2 пара&ensp;09:50 - 11:10<br></div></td></tr><tr><td><div style="height: 20px; background-color: #e0e0e0; padding-top: 5px;">3 пара&ensp;11:40 - 13:00<br></div></td></tr><tr><td><div style="height: 20px; background-color: white; padding-top: 5px;">4 пара&ensp;13:30 - 14:50<br></div></td></tr><tr><td><div style="height: 20px; background-color: #e0e0e0; padding-top: 5px;">5 пара&ensp;15:00 - 16:20<br></div></td></tr><tr><td><div style="height: 20px; background-color: white; padding-top: 5px;">6 пара&ensp;16:40 - 18:00<br></div></td></tr><tr><td><div style="height: 20px; background-color: #e0e0e0; padding-top: 5px;">7 пара&ensp;18:10 - 19:30<br></div></td></tr><tr><td><div style="height: 20px; background-color: white; padding-top: 5px;">8 пара&ensp;19:40 - 21:00<br></div></td></tr>    </table>        
+    <table id="tt2" width='100%' style="display: none;">    
+<tr><td><div style="height: 20px; background-color: #e0e0e0; padding-top: 5px;">1 пара&ensp;08:10 - 09:40<br></div></td></tr><tr><td><div style="height: 20px; background-color: white; padding-top: 5px;">2 пара&ensp;09:55 - 11:25<br></div></td></tr><tr><td><div style="height: 20px; background-color: #e0e0e0; padding-top: 5px;">3 пара&ensp;11:55 - 13:25<br></div></td></tr><tr><td><div style="height: 20px; background-color: white; padding-top: 5px;">4 пара&ensp;13:40 - 15:10<br></div></td></tr><tr><td><div style="height: 20px; background-color: #e0e0e0; padding-top: 5px;">5 пара&ensp;15:25 - 16:55<br></div></td></tr><tr><td><div style="height: 20px; background-color: white; padding-top: 5px;">6 пара&ensp;17:10 - 18:40<br></div></td></tr><tr><td><div style="height: 20px; background-color: #e0e0e0; padding-top: 5px;">7 пара&ensp;18:55 - 20:25<br></div></td></tr>    </table>        
+</div>
+            <input type="submit" name="web" id="web" value="Вебинары ВИШ" class="pbut nicebut" onClick="" />    <br>
+    <input type="submit" name="webpk" id="webpk" value="Приемная кампания ВИШ" class="pbut nicebut" onClick="" /></td></tr>
+</table>    
+<input type="hidden" name="hgr" value="0" id="hgr" /></form>
+</div>
+<script language="JavaScript">
+
+$(document).ready(function(){
+    $("input[name=pertt]").click(function(){$("#tt1").toggle();$("#tt2").toggle();});
+});
+
+</script></div>
+<div id="footer">
+<div id='footmessage'>
+© ФГБОУ ВО «ЧГУ им. И.Н. Ульянова»</div>
+</div>
+<!-- Top.Mail.Ru counter -->
+<script type="text/javascript">
+var _tmr = window._tmr || (window._tmr = []);
+_tmr.push({id: "3607308", type: "pageView", start: (new Date()).getTime()});
+(function (d, w, id) {
+  if (d.getElementById(id)) return;
+  var ts = d.createElement("script"); ts.type = "text/javascript"; ts.async = true; ts.id = id;
+  ts.src = "https://top-fwz1.mail.ru/js/code.js";
+  var f = function () {var s = d.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ts, s);};
+  if (w.opera == "[object Opera]") { d.addEventListener("DOMContentLoaded", f, false); } else { f(); }
+})(document, window, "tmr-code");
+</script>
+<noscript><div><img src="https://top-fwz1.mail.ru/counter?id=3607308;js=na" style="position:absolute;left:-9999px;" alt="Top.Mail.Ru" /></div></noscript>
+<!-- /Top.Mail.Ru counter -->
+</body>
+</html>
+

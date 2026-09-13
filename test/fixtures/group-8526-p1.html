@@ -1,0 +1,158 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ru" lang="ru">
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" /><link rel="stylesheet" href="/javascript/jquery-ui-1.10.1/themes/start/jquery-ui.css" type="text/css" media="screen" />
+
+<script type="text/javascript" src="/javascript/jquery-1.12.4/jquery-1.12.4.min.js"></script>
+<script type="text/javascript" src="/javascript/jquery-ui-1.10.1/jquery-ui-1.10.1.custom.js"></script>
+<script type="text/javascript" src="/javascript/jquery-1.9.1/jquery-migrate-1.1.1.js"></script>
+
+<script type="text/javascript" src="/js/jquery.dataTables.min.js"></script>
+<script type="text/javascript" src="/js/uhpv-full.js"></script><link href="/css/site.css" media="screen" rel="stylesheet" type="text/css" />
+<link href="/css/jquery.dataTables.css" media="screen" rel="stylesheet" type="text/css" />
+<link href="/css/highlight.css" media="screen" rel="stylesheet" type="text/css" />
+<link href="/css/special.css" media="screen" rel="stylesheet" type="text/css" /><title>Расписание занятий</title></head>
+<body style="min-width: 1250px;">
+<div id="logo" style="background-color: white;" class="unspecial">
+<!--    
+    <div id="finevision_banner" onclick="finevision.activate_navbar()" style="cursor: pointer; z-index: 9999; background: rgb(255, 255, 255); border: 2px solid rgb(0, 0, 0); float: right; position: fixed; top: 0px; left: auto; right: 0px;">
+        <img width="128" src="http://finevision.ru/static/banner1.jpg"></div>
+-->
+    <center><a href="https://www.chuvsu.ru" title="www.chuvsu.ru"><img src="/images/logo.jpg" ></a></center>
+</div>
+<div id="banner" style="background-color: lightcoral; border: 2px solid red; color: white; text-align: center; font-size: 30px; margin-top: 5px; margin-bottom: 5px; width: 100%; height: 70px; ">
+ВНИМАНИЕ! Учебные занятия проводятся в смешанном формате с применением дистанционных образовательных технологий
+</div>
+    <table style="width: 100%;"><tr><td align="right"> 
+<div style="float: right; width: 100%; background-color: lightyellow;">Вы вошли как <font id="uname">Гость. </font><a href="/auth/logout">Выйти</a></div>            </td></tr></table>
+    <div id="header">
+    <div style="float: right; background-color: white; margin: 5px 5px;">
+        <a id="specialButton" href="#" >
+            <img src="/images/special.png" alt="ВЕРСИЯ ДЛЯ СЛАБОВИДЯЩИХ" title="ВЕРСИЯ ДЛЯ СЛАБОВИДЯЩИХ" />
+        </a>        
+    </div>    
+<div id="path" class="sbtext">
+<a href="/">Расписание занятий</a> &nbsp;&nbsp;/&nbsp;&nbsp; <a href="/index/factt/fac/32">ВИШ</a> &nbsp;&nbsp;/&nbsp;&nbsp; ВИШ-13-23</div>
+</div>
+<div id="content" >
+<style>
+.htext {font-family: 'Arial'; font-size: 24px; color: #666666;}
+.htextb {font-family: 'Arial'; font-size: 24px; color: #000000;}
+.want{
+    
+  background: -moz-linear-gradient(45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%),-moz-linear-gradient(-45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%);
+  background: -webkit-linear-gradient(45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%),-webkit-linear-gradient(-45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%);
+  background: -ms-linear-gradient(45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%),-ms-linear-gradient(-45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%);
+  background: linear-gradient(45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%),linear-gradient(-45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%);
+  background-size: 1em 1em;
+/*  background-color: #fff; */
+  background-color: lightyellow;
+}    
+input {cursor: pointer;}
+
+</style>
+<form id="tt" method="post"><table width="100%">
+    <tr><td valign="top">    
+<div style="float: left;" class="sbtext">
+        <table cellspacing="10"><tr><td valign="top">
+    <span class="htext"><nobr>Группа <span style="color: blue;">ВИШ-13-23</span></nobr></span></h1></td><td valign="top"><span class="htextb"> (09.03.01 - Информатика и вычислительная техника; <span style="color: #666666;">направленность:</span> Программное обеспечение автоматизированных систем электроэнергетики)</span></td></tr></table>    
+</div>
+            
+<table id="groupstt" width="100%">
+    <thead>
+        <tr>
+            <th width="150">Время
+            </th>
+            <th >Занятия
+            </th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr style=" background: lightgray; " class="trfd" ><td width="150">Понедельник</td><td></td></tr><tr><td class="trf trdata" ><div id="trd1t1" class="trfd">1 пара<br>(08:20 - 09:40)</div></td><td id="td1t1g8526" align="left" valign="top" class="trdata"><div id="tdd1t1g8526" class="tdd"></div></td></tr><tr><td class="trf trdata" ><div id="trd1t2" class="trfd">2 пара<br>(09:50 - 11:10)</div></td><td id="td1t2g8526" align="left" valign="top" class="trdata"><div id="tdd1t2g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>**</sup>В-221 <span style="color: blue;">Цифровые технологии в управлении техническими системами электроэнергетики</span> (лб) (6 - 10 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd1t3" class="trfd">3 пара<br>(11:40 - 13:00)</div></td><td id="td1t3g8526" align="left" valign="top" class="trdata"><div id="tdd1t3g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>**</sup>Г-316 <span style="color: blue;">Цифровые оптические сенсоры</span> (лк) (2 нед.) </td></tr><tr><td  class="want" >В-221 <span style="color: blue;">Цифровые технологии в управлении техническими системами электроэнергетики</span> (лб) (3 - 5 нед.) </td></tr><tr><td  class="want" ><sup>**</sup>Г-316 <span style="color: blue;">Цифровые оптические сенсоры</span> (лк) (6 нед.) </td></tr><tr><td  class="want" >В-221 <span style="color: blue;">Цифровые технологии в управлении техническими системами электроэнергетики</span> (лб) (7 нед.) </td></tr><tr><td  class="want" ><sup>**</sup>Г-316 <span style="color: blue;">Цифровые оптические сенсоры</span> (лк) (8 нед.) </td></tr><tr><td  class="want" >В-221 <span style="color: blue;">Цифровые технологии в управлении техническими системами электроэнергетики</span> (лб) (9 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd1t4" class="trfd">4 пара<br>(13:30 - 14:50)</div></td><td id="td1t4g8526" align="left" valign="top" class="trdata"><div id="tdd1t4g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>*</sup>И-107 <span style="color: blue;">Цифровые оптические сенсоры</span> (лб) (2 - 12 нед.) </td></tr><tr><td  class="want" ><sup>**</sup>Б-206 <span style="color: blue;">Цифровые технологии в управлении техническими системами электроэнергетики</span> (лб) (4 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd1t5" class="trfd">5 пара<br>(15:00 - 16:20)</div></td><td id="td1t5g8526" align="left" valign="top" class="trdata"><div id="tdd1t5g8526" class="tdd"></div></td></tr><tr><td class="trf trdata" ><div id="trd1t6" class="trfd">6 пара<br>(16:40 - 18:00)</div></td><td id="td1t6g8526" align="left" valign="top" class="trdata"><div id="tdd1t6g8526" class="tdd"><table width="100%"><tr><td  class="want" >Г-402 <span style="color: blue;">Технология разработки программного обеспечения</span> (лк) (2 нед.) </td></tr></table></div></td></tr><tr style=" background: lightgray; " class="trfd" ><td width="150">Вторник</td><td></td></tr><tr><td class="trf trdata" ><div id="trd2t1" class="trfd">1 пара<br>(08:20 - 09:40)</div></td><td id="td2t1g8526" align="left" valign="top" class="trdata"><div id="tdd2t1g8526" class="tdd"></div></td></tr><tr><td class="trf trdata" ><div id="trd2t2" class="trfd">2 пара<br>(09:50 - 11:10)</div></td><td id="td2t2g8526" align="left" valign="top" class="trdata"><div id="tdd2t2g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>**</sup>Б-206 <span style="color: blue;">Цифровые технологии в управлении техническими системами электроэнергетики</span> (лк) (4 нед.) </td></tr><tr><td  class="want" ><sup>**</sup>Б-206 <span style="color: blue;">Цифровые технологии в управлении техническими системами электроэнергетики</span> (лб) (6 нед.) </td></tr><tr><td  class="want" ><sup>**</sup>Б-206 <span style="color: blue;">Цифровые технологии в управлении техническими системами электроэнергетики</span> (лб) (8 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd2t3" class="trfd">3 пара<br>(11:40 - 13:00)</div></td><td id="td2t3g8526" align="left" valign="top" class="trdata"><div id="tdd2t3g8526" class="tdd"><table width="100%"><tr><td  class="want" >К-110 <span style="color: blue;">Кросс-платформенные средства разработки программного обеспечения</span> (лк) (1 - 2 нед.) </td></tr><tr><td  class="want" ><sup>**</sup>Г-301 <span style="color: blue;">Технология разработки программного обеспечения</span> (лк) (4 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd2t4" class="trfd">4 пара<br>(13:30 - 14:50)</div></td><td id="td2t4g8526" align="left" valign="top" class="trdata"><div id="tdd2t4g8526" class="tdd"><table width="100%"><tr><td  class="want" >К-110 <span style="color: blue;">Сетевые технологии в интеллектуальных энергетических системах</span> (лк) (1 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd2t5" class="trfd">5 пара<br>(15:00 - 16:20)</div></td><td id="td2t5g8526" align="left" valign="top" class="trdata"><div id="tdd2t5g8526" class="tdd"><table width="100%"><tr><td  class="want" >К-110 <span style="color: blue;">Сетевые технологии в интеллектуальных энергетических системах</span> (лб) (1 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd2t6" class="trfd">6 пара<br>(16:40 - 18:00)</div></td><td id="td2t6g8526" align="left" valign="top" class="trdata"><div id="tdd2t6g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>*</sup>Б-315 <span style="color: blue;">Технология разработки программного обеспечения</span> (лк) (3 - 11 нед.) </td></tr></table></div></td></tr><tr style=" background: lightgray; " class="trfd" ><td width="150">Среда</td><td></td></tr><tr><td class="trf trdata" ><div id="trd3t1" class="trfd">1 пара<br>(08:20 - 09:40)</div></td><td id="td3t1g8526" align="left" valign="top" class="trdata"><div id="tdd3t1g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>**</sup>Г-402 <span style="color: blue;">Операционные системы</span> (лб) (6 - 8 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd3t2" class="trfd">2 пара<br>(09:50 - 11:10)</div></td><td id="td3t2g8526" align="left" valign="top" class="trdata"><div id="tdd3t2g8526" class="tdd"><table width="100%"><tr><td  class="want" >Г-402 <span style="color: blue;">Операционные системы</span> (лб) (1 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd3t3" class="trfd">3 пара<br>(11:40 - 13:00)</div></td><td id="td3t3g8526" align="left" valign="top" class="trdata"><div id="tdd3t3g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>*</sup>Г-402 <span style="color: blue;">Кросс-платформенные средства разработки программного обеспечения</span> (лб) (1 - 12 нед.) </td></tr><tr><td  class="want" ><sup>**</sup>Г-402 <span style="color: blue;">Операционные системы</span> (лб) (1 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd3t4" class="trfd">4 пара<br>(13:30 - 14:50)</div></td><td id="td3t4g8526" align="left" valign="top" class="trdata"><div id="tdd3t4g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>**</sup>Г-301 <span style="color: blue;">Цифровые оптические сенсоры</span> (лк) (1 - 12 нед.) </td></tr><tr><td  class="want" ><sup>*</sup>К-110 <span style="color: blue;">Технология разработки программного обеспечения</span> (пр) (1 - 12 нед.) </td></tr></table></div></td></tr><tr style=" background: lightgray; " class="trfd" ><td width="150">Четверг</td><td></td></tr><tr><td class="trf trdata" ><div id="trd4t1" class="trfd">1 пара<br>(08:20 - 09:40)</div></td><td id="td4t1g8526" align="left" valign="top" class="trdata"><div id="tdd4t1g8526" class="tdd"></div></td></tr><tr><td class="trf trdata" ><div id="trd4t2" class="trfd">2 пара<br>(09:50 - 11:10)</div></td><td id="td4t2g8526" align="left" valign="top" class="trdata"><div id="tdd4t2g8526" class="tdd"></div></td></tr><tr><td class="trf trdata" ><div id="trd4t3" class="trfd">3 пара<br>(11:40 - 13:00)</div></td><td id="td4t3g8526" align="left" valign="top" class="trdata"><div id="tdd4t3g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>**</sup>И-107 <span style="color: blue;">Цифровые оптические сенсоры</span> (лб) (8 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd4t4" class="trfd">4 пара<br>(13:30 - 14:50)</div></td><td id="td4t4g8526" align="left" valign="top" class="trdata"><div id="tdd4t4g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>**</sup>И-107 <span style="color: blue;">Цифровые оптические сенсоры</span> (лб) (8 нед.) </td></tr><tr><td  class="want" >Г-402 <span style="color: blue;">Операционные системы</span> (лк) (1 нед.) </td></tr><tr><td  class="want" >Г-402 <span style="color: blue;">Технология разработки программного обеспечения</span> (лк) (2 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd4t5" class="trfd">5 пара<br>(15:00 - 16:20)</div></td><td id="td4t5g8526" align="left" valign="top" class="trdata"><div id="tdd4t5g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>*</sup>Г-402 <span style="color: blue;">Операционные системы</span> (лб) (1 - 12 нед.) </td></tr><tr><td  class="want" >Г-402 <span style="color: blue;">Операционные системы</span> (лк) (2 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd4t6" class="trfd">6 пара<br>(16:40 - 18:00)</div></td><td id="td4t6g8526" align="left" valign="top" class="trdata"><div id="tdd4t6g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>*</sup>Б-315 <span style="color: blue;">Кросс-платформенные средства разработки программного обеспечения</span> (лк) (3 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd4t7" class="trfd">7 пара<br>(18:10 - 19:30)</div></td><td id="td4t7g8526" align="left" valign="top" class="trdata"><div id="tdd4t7g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>*</sup>Б-315 <span style="color: blue;">Кросс-платформенные средства разработки программного обеспечения</span> (лк) (3 - 12 нед.) </td></tr></table></div></td></tr><tr style=" background: lightgray; " class="trfd" ><td width="150">Пятница</td><td></td></tr><tr><td class="trf trdata" ><div id="trd5t1" class="trfd">1 пара<br>(08:20 - 09:40)</div></td><td id="td5t1g8526" align="left" valign="top" class="trdata"><div id="tdd5t1g8526" class="tdd"></div></td></tr><tr><td class="trf trdata" ><div id="trd5t2" class="trfd">2 пара<br>(09:50 - 11:10)</div></td><td id="td5t2g8526" align="left" valign="top" class="trdata"><div id="tdd5t2g8526" class="tdd"><table width="100%"><tr><td  class="want" >Б-207 <span style="color: blue;">Цифровые технологии в управлении техническими системами электроэнергетики</span> (лк) (2 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd5t3" class="trfd">3 пара<br>(11:40 - 13:00)</div></td><td id="td5t3g8526" align="left" valign="top" class="trdata"><div id="tdd5t3g8526" class="tdd"><table width="100%"><tr><td  class="want" >Б-206 <span style="color: blue;">Системы и языки программирования контроллеров</span> (лк) (1 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd5t4" class="trfd">4 пара<br>(13:30 - 14:50)</div></td><td id="td5t4g8526" align="left" valign="top" class="trdata"><div id="tdd5t4g8526" class="tdd"><table width="100%"><tr><td  class="want" >Б-206 <span style="color: blue;">Системы и языки программирования контроллеров</span> (лб) (1 - 12 нед.) </td></tr></table></div></td></tr><tr style=" background: lightgray; " class="trfd" ><td width="150">Суббота</td><td></td></tr><tr><td class="trf trdata" ><div id="trd6t1" class="trfd">1 пара<br>(08:20 - 09:40)</div></td><td id="td6t1g8526" align="left" valign="top" class="trdata"><div id="tdd6t1g8526" class="tdd"><table width="100%"><tr><td  class="want" >Т-121 <span style="color: blue;">Операционные системы</span> (лк) (2 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd6t2" class="trfd">2 пара<br>(09:50 - 11:10)</div></td><td id="td6t2g8526" align="left" valign="top" class="trdata"><div id="tdd6t2g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>**</sup>Б-103 <span style="color: blue;">Технология разработки программного обеспечения</span> (лб) (2 - 12 нед.) </td></tr><tr><td  class="want" ><sup>*</sup>Т-121 <span style="color: blue;">Операционные системы</span> (лк) (3 - 12 нед.) </td></tr></table></div></td></tr><tr><td class="trf trdata" ><div id="trd6t3" class="trfd">3 пара<br>(11:40 - 13:00)</div></td><td id="td6t3g8526" align="left" valign="top" class="trdata"><div id="tdd6t3g8526" class="tdd"><table width="100%"><tr><td  class="want" ><sup>**</sup>Б-103 <span style="color: blue;">Технология разработки программного обеспечения</span> (лб) (1 - 12 нед.) </td></tr></table></div></td></tr>
+    </tbody>
+</table>
+    
+    
+    
+        </td><td valign="top" width="250">
+<div style="float: right; font-size: 8; padding: 10px;">
+<center><span style="color: blue;">2026/2027 учебный год</span></center><p><fieldset id="pertypef"  style="border: 2px solid; ">
+<label><input type="radio" name="pertype" id="pertype-1" value="1" />Осенний семестр</label><br /><label><input type="radio" name="pertype" id="pertype-2" value="2" />Зимняя сессия</label><br /><label><input type="radio" name="pertype" id="pertype-3" value="3" />Весенний семестр</label><br /><label><input type="radio" name="pertype" id="pertype-4" value="4" />Летняя сессия</label><br /><label><input type="radio" name="pertype" id="pertype-11" value="11" />ППА</label><br /><label><input type="radio" name="pertype" id="pertype-9" value="9" />ГИА</label><br />            </fieldset>
+    
+    <div style='margin-top: 30px;' width="100%"><center>
+        <span  style="color: blue; font-size: 20px;">
+        13 Сентября 2026г.<br />
+        </span>
+        Воскресенье<br />
+        <p>
+        идет 2<sup>**</sup> неделя осеннего семестра        </p>
+        </center>
+        
+    </div>  
+    <div style='margin-top: 30px; padding: 20px;' class='want'><center><b> - В расписании возможны изменения! </b></center></div>
+    
+    <div style='margin-top: 30px; padding: 20px; border: 1px solid blue; ' ><center><span style="color: blue;"> (ДОТ)</span><b> - Занятия проводятся с применением электронного обучения и дистанционных образовательных технологий </b></center></div>
+    <div style="border: 2px solid red; padding: 5px; margin-top: 30px;"><b><span style="color: red;">
+13.09.2026            </span> - замены и переносы </b></div>
+    
+</div>
+</td></tr>
+</table>    
+<input type="hidden" name="htype" value="1" id="htype" /></form>
+<script language="JavaScript">
+
+$(document).ready(function(){
+    $("#pertype-"+"1").attr('checked','checked');
+    $("input[name=pertype]").click(function(){$("#htype").val($(this).val());$("#tt").submit();});
+    $('#groupstt').dataTable({
+        "bjQueryUI":false,
+        "bPaginate":false,
+//        "bProcessing": true,
+        "bFilter":false,
+        "bInfo":false,
+//        "sScrollX": window.availWidth,
+        "sScrollX": "100%",
+        "bScrollCollapse":  true,
+//        "bScrollCollapse": false,
+//        "sScrollY": hy.toString()+'px',
+        "bSort": false,
+        "oLanguage": {
+            "sProcessing":   "Подождите...",
+            "sLengthMenu":   "Показать _MENU_ записей",
+            "sZeroRecords":  "Записи отсутствуют.",
+            "sInfo":         "Записи с _START_ до _END_ из _TOTAL_ записей",
+            "sInfoEmpty":    "Записи с 0 до 0 из 0 записей",
+            "sInfoFiltered": "(отфильтровано из _MAX_ записей)",
+            "sInfoPostFix":  "",
+            "sSearch":       "Поиск:",
+            "sUrl":          "",
+            "oPaginate": {         "sFirst": "Первая",
+                             "sPrevious": "Предыдущая",
+                             "sNext": "Следующая",
+                             "sLast": "Последняя"
+            }
+         }
+    });
+});
+
+</script></div>
+<div id="footer">
+<div id='footmessage'>
+© ФГБОУ ВО «ЧГУ им. И.Н. Ульянова»</div>
+</div>
+<!-- Top.Mail.Ru counter -->
+<script type="text/javascript">
+var _tmr = window._tmr || (window._tmr = []);
+_tmr.push({id: "3607308", type: "pageView", start: (new Date()).getTime()});
+(function (d, w, id) {
+  if (d.getElementById(id)) return;
+  var ts = d.createElement("script"); ts.type = "text/javascript"; ts.async = true; ts.id = id;
+  ts.src = "https://top-fwz1.mail.ru/js/code.js";
+  var f = function () {var s = d.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ts, s);};
+  if (w.opera == "[object Opera]") { d.addEventListener("DOMContentLoaded", f, false); } else { f(); }
+})(document, window, "tmr-code");
+</script>
+<noscript><div><img src="https://top-fwz1.mail.ru/counter?id=3607308;js=na" style="position:absolute;left:-9999px;" alt="Top.Mail.Ru" /></div></noscript>
+<!-- /Top.Mail.Ru counter -->
+</body>
+</html>
+
