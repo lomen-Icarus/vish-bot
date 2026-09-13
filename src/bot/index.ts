@@ -6,6 +6,9 @@ import { settingsHandlers } from "./handlers/settings.js";
 import { adminHandlers } from "./handlers/admin.js";
 import { miscHandlers } from "./handlers/misc.js";
 import { askHandlers } from "./handlers/ask.js";
+import { teacherHandlers } from "./handlers/teachers.js";
+import { streamHandlers } from "./handlers/stream.js";
+import { newsHandlers } from "./handlers/news.js";
 import { logger } from "../logger.js";
 import { mainKeyboard } from "./keyboards.js";
 
@@ -19,11 +22,20 @@ export function createBot(deps: Deps): Bot<BotContext> {
   bot.use(async (ctx, next) => {
     ctx.deps = deps;
     const from = ctx.from;
+    if (ctx.channelPost) {
+      // Channel posts carry no sender; only the news relay handles them.
+      ctx.isAdmin = false;
+      await next();
+      return;
+    }
     if (!from || from.is_bot) return;
     ctx.user = deps.repo.touchUser(from.id, from.username ?? null, from.first_name ?? null);
     ctx.isAdmin = deps.config.ADMIN_IDS.includes(from.id);
     await next();
   });
+
+  // News sources (channels / chats) are handled before the private-chat guard.
+  bot.use(newsHandlers);
 
   // Private chats only for the interactive UI; groups can still use inline mode.
   bot.on("message", async (ctx, next) => {
@@ -37,12 +49,14 @@ export function createBot(deps: Deps): Bot<BotContext> {
   bot.use(adminHandlers);
   bot.use(miscHandlers);
   bot.use(askHandlers);
+  bot.use(teacherHandlers);
+  bot.use(streamHandlers);
   bot.use(settingsHandlers);
   bot.use(scheduleHandlers);
 
   bot.on("message:text", async (ctx) => {
     await ctx.reply("Не понял. Нажми кнопку ниже или посмотри /help", {
-      reply_markup: mainKeyboard({ ask: !!deps.ask, suggest: deps.config.MEDIA_CHAT_IDS.length > 0 }),
+      reply_markup: mainKeyboard({ ask: !!deps.ask }),
     });
   });
 
@@ -74,11 +88,13 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "date", description: "Расписание на дату: /date 14.09" },
     { command: "changes", description: "Последние изменения" },
     { command: "group", description: "Выбрать группу" },
+    { command: "teachers", description: "Расписание преподавателя" },
+    { command: "stream", description: "Режим потока: все группы курса" },
     { command: "settings", description: "Уведомления и напоминания" },
     { command: "help", description: "Что умеет бот" },
   ];
   if (deps.ask) common.push({ command: "ask", description: "Спросить про расписание своими словами" });
-  if (deps.config.MEDIA_CHAT_IDS.length) common.push({ command: "suggest", description: "Предложить новость медиа-ВИШ" });
+  common.push({ command: "suggest", description: "Отправить новость медиа-ВИШ" });
   await bot.api.setMyCommands(common);
   const admin = [...common, { command: "admin", description: "Админка" }, { command: "poll", description: "Опросить портал сейчас" }, { command: "broadcast", description: "Рассылка" }, { command: "health", description: "Состояние бота" }];
   for (const id of deps.config.ADMIN_IDS) {

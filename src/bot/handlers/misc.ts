@@ -14,7 +14,7 @@ export const miscHandlers = new Composer<BotContext>();
 
 miscHandlers.command("start", async (ctx) => {
   const deps = ctx.deps;
-  const kb = mainKeyboard({ ask: !!deps.ask, suggest: deps.config.MEDIA_CHAT_IDS.length > 0 });
+  const kb = mainKeyboard({ ask: !!deps.ask });
   const group = needGroup(ctx);
   if (!group) {
     await ctx.reply(
@@ -30,8 +30,13 @@ miscHandlers.command("start", async (ctx) => {
 miscHandlers.command("help", (ctx) => ctx.reply(helpText(ctx.deps), { parse_mode: "HTML" }));
 
 // ---- suggest news to media team ----
+function newsRecipients(ctx: BotContext): number[] {
+  const media = ctx.deps.config.MEDIA_CHAT_IDS;
+  return media.length ? media : ctx.deps.config.ADMIN_IDS;
+}
+
 async function startSuggest(ctx: BotContext): Promise<void> {
-  if (ctx.deps.config.MEDIA_CHAT_IDS.length === 0) {
+  if (newsRecipients(ctx).length === 0) {
     await ctx.reply("Приём новостей пока не настроен. Напиши напрямую медиа-ВИШ.");
     return;
   }
@@ -54,7 +59,7 @@ miscHandlers.on("message", async (ctx, next) => {
   const from = ctx.from;
   const header = `📨 <b>Предложение от</b> ${from?.username ? `@${esc(from.username)}` : esc(from?.first_name ?? "аноним")}${group ? ` (${esc(group.title)})` : ""} · id <code>${from?.id}</code>`;
   let delivered = 0;
-  for (const chatId of ctx.deps.config.MEDIA_CHAT_IDS) {
+  for (const chatId of newsRecipients(ctx)) {
     try {
       await ctx.api.sendMessage(chatId, header, { parse_mode: "HTML" });
       await ctx.api.forwardMessage(chatId, ctx.chat.id, ctx.msg.message_id);

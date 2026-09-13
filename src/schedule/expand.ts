@@ -136,6 +136,7 @@ function makeOccurrence(lesson: SourcedLesson, date: LocalDate, block: SourcedDa
     isDistance: !!lesson.isDistance,
     status: "scheduled",
     sources: [...lesson.sources],
+    groups: lesson.groups?.length ? [...lesson.groups] : undefined,
     weeksHint: weeksHint(lesson),
   };
 }

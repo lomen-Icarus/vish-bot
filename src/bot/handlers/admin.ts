@@ -54,7 +54,7 @@ function healthText(ctx: BotContext): string {
     p?.error ? `Ошибка: <code>${esc(p.error).slice(0, 300)}</code>` : "",
     `Учебный год: ${deps.service.academicYear}/${deps.service.academicYear + 1}`,
     `Неделя 1 осень: ${anchor1 ?? "не калибрована"} · весна: ${anchor3 ?? "не калибрована"}`,
-    `Групп: ${deps.service.groups().length} · рендер картинок: ${deps.renderer ? "да" : "нет"} · ИИ: ${deps.ask ? deps.config.AI_MODEL : "выкл"}`,
+    `Групп: ${deps.service.groups().length} · рендер картинок: ${deps.renderer ? "да" : "нет"} · ИИ: ${deps.ask ? deps.config.AI_MODEL : "выкл"} · преподаватели: ${deps.teachers ? "да" : "нет учётки"} · каналы новостей: ${deps.config.NEWS_CHANNEL_IDS.length}`,
     `Баннер портала: ${deps.repo.getMeta("banner") ? esc(deps.repo.getMeta("banner")!.slice(0, 120)) : "нет"}`,
   ]
     .filter(Boolean)

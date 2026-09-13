@@ -36,6 +36,16 @@ const schema = z.object({
   ADMIN_IDS: idList,
   MEDIA_CHAT_IDS: idList,
   FACULTY_ID: z.coerce.number().int().positive().default(32),
+  /** Group name prefixes hidden from users and skipped by the poller (part-time streams etc.). */
+  HIDDEN_GROUP_PREFIXES: z
+    .string()
+    .default("ОЗВИШ")
+    .transform((s) => s.split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean)),
+  /** Portal account for features guests cannot use (teacher schedules). */
+  PORTAL_LOGIN: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  PORTAL_PASSWORD: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  /** Telegram channel/chat ids whose posts are relayed to topic subscribers by hashtag. */
+  NEWS_CHANNEL_IDS: idList,
   DB_PATH: z.string().default("./data/vish-bot.sqlite"),
   POLL_CRON_BUSY: z.string().default("*/5 7-21 * * 1-6"),
   POLL_CRON_IDLE: z.string().default("*/30 * * * *"),

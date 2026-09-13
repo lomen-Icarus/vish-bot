@@ -120,4 +120,7 @@ export const MIGRATIONS: string[] = [
     error TEXT
   );
   `,
+  `
+  ALTER TABLE users ADD COLUMN stream_intake INTEGER;
+  `,
 ];
