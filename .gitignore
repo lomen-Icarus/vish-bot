@@ -4,6 +4,6 @@ dist/
 .env
 .env.*
 !.env.example
-data/*.db
-data/*.db-*
+data/
+out/
 .DS_Store

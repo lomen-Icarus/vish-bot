@@ -1,0 +1,49 @@
+# Деплой на Pterodactyl (FrienWorld)
+
+Сервер: панель `panel.frienworld.space`, сервер `b7f95b74`, egg **Node.js generic**, порт `srv3.frienworld.space:40070`.
+Бот работает через long polling, поэтому открытый порт и HTTPS ему не нужны.
+
+## Что лежит на сервере
+
+```
+/home/container
+├── index.js          # лаунчер: запускает dist/main.js, при Node < 22.19 скачивает портативный Node 22 в .runtime/
+├── dist/             # собранный бот (npm run build)
+├── package.json      # зависимости ставятся стартовым скриптом egg'а (npm install)
+├── .env              # секреты, создаётся вручную в файловом менеджере панели
+└── data/             # SQLite-база (vish-bot.sqlite), бэкапится копированием файла
+```
+
+Стартовая команда egg'а уже подходит: `npm install` + `node /home/container/index.js` (переменная `JS_FILE=index.js`).
+
+## Секреты: куда что класть
+
+| Что | Куда | Зачем |
+|---|---|---|
+| `BOT_TOKEN`, `ADMIN_IDS`, `MEDIA_CHAT_IDS`, `ANTHROPIC_API_KEY` | файл `/home/container/.env` (панель → Files → New file) | их читает бот при старте |
+| `PTERO_API_KEY`, `PTERO_PANEL_URL`, `PTERO_SERVER_ID` | GitHub → репозиторий → Settings → Secrets and variables → Actions | автодеплой из GitHub Actions |
+| токен тестового бота для разработки | окружение Claude Code → Environment variables (`BOT_TOKEN`) | живые проверки из песочницы без пересылки токена в чат |
+
+Пример `.env` лежит в `.env.example`. Все переменные описаны там же.
+
+## Первый запуск вручную
+
+1. В панели создать файл `.env` по образцу `.env.example`.
+2. Залить релиз: `npm run build`, затем загрузить `index.js`, `dist/`, `package.json`, `package-lock.json` (или запустить workflow `CI & Deploy` вручную: Actions → Run workflow).
+3. Нажать Start. В консоли должны появиться строки `bot authorised`, `scheduler started`, `poll finished`.
+4. Написать боту `/start`, затем `/health` (для администратора) — покажет аптайм, последний опрос и калибровку недели.
+
+## Node 18 в egg'е
+
+Образ `ghcr.io/parkervcp/yolks:nodejs_18` слишком старый для зависимостей (undici 8 и better-sqlite3 13 требуют Node 22.19+).
+Лаунчер `index.js` это обходит: один раз скачивает портативный Node 22 с nodejs.org в `.runtime/` и пересобирает нативные модули.
+Лучше попросить FrienWorld добавить образ `ghcr.io/parkervcp/yolks:nodejs_22` в egg и переключиться на него — тогда обход не нужен.
+
+## Автодеплой
+
+Workflow `.github/workflows/deploy.yml`: на каждый push в `main` прогоняет typecheck, тесты, сборку, затем загружает архив через Client API панели, распаковывает его в корень и перезапускает сервер.
+Нужны три секрета в GitHub (см. таблицу выше). `PTERO_PANEL_URL` = `https://panel.frienworld.space`, `PTERO_SERVER_ID` = `b7f95b74`.
+
+## Бэкап
+
+База — один файл `data/vish-bot.sqlite` (WAL-режим, рядом могут лежать `-wal` и `-shm`). Бэкап панели («Backups», 1 слот) его покрывает; для ручной копии остановите бот или скопируйте все три файла вместе.
