@@ -1,11 +1,12 @@
-import { Composer } from "grammy";
+import { Composer, InputFile } from "grammy";
 import type { BotContext } from "../context.js";
 import { BTN, intakePicker, mainKeyboard, streamDayNav, streamKeyboard } from "../keyboards.js";
 import { needGroup } from "../views.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, formatStreamWeek, mergeStream, type StreamRow } from "../../schedule/stream.js";
 import type { Occurrence } from "../../schedule/model.js";
 import { filterSubgroup } from "../../schedule/format.js";
-import { addDays, mondayOf, todayMsk, type LocalDate } from "../../time.js";
+import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../../time.js";
+import { logger } from "../../logger.js";
 
 export const streamHandlers = new Composer<BotContext>();
 
@@ -45,23 +46,49 @@ async function enterStream(ctx: BotContext): Promise<void> {
   await sendStreamDay(ctx, intake, todayMsk(), { keyboard: true });
 }
 
-async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, opts: { edit?: boolean; keyboard?: boolean } = {}): Promise<void> {
+async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, opts: { edit?: boolean; keyboard?: boolean; forceImage?: boolean } = {}): Promise<void> {
   const rows = rowsFor(ctx, intake, date, date);
-  const text = formatStreamDay(intake, date, rows, ctx.deps.service.weekInfo(date), todayMsk(), ownKeyIn(ctx, intake));
-  if (opts.edit && ctx.callbackQuery?.message) {
+  const ownKey = ownKeyIn(ctx, intake);
+  const text = formatStreamDay(intake, date, rows, ctx.deps.service.weekInfo(date), todayMsk(), ownKey);
+  const renderer = ctx.deps.renderer;
+  const wantImage = !!renderer && (opts.forceImage || ctx.user.format === "image" || (ctx.user.format === "both" && !opts.edit));
+  if (opts.keyboard) {
+    // A reply keyboard and an inline keyboard cannot share one message: send the mode keyboard first.
+    await ctx.reply("Поток открыт. Вернуться: «◀️ В меню».", { reply_markup: streamKeyboard() });
+  }
+  if (wantImage && renderer) {
     try {
-      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk()) });
+      const png = await renderer.renderStreamDay({
+        intake,
+        date,
+        rows: rows.filter((r) => r.date === date).map((r) => ({ ...r, mine: ownKey !== null && r.groupKeys.includes(ownKey) })),
+        weekInfo: ctx.deps.service.weekInfo(date),
+        today: todayMsk(),
+        now: wallClock(),
+      });
+      await ctx.replyWithPhoto(new InputFile(png, `stream-${intake}-${date}.png`), { reply_markup: streamDayNav(date, todayMsk(), { image: false }) });
+      if (ctx.user.format !== "both") return;
+    } catch (err) {
+      logger.warn({ err: String(err) }, "stream poster failed");
+    }
+  }
+  if (opts.edit && ctx.callbackQuery?.message && !ctx.callbackQuery.message.photo) {
+    try {
+      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk(), { image: !!renderer }) });
       return;
     } catch (err) {
       if (String(err).includes("message is not modified")) return;
     }
   }
-  if (opts.keyboard) {
-    // A reply keyboard and an inline keyboard cannot share one message: send the mode keyboard first.
-    await ctx.reply("Поток открыт. Вернуться: «◀️ В меню».", { reply_markup: streamKeyboard() });
-  }
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk()) });
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk(), { image: !!renderer && !wantImage }) });
 }
+
+streamHandlers.callbackQuery(/^simg:(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
+  await ctx.answerCallbackQuery({ text: "Рисую…" });
+  const intake = currentIntake(ctx);
+  if (intake === null) return;
+  await sendStreamDay(ctx, intake, ctx.match[1]!, { forceImage: true });
+});
 
 streamHandlers.command("stream", enterStream);
 streamHandlers.hears(BTN.stream, enterStream);

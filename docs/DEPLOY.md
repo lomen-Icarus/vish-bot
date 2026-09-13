@@ -20,7 +20,7 @@
 
 | Что | Куда | Зачем |
 |---|---|---|
-| `BOT_TOKEN`, `ADMIN_IDS`, `MEDIA_CHAT_IDS`, `ANTHROPIC_API_KEY` | файл `/home/container/.env` (панель → Files → New file) | их читает бот при старте |
+| `BOT_TOKEN`, `ADMIN_IDS`, `MEDIA_CHAT_IDS`, `ANTHROPIC_API_KEY`, `PORTAL_LOGIN`/`PORTAL_PASSWORD`, `VK_SERVICE_TOKEN`, `NEWS_CHANNEL_IDS` | файл `/home/container/.env` (панель → Files → New file) | их читает бот при старте |
 | `PTERO_API_KEY`, `PTERO_PANEL_URL`, `PTERO_SERVER_ID` | GitHub → репозиторий → Settings → Secrets and variables → Actions | автодеплой из GitHub Actions |
 | токен тестового бота для разработки | окружение Claude Code → Environment variables (`BOT_TOKEN`) | живые проверки из песочницы без пересылки токена в чат |
 

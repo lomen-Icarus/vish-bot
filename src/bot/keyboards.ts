@@ -27,15 +27,15 @@ export function mainKeyboard(opts: { ask: boolean }): Keyboard {
   const kb = new Keyboard()
     .text(BTN.today)
     .text(BTN.tomorrow)
-    .text(BTN.week)
-    .row()
-    .text(BTN.nextWeek)
-    .text(BTN.changes)
-    .text(BTN.settings)
-    .row()
-    .text(BTN.suggest)
     .text(BTN.teachers)
-    .text(BTN.stream);
+    .row()
+    .text(BTN.week)
+    .text(BTN.nextWeek)
+    .text(BTN.stream)
+    .row()
+    .text(BTN.changes)
+    .text(BTN.suggest)
+    .text(BTN.settings);
   if (opts.ask) kb.row().text(BTN.ask);
   return kb.resized().persistent();
 }
@@ -108,6 +108,7 @@ export function weekNav(monday: LocalDate, opts: { image: boolean }): InlineKeyb
     .row()
     .text("📅 День", `d:${monday}`);
   if (opts.image) kb.text("🖼 Картинкой", `wimg:${monday}`);
+  kb.text("📆 В календарь", "ics:menu");
   return kb;
 }
 
@@ -128,10 +129,11 @@ export function teacherWeekNav(teacherId: number, monday: LocalDate): InlineKeyb
     .text("🔎 Другой", "t:search");
 }
 
-export function streamDayNav(date: LocalDate, today: LocalDate): InlineKeyboard {
+export function streamDayNav(date: LocalDate, today: LocalDate, opts: { image: boolean } = { image: false }): InlineKeyboard {
   const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `sd:${addDays(date, -1)}`);
   if (date !== today) kb.text("сегодня", `sd:${today}`);
   kb.text(`${fmtDDMM(addDays(date, 1))} ▶️`, `sd:${addDays(date, 1)}`);
+  if (opts.image) kb.row().text("🖼 Картинкой", `simg:${date}`);
   return kb;
 }
 
@@ -154,7 +156,6 @@ export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: {
   kb.text(`⏱ Перед каждой парой: ${minutesLabel(user.remindEachMin)}`, "s:each").row();
   kb.text(`🌙 Вечером на завтра: ${user.eveningAt ?? "выкл"}`, "s:evening").row();
   kb.text(`🤫 Тихие часы: ${user.quietFrom ? `${user.quietFrom}–${user.quietTo}` : "выкл"}`, "s:quiet").row();
-  kb.text(`📢 Объявления портала: ${onoff(user.notifyNotices)}`, "s:notices").row();
   for (const t of opts.topics) kb.text(`${user.topics.includes(t) ? "✅" : "▫️"} ${TOPIC_LABELS[t] ?? t}`, `s:topic:${t}`);
   if (opts.topics.length) kb.row();
   kb.text(`👀 Следить за другими группами${opts.watchCount ? ` (${opts.watchCount})` : ""}`, "s:watch").row();

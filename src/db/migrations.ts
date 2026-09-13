@@ -123,4 +123,47 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE users ADD COLUMN stream_intake INTEGER;
   `,
+  `
+  UPDATE users SET notify_notices = 0;
+  `,
+  `
+  CREATE TABLE ai_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    reported INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE news_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,
+    ref TEXT NOT NULL UNIQUE,
+    title TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    last_scanned_at TEXT,
+    last_error TEXT
+  );
+  CREATE TABLE news_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL,
+    external_id TEXT NOT NULL,
+    url TEXT,
+    published_at TEXT NOT NULL,
+    text TEXT NOT NULL,
+    photo_url TEXT,
+    topic TEXT,
+    title TEXT,
+    sent_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    UNIQUE (source_id, external_id)
+  );
+  CREATE TABLE news_complaints (
+    item_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (item_id, user_id)
+  );
+  `,
 ];

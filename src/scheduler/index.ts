@@ -2,6 +2,7 @@ import { Cron } from "croner";
 import type { ScheduleService } from "../schedule/service.js";
 import type { Notifier } from "../notify/dispatcher.js";
 import type { Repo } from "../db/repo.js";
+import type { NewsScanner } from "../news/scanner.js";
 import { logger } from "../logger.js";
 
 const TZ = "Europe/Moscow";
@@ -12,7 +13,7 @@ export interface SchedulerHandles {
   pollNow(): Promise<void>;
 }
 
-export function startScheduler(opts: { service: ScheduleService; notifier: Notifier; repo: Repo; busyCron: string; idleCron: string }): SchedulerHandles {
+export function startScheduler(opts: { service: ScheduleService; notifier: Notifier; repo: Repo; busyCron: string; idleCron: string; newsCron?: string; news?: NewsScanner | null }): SchedulerHandles {
   let lastPollAt = 0;
   let pollInFlight: Promise<void> | null = null;
 
@@ -50,6 +51,18 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       logger.info("housekeeping done");
     }),
   ];
+  if (opts.news && opts.newsCron) {
+    const news = opts.news;
+    jobs.push(
+      new Cron(opts.newsCron, { timezone: TZ, protect: true, name: "news-scan" }, async () => {
+        try {
+          await news.scan();
+        } catch (err) {
+          logger.error({ err }, "news scan failed");
+        }
+      }),
+    );
+  }
   logger.info({ busy: opts.busyCron, idle: opts.idleCron }, "scheduler started");
 
   return {
