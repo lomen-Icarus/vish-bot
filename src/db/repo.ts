@@ -22,6 +22,8 @@ export interface User {
   quietFrom: string | null;
   quietTo: string | null;
   topics: string[];
+  /** Intake year (two digits) selected in stream mode; null = follow own group. */
+  streamIntake: number | null;
   blocked: boolean;
   createdAt: string;
   lastSeenAt: string;
@@ -43,6 +45,7 @@ interface UserRow {
   quiet_from: string | null;
   quiet_to: string | null;
   topics: string;
+  stream_intake: number | null;
   blocked: number;
   created_at: string;
   last_seen_at: string;
@@ -71,6 +74,7 @@ function rowToUser(r: UserRow): User {
     quietFrom: r.quiet_from,
     quietTo: r.quiet_to,
     topics,
+    streamIntake: r.stream_intake ?? null,
     blocked: r.blocked === 1,
     createdAt: r.created_at,
     lastSeenAt: r.last_seen_at,
@@ -183,6 +187,7 @@ export class Repo {
     if (patch.quietFrom !== undefined) map.quiet_from = patch.quietFrom;
     if (patch.quietTo !== undefined) map.quiet_to = patch.quietTo;
     if (patch.topics !== undefined) map.topics = JSON.stringify(patch.topics);
+    if (patch.streamIntake !== undefined) map.stream_intake = patch.streamIntake;
     if (patch.blocked !== undefined) map.blocked = patch.blocked ? 1 : 0;
     const keys = Object.keys(map);
     if (keys.length === 0) return;

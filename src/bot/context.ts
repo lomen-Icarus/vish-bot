@@ -4,10 +4,11 @@ import type { Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { Renderer } from "../render/image.js";
 import type { AskService } from "../ai/ask.js";
+import type { TeacherService } from "../portal/teachers.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
-  kind: "suggest" | "broadcast" | "broadcast-target" | "ask";
+  kind: "suggest" | "broadcast" | "broadcast-target" | "ask" | "teacher";
   /** For broadcast: captured message to forward. */
   chatId?: number;
   messageId?: number;
@@ -20,6 +21,7 @@ export interface Deps {
   service: ScheduleService;
   renderer: Renderer | null;
   ask: AskService | null;
+  teachers: TeacherService | null;
   pending: Map<number, PendingState>;
   startedAt: Date;
 }

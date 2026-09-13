@@ -36,6 +36,8 @@ const SESSION_FETCH_IDLE_MS = 6 * 60 * 60 * 1000;
 
 export interface ScheduleServiceOptions {
   facultyId: number;
+  /** Upper-cased group prefixes to hide and skip (e.g. ОЗВИШ). */
+  hiddenPrefixes?: string[];
 }
 
 export class ScheduleService {
@@ -88,12 +90,27 @@ export class ScheduleService {
 
   // ---------- groups ----------
 
+  private visible(groups: LogicalGroup[]): LogicalGroup[] {
+    const hidden = new Set(this.opts.hiddenPrefixes ?? []);
+    return groups.filter((g) => !hidden.has(g.prefix.toUpperCase()));
+  }
+
   groups(): LogicalGroup[] {
     if (this.groupsCache.length === 0) {
       const portal = this.repo.listPortalGroups(true);
-      this.groupsCache = buildLogicalGroups(portal, this.academicYear);
+      this.groupsCache = this.visible(buildLogicalGroups(portal, this.academicYear));
     }
     return this.groupsCache;
+  }
+
+  /** Groups of one intake year (two digits), e.g. 23 -> ВИШ-11-23 … ВИШ-14-23. */
+  stream(intake: number): LogicalGroup[] {
+    return this.groups().filter((g) => g.intake === intake);
+  }
+
+  /** Distinct intake years that have groups, newest first. */
+  intakes(): number[] {
+    return [...new Set(this.groups().map((g) => g.intake))].sort((a, b) => b - a);
   }
 
   group(key: string): LogicalGroup | null {
@@ -103,7 +120,7 @@ export class ScheduleService {
   async refreshGroups(): Promise<LogicalGroup[]> {
     const portal = await this.portal.getFacultyGroups(this.opts.facultyId);
     this.repo.upsertPortalGroups(portal.map((g) => ({ id: g.id, name: g.name, groupKey: logicalKeyFor(g.name) })));
-    this.groupsCache = buildLogicalGroups(portal, this.academicYear);
+    this.groupsCache = this.visible(buildLogicalGroups(portal, this.academicYear));
     return this.groupsCache;
   }
 

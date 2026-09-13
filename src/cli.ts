@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const db = openDatabase(config.DB_PATH);
   const repo = new Repo(db);
   const portal = new PortalClient({ insecureTls: config.PORTAL_TLS_INSECURE, proxyUrl: config.HTTPS_PROXY });
-  const service = new ScheduleService(repo, portal, { facultyId: config.FACULTY_ID });
+  const service = new ScheduleService(repo, portal, { facultyId: config.FACULTY_ID, hiddenPrefixes: config.HIDDEN_GROUP_PREFIXES });
   const strip = (s: string) => s.replace(/<[^>]+>/g, "");
 
   const pickGroup = (q: string | undefined) => {

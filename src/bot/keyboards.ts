@@ -10,21 +10,58 @@ export const BTN = {
   nextWeek: "🗓 Следующая",
   changes: "🔔 Изменения",
   settings: "⚙️ Настройки",
-  suggest: "📨 Предложить новость",
+  suggest: "📨 Отправить новость",
+  teachers: "👨‍🏫 Преподаватели",
+  stream: "🎓 Поток",
   ask: "💬 Спросить",
+  // stream mode
+  streamYesterday: "Поток: вчера",
+  streamToday: "Поток: сегодня",
+  streamTomorrow: "Поток: завтра",
+  streamWeek: "Поток: неделя",
+  streamCommon: "🤝 Общие пары",
+  backToMenu: "◀️ В меню",
 } as const;
 
-export function mainKeyboard(opts: { ask: boolean; suggest: boolean }): Keyboard {
-  const kb = new Keyboard().text(BTN.today).text(BTN.tomorrow).row().text(BTN.week).text(BTN.nextWeek).row().text(BTN.changes).text(BTN.settings);
-  if (opts.suggest || opts.ask) {
-    kb.row();
-    if (opts.suggest) kb.text(BTN.suggest);
-    if (opts.ask) kb.text(BTN.ask);
-  }
+export function mainKeyboard(opts: { ask: boolean }): Keyboard {
+  const kb = new Keyboard()
+    .text(BTN.today)
+    .text(BTN.tomorrow)
+    .text(BTN.week)
+    .row()
+    .text(BTN.nextWeek)
+    .text(BTN.changes)
+    .text(BTN.settings)
+    .row()
+    .text(BTN.suggest)
+    .text(BTN.teachers)
+    .text(BTN.stream);
+  if (opts.ask) kb.row().text(BTN.ask);
   return kb.resized().persistent();
 }
 
-/** Group picker grouped by course; callback "g:<key>". */
+export function streamKeyboard(): Keyboard {
+  return new Keyboard()
+    .text(BTN.streamYesterday)
+    .text(BTN.streamToday)
+    .text(BTN.streamTomorrow)
+    .row()
+    .text(BTN.streamWeek)
+    .text(BTN.streamCommon)
+    .row()
+    .text(BTN.settings)
+    .text(BTN.backToMenu)
+    .resized()
+    .persistent();
+}
+
+export function intakePicker(intakes: number[], selected: number): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const i of intakes) kb.text(`${i === selected ? "✅ " : ""}20${i}`, `si:${i}`);
+  return kb;
+}
+
+/** Group picker grouped by course; callback "<prefix>:<key>". */
 export function groupPicker(groups: LogicalGroup[], opts: { prefix?: string; selected?: string | null } = {}): InlineKeyboard {
   const kb = new InlineKeyboard();
   const cb = opts.prefix ?? "g";
@@ -40,7 +77,7 @@ export function groupPicker(groups: LogicalGroup[], opts: { prefix?: string; sel
     let inRow = 0;
     for (const g of list) {
       const mark = opts.selected === g.key ? "✅ " : "";
-      const label = g.title.replace(/^ВИШ-/, "").replace(/^ОЗВИШ-/, "оз ");
+      const label = g.title.replace(/^ВИШ-/, "").replace(/^ОЗВИШ-/, "оз ").replace(/\s*\((.*?)\)\s*$/, " $1");
       kb.text(`${mark}${label}`, `${cb}:${g.key}`);
       inRow++;
       const wide = label.length > 8;
@@ -74,6 +111,30 @@ export function weekNav(monday: LocalDate, opts: { image: boolean }): InlineKeyb
   return kb;
 }
 
+export function teacherDayNav(teacherId: number, date: LocalDate, today: LocalDate): InlineKeyboard {
+  const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `td:${teacherId}:${addDays(date, -1)}`);
+  if (date !== today) kb.text("сегодня", `td:${teacherId}:${today}`);
+  kb.text(`${fmtDDMM(addDays(date, 1))} ▶️`, `td:${teacherId}:${addDays(date, 1)}`).row();
+  kb.text("🗓 Неделя", `tw:${teacherId}:${date}`).text("🔎 Другой", "t:search");
+  return kb;
+}
+
+export function teacherWeekNav(teacherId: number, monday: LocalDate): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("◀️ пред.", `tw:${teacherId}:${addDays(monday, -7)}`)
+    .text("след. ▶️", `tw:${teacherId}:${addDays(monday, 7)}`)
+    .row()
+    .text("📅 День", `td:${teacherId}:${monday}`)
+    .text("🔎 Другой", "t:search");
+}
+
+export function streamDayNav(date: LocalDate, today: LocalDate): InlineKeyboard {
+  const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `sd:${addDays(date, -1)}`);
+  if (date !== today) kb.text("сегодня", `sd:${today}`);
+  kb.text(`${fmtDDMM(addDays(date, 1))} ▶️`, `sd:${addDays(date, 1)}`);
+  return kb;
+}
+
 const onoff = (v: boolean) => (v ? "вкл ✅" : "выкл ❌");
 
 export function minutesLabel(min: number | null): string {
@@ -102,10 +163,23 @@ export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: {
 }
 
 export const TOPICS = ["contests", "announcements", "events"] as const;
+export type Topic = (typeof TOPICS)[number];
 export const TOPIC_LABELS: Record<string, string> = {
   contests: "Конкурсы и стипендии",
   announcements: "Объявления",
   events: "События ВИШ",
+};
+export const TOPIC_HINTS: Record<string, string> = {
+  contests: "конкурсы, конференции, гранты, стипендии и другие возможности",
+  announcements: "срочное и важное: дистант, отмены, дедлайны, изменения в учёбе",
+  events: "жизнь школы: Тайный Санта, Масленица, защиты проектов, встречи",
+};
+
+/** Hashtags that route a channel post to a topic. */
+export const TOPIC_HASHTAGS: Record<Topic, RegExp> = {
+  contests: /#(конкурс|конкурсы|стипенди\w*|конференци\w*|грант\w*|олимпиад\w*|хакатон\w*|возможност\w*)/iu,
+  announcements: /#(объявлени\w*|срочно|важно|дистант\w*|отмена|дедлайн\w*)/iu,
+  events: /#(событи\w*|мероприят\w*|санта|масленица|защит\w*|праздник\w*|встреча)/iu,
 };
 
 export function onboardingKeyboard(): InlineKeyboard {

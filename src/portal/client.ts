@@ -1,4 +1,5 @@
-import { parseGroupButtons, parseGroupName, parseGroupSchedule, type ParsedScheduleDay } from "chuvsu-js/parsers";
+import { parseGroupButtons, parseGroupName, parseGroupSchedule, parseTeacherButtons, parseTeacherInfo, parseTeacherSchedule, type ParsedScheduleDay } from "chuvsu-js/parsers";
+import type { TeacherInfo } from "chuvsu-js";
 import { PortalHttp, PortalHttpError, type PortalHttpOptions } from "./http.js";
 import { isLoginPage, parseAcademicYear, parseBanner, parsePeriod, parseWeekMarker, type WeekMarker } from "./pageMeta.js";
 import type { Period } from "../schedule/model.js";
@@ -38,23 +39,38 @@ export class PortalAuthError extends Error {
  * Guest-mode client for tt.chuvsu.ru. Keeps one session and transparently
  * re-logs in when the portal answers with its login form.
  */
+export interface PortalCredentials {
+  login: string;
+  password: string;
+}
+
 export class PortalClient {
   readonly http: PortalHttp;
   private loggedIn = false;
   private loginPromise: Promise<void> | null = null;
+  private readonly credentials: PortalCredentials | undefined;
 
-  constructor(opts: PortalHttpOptions = {}) {
+  constructor(opts: PortalHttpOptions & { credentials?: PortalCredentials } = {}) {
     this.http = new PortalHttp(opts);
+    this.credentials = opts.credentials;
   }
 
-  async loginAsGuest(): Promise<void> {
+  get authenticated(): boolean {
+    return !!this.credentials;
+  }
+
+  /** Guest session, or the configured account when credentials were given. */
+  async login(): Promise<void> {
     if (this.loginPromise) return this.loginPromise;
     this.loginPromise = (async () => {
       this.http.clearCookies();
-      const res = await this.http.post(`${PORTAL_BASE}/auth`, { guest: "Войти гостем", hfac: "0", pertt: "1" });
-      if (res.status !== 302) throw new PortalAuthError(`Guest login failed: HTTP ${res.status}`);
+      const form: Record<string, string> = this.credentials
+        ? { wname: this.credentials.login, wpass: this.credentials.password, wauto: "1", auth: "Войти", hfac: "0", pertt: "1" }
+        : { guest: "Войти гостем", hfac: "0", pertt: "1" };
+      const res = await this.http.post(`${PORTAL_BASE}/auth`, form);
+      if (res.status !== 302) throw new PortalAuthError(`${this.credentials ? "Account" : "Guest"} login failed: HTTP ${res.status}`);
       this.loggedIn = true;
-      logger.info("portal: guest session established");
+      logger.info({ mode: this.credentials ? "account" : "guest" }, "portal: session established");
     })();
     try {
       await this.loginPromise;
@@ -63,8 +79,12 @@ export class PortalClient {
     }
   }
 
+  loginAsGuest(): Promise<void> {
+    return this.login();
+  }
+
   private async ensureLogin(): Promise<void> {
-    if (!this.loggedIn) await this.loginAsGuest();
+    if (!this.loggedIn) await this.login();
   }
 
   /** POST + follow, retrying once after a fresh login if the session expired. */
@@ -74,12 +94,42 @@ export class PortalClient {
     if (isLoginPage(res.body)) {
       logger.info("portal: session expired, re-authenticating");
       this.loggedIn = false;
-      await this.loginAsGuest();
+      await this.login();
       res = await this.http.postFollow(url, form);
       if (isLoginPage(res.body)) throw new PortalAuthError("Portal keeps returning the login page");
     }
     if (res.status !== 200) throw new PortalHttpError(`HTTP ${res.status} for ${url}`, res.status);
     return res.body;
+  }
+
+  /** GET + follow with the same re-login handling. */
+  private async authGet(url: string): Promise<string> {
+    await this.ensureLogin();
+    let res = await this.http.getFollow(url);
+    if (isLoginPage(res.body)) {
+      this.loggedIn = false;
+      await this.login();
+      res = await this.http.getFollow(url);
+      if (isLoginPage(res.body)) throw new PortalAuthError("Portal keeps returning the login page");
+    }
+    if (res.status !== 200) throw new PortalHttpError(`HTTP ${res.status} for ${url}`, res.status);
+    return res.body;
+  }
+
+  /** Full teacher directory (account only; guests are redirected away). */
+  async getAllTeachers(): Promise<Array<{ id: number; name: string }>> {
+    const html = await this.authGet(`${PORTAL_BASE}/index/tech`);
+    return parseTeacherButtons(html).map((t) => ({ id: t.id, name: t.name.trim() }));
+  }
+
+  async searchTeachers(query: string): Promise<Array<{ id: number; name: string }>> {
+    const html = await this.authPost(`${PORTAL_BASE}/`, { techname: query, findtech: "найти", hfac: "0", pertt: "1" });
+    return parseTeacherButtons(html).map((t) => ({ id: t.id, name: t.name.trim() }));
+  }
+
+  async getTeacherPage(teacherId: number, period: Period): Promise<{ days: ParsedScheduleDay[]; info: TeacherInfo | null; weekMarker: WeekMarker | null }> {
+    const html = await this.authPost(`${PORTAL_BASE}/index/techtt/tech/${teacherId}`, { htype: String(period) });
+    return { days: parseTeacherSchedule(html), info: parseTeacherInfo(html), weekMarker: parseWeekMarker(html) };
   }
 
   async getFacultyGroups(facultyId: number): Promise<PortalGroup[]> {

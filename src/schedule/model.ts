@@ -36,6 +36,8 @@ export interface Occurrence {
   substituted?: { room?: string | null; teacher?: string | null; distance?: boolean };
   /** Portal group names this lesson was observed in (merged logical groups). */
   sources: string[];
+  /** Groups attending, when the source page lists them (teacher pages). */
+  groups?: string[];
   /** Human hint like "2–16 нед., нечётные" (semester rows only). */
   weeksHint?: string;
 }

@@ -101,7 +101,7 @@ scheduleHandlers.callbackQuery(/^g:(.+)$/, async (ctx) => {
   ctx.deps.repo.updateUser(ctx.user.id, { groupKey: group.key, subgroup: null });
   await ctx.answerCallbackQuery({ text: `Группа: ${group.title}` });
   try {
-    await ctx.editMessageText(`Группа выбрана: <b>${esc(group.title)}</b>${group.portalIds.length > 1 ? `\n<i>Объединяет: ${group.portalNames.map(esc).join(", ")}</i>` : ""}`, { parse_mode: "HTML" });
+    await ctx.editMessageText(`Группа выбрана: <b>${esc(group.title)}</b>`, { parse_mode: "HTML" });
   } catch {
     /* message may be gone */
   }

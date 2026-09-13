@@ -123,7 +123,6 @@ function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number
   else if (o.room) meta.push(`ауд. ${o.room}`);
   if (o.teacher) meta.push(o.teacher);
   if (o.subgroup) meta.push(`${o.subgroup} подгруппа`);
-  if (opts.variantCount > 1 && o.sources.length < opts.variantCount) meta.push(`только ${o.sources.join(", ")}`);
   const badges: Array<{ label: string; color: string }> = [];
   if (moved && o.movedTo) badges.push({ label: `перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, color: "#fb7185" });
   if (o.movedFrom) badges.push({ label: `перенос с ${o.movedFrom.date.slice(8, 10)}.${o.movedFrom.date.slice(5, 7)}`, color: "#fbbf24" });

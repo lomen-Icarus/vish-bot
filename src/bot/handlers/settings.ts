@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, groupPicker, settingsKeyboard, TOPICS } from "../keyboards.js";
+import { BTN, groupPicker, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import type { User } from "../../db/repo.js";
@@ -24,8 +24,17 @@ function settingsText(ctx: BotContext): string {
   const lines = ["<b>⚙️ Настройки</b>"];
   if (!group) lines.push("Группа не выбрана.");
   lines.push("", "Нажимай на пункт, чтобы переключить.");
+  lines.push(
+    "",
+    "<b>Что за уведомления</b>",
+    "🔔 Изменения — переносы, замены аудиторий, отмены и новые пары твоей группы.",
+    "🎓 Сессия — то же самое для расписания зачётов и экзаменов.",
+    "📢 Объявления портала — красная плашка на tt.chuvsu.ru (например, про дистант).",
+    ...TOPICS.map((t) => `🏷 ${TOPIC_LABELS[t]} — ${TOPIC_HINTS[t]}.`),
+    "Темы — это рассылки от ВИШ, включи те, что хочешь получать.",
+  );
   const watch = ctx.deps.repo.watchGroups(ctx.user.id);
-  if (watch.length) lines.push(`Слежу за: ${watch.map((k) => esc(ctx.deps.service.group(k)?.title ?? k)).join(", ")}`);
+  if (watch.length) lines.push("", `Слежу за: ${watch.map((k) => esc(ctx.deps.service.group(k)?.title ?? k)).join(", ")}`);
   return lines.join("\n");
 }
 

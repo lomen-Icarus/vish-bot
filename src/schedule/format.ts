@@ -15,8 +15,6 @@ export interface FormatOptions {
   subgroup?: number | null;
   /** Current wall clock, to mark the ongoing lesson. */
   now?: WallClock;
-  /** Total portal variants of the group; used for "только ВИШ-13-23" hints. */
-  variantCount?: number;
 }
 
 export function filterSubgroup(list: Occurrence[], subgroup: number | null | undefined): Occurrence[] {
@@ -63,7 +61,7 @@ export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   else if (o.room) meta.push(`ауд. ${esc(o.room)}`);
   if (o.teacher) meta.push(esc(o.teacher));
   if (o.subgroup) meta.push(`${o.subgroup} подгр.`);
-  if (opts.variantCount && opts.variantCount > 1 && o.sources.length < opts.variantCount) meta.push(`только ${o.sources.map(esc).join(", ")}`);
+  if (o.groups?.length) meta.push(o.groups.map(esc).join(", "));
   lines.push(`     ${meta.join(" · ")}`);
   if (moved && o.movedTo) lines.push(`     ↪️ перенесена на ${fmtDDMM(o.movedTo.date)}${o.movedTo.slot ? ` (${o.movedTo.slot} пара)` : ""}`);
   if (o.movedFrom) lines.push(`     ↩️ перенос с ${fmtDDMM(o.movedFrom.date)} (${o.movedFrom.slot} пара)`);
@@ -82,7 +80,7 @@ export function formatDay(group: LogicalGroup, date: LocalDate, lessons: Occurre
   const head = `${dayHeader(date, info, today)}\n${esc(group.title)}`;
   if (list.length === 0) return `${head}\n\n😴 Пар нет`;
   const active = list.filter((o) => o.status === "scheduled");
-  const body = list.map((o) => formatLesson(o, { ...opts, variantCount: group.portalIds.length })).join("\n\n");
+  const body = list.map((o) => formatLesson(o, opts)).join("\n\n");
   const summary = active.length ? `\n\n${countLessons(active.length)}${firstLast(active)}` : "";
   return `${head}\n\n${body}${summary}`;
 }
