@@ -27,6 +27,8 @@ jobs:
         run: |
           mkdir -p release
           cp -r dist index.js package.json package-lock.json .env.example release/
+          # The hosting egg runs "npm install" on every start; keep it lean and quiet.
+          printf 'omit=dev\naudit=false\nfund=false\n' > release/.npmrc
           tar -C release -czf release.tar.gz .
       - uses: actions/upload-artifact@v4
         with:

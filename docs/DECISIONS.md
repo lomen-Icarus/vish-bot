@@ -18,7 +18,7 @@
 | 12 | ИИ | `/ask` через Claude (`claude-opus-5`, низкий effort, кеш системного промпта). Только вопросы о расписании, жёсткий системный промпт, лимиты: 10 вопросов/день на человека, 300/день всего. Включается наличием `ANTHROPIC_API_KEY`. |
 | 13 | Админ | Telegram ID `5985343016` (список в `ADMIN_IDS`). Команды `/admin`, `/stats`, `/health`, `/poll`, `/broadcast`. |
 | 14 | Тон | На «ты», сдержанно. |
-| 15 | Стек | Node.js 22, TypeScript, grammY, chuvsu-js, SQLite (better-sqlite3), croner. MariaDB хостинга не используется. |
+| 15 | Стек | Node.js 22, TypeScript, grammY, chuvsu-js, SQLite через встроенный node:sqlite, croner. MariaDB хостинга не используется. |
 | 16 | Хостинг | Pterodactyl (FrienWorld), egg Node.js, long polling. HTTPS не нужен. Автодеплой из GitHub Actions через Client API. |
 | 17 | Секреты | Только в `.env` на сервере и в GitHub Secrets. В репозитории и переписке не хранятся; скомпрометированные токены заменить. |
 | 18 | Inline-режим | `@бот 12-23 завтра` в любом чате вставляет расписание дня. |
