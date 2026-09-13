@@ -29,15 +29,18 @@
 ## Первый запуск вручную
 
 1. В панели создать файл `.env` по образцу `.env.example`.
-2. Залить релиз: `npm run build`, затем загрузить `index.js`, `dist/`, `package.json`, `package-lock.json` (или запустить workflow `CI & Deploy` вручную: Actions → Run workflow).
+2. Залить релиз: `npm run build`, затем загрузить `index.js`, `dist/`, `package.json`, `package-lock.json` и `.npmrc` с содержимым `omit=dev` (или запустить workflow `CI & Deploy` вручную: Actions → Run workflow, он собирает всё сам).
 3. Нажать Start. В консоли должны появиться строки `bot authorised`, `scheduler started`, `poll finished`.
 4. Написать боту `/start`, затем `/health` (для администратора) — покажет аптайм, последний опрос и калибровку недели.
 
 ## Node 18 в egg'е
 
-Образ `ghcr.io/parkervcp/yolks:nodejs_18` слишком старый для зависимостей (undici 8 и better-sqlite3 13 требуют Node 22.19+).
-Лаунчер `index.js` это обходит: один раз скачивает портативный Node 22 с nodejs.org в `.runtime/` и пересобирает нативные модули.
+Образ `ghcr.io/parkervcp/yolks:nodejs_18` слишком старый для зависимостей (undici 8 требует Node 22.19+, база данных использует встроенный `node:sqlite`).
+Лаунчер `index.js` это обходит: один раз скачивает портативный Node 22 с nodejs.org в `.runtime/` и ставит зависимости им.
 Лучше попросить FrienWorld добавить образ `ghcr.io/parkervcp/yolks:nodejs_22` в egg и переключиться на него — тогда обход не нужен.
+
+Важно: контейнер FrienWorld запрещает `utime()` на файлах (ошибка `EPERM: operation not permitted, futime`), поэтому нативные модули там не собираются вообще.
+В проекте их нет: SQLite встроен в Node, `@resvg/resvg-js` ставится готовым бинарником как обычный npm-пакет. Не добавляйте зависимости с `node-gyp`.
 
 ## Автодеплой
 

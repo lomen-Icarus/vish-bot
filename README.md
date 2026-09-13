@@ -43,4 +43,4 @@ npm run dev                     # бот с автоперезапуском
 
 ## Стек
 
-Node.js 22, TypeScript, grammY, chuvsu-js (парсеры портала), better-sqlite3, croner, satori + resvg (постеры), pino, zod, `@anthropic-ai/sdk` (опционально).
+Node.js 22, TypeScript, grammY, chuvsu-js (парсеры портала), встроенный node:sqlite (без нативных модулей), croner, satori + resvg (постеры), pino, zod, `@anthropic-ai/sdk` (опционально).
