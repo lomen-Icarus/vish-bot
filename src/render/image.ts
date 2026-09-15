@@ -10,6 +10,8 @@ import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallCl
 import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El } from "./core.js";
 
 export interface DayRenderInput {
+  /** Poster look for this one render; the bot default when absent. */
+  theme?: string;
   group: LogicalGroup;
   date: LocalDate;
   lessons: Occurrence[];
@@ -19,6 +21,8 @@ export interface DayRenderInput {
 }
 
 export interface WeekRenderInput {
+  /** Poster look for this one render; the bot default when absent. */
+  theme?: string;
   group: LogicalGroup;
   monday: LocalDate;
   byDate: Map<LocalDate, Occurrence[]>;
@@ -43,6 +47,8 @@ export interface StreamRenderRow {
 }
 
 export interface StreamRenderInput {
+  /** Poster look for this one render; the bot default when absent. */
+  theme?: string;
   intake: number;
   date: LocalDate;
   rows: StreamRenderRow[];

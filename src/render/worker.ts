@@ -8,7 +8,7 @@
  * recycle the whole process, which returns everything to the OS, and keeps
  * the heavy rasterisation off the bot's event loop.
  */
-import { createThemedRenderer } from "./themes.js";
+import { MultiThemeRenderer } from "./themes.js";
 import type { DayRenderInput, StreamRenderInput, WeekRenderInput } from "./image.js";
 import type { Occurrence } from "../schedule/model.js";
 import type { LocalDate } from "../time.js";
@@ -30,10 +30,18 @@ export interface RenderResponse {
 export type WeekWireInput = Omit<WeekRenderInput, "byDate"> & { byDate: Array<[LocalDate, Occurrence[]]> };
 
 async function main(): Promise<void> {
-  const theme = process.env.POSTER_THEME || "midnight";
-  const renderer = await createThemedRenderer(theme);
-  if (!renderer) {
-    process.send?.({ id: 0, ok: false, error: "renderer unavailable" } satisfies RenderResponse);
+  // One renderer per theme, built on first use: a student can pick any of them.
+  const renderer = new MultiThemeRenderer(process.env.POSTER_THEME || "midnight");
+  try {
+    await renderer.renderDay({
+      group: { key: "probe", title: "ВИШ", prefix: "ВИШ", number: 0, intake: 0, course: 0, portalIds: [], portalNames: [] },
+      date: "2026-09-01",
+      lessons: [],
+      weekInfo: { week: 1, parity: "odd", semester: 1 },
+      today: "2026-09-01",
+    });
+  } catch (err) {
+    process.send?.({ id: 0, ok: false, error: String(err) } satisfies RenderResponse);
     process.exit(1);
   }
   process.send?.({ id: 0, ok: true } satisfies RenderResponse); // ready

@@ -206,4 +206,7 @@ export const MIGRATIONS: string[] = [
   `
   CREATE INDEX idx_change_events_group_date ON change_events (group_key, date, id);
   `,
+  `
+  ALTER TABLE users ADD COLUMN poster_theme TEXT;
+  `,
 ];

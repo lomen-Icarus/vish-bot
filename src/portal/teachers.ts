@@ -168,6 +168,38 @@ export class TeacherService {
     return dir.find((t) => t.id === id) ?? null;
   }
 
+  /**
+   * Prove the portal account can actually sign in, so a wrong password shows up
+   * in the log and in /health instead of silently emptying the teacher section.
+   */
+  async checkLogin(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await this.portal.login();
+      const list = await this.portal.getAllTeachers();
+      if (!list.length) {
+        const msg = "вход прошёл, но справочник преподавателей пуст: учётка не видит /index/tech";
+        this.repo.setMeta("teachers:loginOk", "0");
+        this.repo.setMeta("teachers:lastError", msg);
+        return { ok: false, error: msg };
+      }
+      this.repo.setMeta("teachers:list", JSON.stringify(list));
+      this.repo.setMeta("teachers:fetchedAt", String(Date.now()));
+      this.repo.setMeta("teachers:loginOk", "1");
+      this.repo.setMeta("teachers:lastError", "");
+      return { ok: true };
+    } catch (err) {
+      const msg = String(err).slice(0, 300);
+      this.repo.setMeta("teachers:loginOk", "0");
+      this.repo.setMeta("teachers:lastError", msg);
+      return { ok: false, error: msg };
+    }
+  }
+
+  loginOk(): boolean | null {
+    const v = this.repo.getMeta("teachers:loginOk");
+    return v == null || v === "" ? null : v === "1";
+  }
+
   lastError(): string | null {
     const e = this.repo.getMeta("teachers:lastError");
     return e ? e : null;

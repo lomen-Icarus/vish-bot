@@ -1,5 +1,6 @@
 import { Composer, InputFile } from "grammy";
 import type { BotContext } from "../context.js";
+import type { LogicalGroup } from "../../schedule/groups.js";
 import { BTN, intakePicker, mainKeyboard, streamDayNav, streamKeyboard } from "../keyboards.js";
 import { editPhoto, isPhotoMessage, needGroup } from "../views.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, formatStreamWeek, mergeStream, type StreamRow } from "../../schedule/stream.js";
@@ -67,6 +68,7 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
         weekInfo: ctx.deps.service.weekInfo(date),
         today: todayMsk(),
         now: wallClock(),
+        theme: ctx.user.posterTheme ?? undefined,
       });
       const kb = streamDayNav(date, todayMsk(), { image: false, groups: ctx.deps.service.stream(intake) });
       const fileName = `stream-${intake}-${date}.png`;
@@ -150,8 +152,51 @@ streamHandlers.hears(BTN.streamCommon, async (ctx) => {
   const ownInStream = own && own.intake === intake ? own : null;
   const text = formatCommonLessons(intake, monday, rows, ownInStream);
   const shared = commonLessons(rows, ownInStream?.key ?? null);
+  const wantImage = !!ctx.deps.renderer && shared.length > 0 && ctx.user.format !== "text";
+  if (wantImage) {
+    try {
+      const png = await renderCommonWeek(ctx, intake, monday, shared, ownInStream);
+      await ctx.replyWithPhoto(new InputFile(png, `common-${intake}-${monday}.png`), { caption: text.length <= 1000 ? text : undefined, parse_mode: "HTML" });
+      if (ctx.user.format === "image") return;
+      if (text.length > 1000) await ctx.reply(text, { parse_mode: "HTML", disable_notification: true });
+      return;
+    } catch (err) {
+      logger.warn({ err: String(err) }, "common lessons poster failed");
+    }
+  }
   await ctx.reply(shared.length ? text : `${text}\n\n<i>Общей считается пара с одинаковым временем, предметом и аудиторией у двух и более групп потока.</i>`, { parse_mode: "HTML" });
 });
+
+/**
+ * Poster for "общие пары": the week renderer over a pseudo group. The portal
+ * gives no teacher for group pages, so that line carries the groups sitting
+ * together, which is the point of this screen.
+ */
+async function renderCommonWeek(ctx: BotContext, intake: number, monday: LocalDate, shared: StreamRow[], own: LogicalGroup | null): Promise<Buffer> {
+  const byDate = new Map<LocalDate, Occurrence[]>();
+  for (const r of shared) {
+    const others = own ? r.groups.filter((_, i) => r.groupKeys[i] !== own.key) : r.groups;
+    const lesson: Occurrence = {
+      groupKey: `stream:${intake}`,
+      period: 1,
+      date: r.date,
+      slot: r.slot,
+      start: r.start,
+      end: r.end,
+      subject: r.subject,
+      type: r.type,
+      room: r.room,
+      teacher: others.length ? `вместе с ${others.join(", ")}` : null,
+      subgroup: r.subgroup,
+      isDistance: r.isDistance,
+      status: r.status,
+      sources: [],
+    };
+    byDate.set(r.date, [...(byDate.get(r.date) ?? []), lesson]);
+  }
+  const pseudo: LogicalGroup = { key: `stream:${intake}`, title: own ? `Общие пары · ${own.title}` : `Общие пары · поток 20${intake}`, prefix: "ВИШ", number: 0, intake, course: 0, portalIds: [], portalNames: [] };
+  return ctx.deps.renderer!.renderWeek({ group: pseudo, monday, byDate, weekInfo: ctx.deps.service.weekInfo(monday), today: todayMsk(), subgroup: null, theme: ctx.user.posterTheme ?? undefined });
+}
 
 streamHandlers.hears(BTN.backToMenu, async (ctx) => {
   await ctx.reply("Главное меню.", { reply_markup: mainKeyboard() });

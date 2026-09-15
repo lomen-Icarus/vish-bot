@@ -1,6 +1,7 @@
 import { InlineKeyboard, Keyboard } from "grammy";
 import type { LogicalGroup } from "../schedule/groups.js";
 import type { User } from "../db/repo.js";
+import { THEME_LABELS } from "../render/themes.js";
 import { addDays, fmtDDMM, type LocalDate } from "../time.js";
 
 export const BTN = {
@@ -118,9 +119,8 @@ export function groupPicker(groups: LogicalGroup[], opts: { prefix?: string; sel
 export function dayNav(date: LocalDate, today: LocalDate, opts: { image: boolean; peekKey?: string }): InlineKeyboard {
   const d = (x: LocalDate) => (opts.peekKey ? `pd:${opts.peekKey}:${x}` : `d:${x}`);
   const w = (x: LocalDate) => (opts.peekKey ? `pw:${opts.peekKey}:${x}` : `w:${x}`);
-  const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, d(addDays(date, -1)));
-  if (date !== today) kb.text("сегодня", d(today));
-  kb.text(`${fmtDDMM(addDays(date, 1))} ▶️`, d(addDays(date, 1))).row();
+  // No "сегодня" button between the arrows: people read it as the date they are on.
+  const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, d(addDays(date, -1))).text(`${fmtDDMM(addDays(date, 1))} ▶️`, d(addDays(date, 1))).row();
   kb.text("🗓 Неделя", w(date));
   if (opts.image) kb.text("🖼 Картинкой", opts.peekKey ? `pimg:${opts.peekKey}:${date}` : `img:${date}`);
   if (opts.peekKey) kb.row().text("✅ Сделать моей группой", `g:${opts.peekKey}`);
@@ -160,9 +160,7 @@ export function teacherWeekNav(teacherId: number, monday: LocalDate): InlineKeyb
 
 /** Stream day: date arrows, optional poster button, and one tiny button per group of the stream. */
 export function streamDayNav(date: LocalDate, today: LocalDate, opts: { image: boolean; groups?: LogicalGroup[] } = { image: false }): InlineKeyboard {
-  const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `sd:${addDays(date, -1)}`);
-  if (date !== today) kb.text("сегодня", `sd:${today}`);
-  kb.text(`${fmtDDMM(addDays(date, 1))} ▶️`, `sd:${addDays(date, 1)}`);
+  const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `sd:${addDays(date, -1)}`).text(`${fmtDDMM(addDays(date, 1))} ▶️`, `sd:${addDays(date, 1)}`);
   if (opts.image) kb.row().text("🖼 Картинкой", `simg:${date}`);
   if (opts.groups?.length) {
     kb.row();
@@ -183,12 +181,17 @@ export function minutesLabel(min: number | null): string {
   return `${min} мин`;
 }
 
+export function formatPicker(): InlineKeyboard {
+  return new InlineKeyboard().text("📝 Текстом", "fmt:text").text("🖼 Картинкой", "fmt:image").row().text("📝🖼 И так, и так", "fmt:both");
+}
+
 export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: { topics: string[]; hasImages: boolean; watchCount: number }): InlineKeyboard {
   const kb = new InlineKeyboard();
   kb.text(`👥 Группа: ${group?.title ?? "не выбрана"}`, "s:group").row();
   kb.text(`🔢 Подгруппа: ${user.subgroup ? `${user.subgroup}` : "все"}`, "s:subgroup");
   if (opts.hasImages) kb.text(`🖼 Формат: ${{ text: "текст", image: "картинка", both: "оба" }[user.format]}`, "s:format");
   kb.row();
+  if (opts.hasImages && user.format !== "text") kb.text(`🎨 Оформление картинок: ${THEME_LABELS[user.posterTheme ?? "midnight"] ?? "Тёмная"}`, "s:theme").row();
   kb.text(`🔔 Изменения: ${onoff(user.notifyChanges)}`, "s:changes").text(`🎓 Сессия: ${onoff(user.notifySession)}`, "s:session").row();
   kb.text(`⏰ До первой пары: ${minutesLabel(user.remindFirstMin)}`, "s:first").row();
   kb.text(`⏱ Перед каждой парой: ${minutesLabel(user.remindEachMin)}`, "s:each").row();

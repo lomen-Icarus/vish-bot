@@ -77,7 +77,14 @@ function makeDeps(userId = 7): Deps {
 
 const textUpdate = (text: string, userId = 7): Update => ({
   update_id: 1,
-  message: { message_id: 10, date: 0, chat: { id: userId, type: "private", first_name: "U" }, from: { id: userId, is_bot: false, first_name: "U" }, text },
+  message: {
+    message_id: 10,
+    date: 0,
+    chat: { id: userId, type: "private", first_name: "U" },
+    from: { id: userId, is_bot: false, first_name: "U" },
+    text,
+    ...(text.startsWith("/") ? { entities: [{ type: "bot_command" as const, offset: 0, length: text.split(" ")[0]!.length }] } : {}),
+  },
 });
 
 const callbackUpdate = (data: string, userId = 7, photo = false): Update => ({
@@ -140,6 +147,47 @@ describe("pending flows", () => {
     setPending(deps, 7, { kind: "search" });
     const { calls } = await run(textUpdate("патент"), deps);
     expect(texts(calls).join("\n")).toMatch(/Поиск: патент/);
+  });
+});
+
+describe("day navigation", () => {
+  it("has no confusing «сегодня» button between the arrows", async () => {
+    const deps = makeDeps();
+    deps.repo.updateUser(7, { groupKey: group.key });
+    const { calls } = await run(textUpdate(BTN.today), deps);
+    const markup = JSON.stringify(calls.map((c) => c.payload.reply_markup));
+    expect(markup).toContain("▶️");
+    expect(markup).not.toContain("сегодня");
+  });
+});
+
+describe("forget me", () => {
+  it("wipes the user only after confirmation", async () => {
+    const deps = makeDeps();
+    deps.repo.updateUser(7, { groupKey: group.key, remindFirstMin: 120 });
+    deps.repo.toggleWatchGroup(7, other.key);
+
+    const asked = await run(textUpdate("/soon"), deps);
+    expect(texts(asked.calls).join("")).toMatch(/Удалить всё/);
+    expect(deps.repo.getUser(7)?.groupKey).toBe(group.key);
+
+    const cancelled = await run(callbackUpdate("wipe:no"), deps);
+    expect(JSON.stringify(cancelled.calls)).toMatch(/Отменено/);
+    expect(deps.repo.getUser(7)?.groupKey).toBe(group.key);
+
+    await run(callbackUpdate("wipe:yes"), deps);
+    expect(deps.repo.getUser(7)).toBeNull();
+    expect(deps.repo.watchGroups(7)).toEqual([]);
+  });
+});
+
+describe("first run", () => {
+  it("stores the chosen format and shows the schedule", async () => {
+    const deps = makeDeps();
+    deps.repo.updateUser(7, { groupKey: group.key });
+    const { calls } = await run(callbackUpdate("fmt:text"), deps);
+    expect(deps.repo.getUser(7)?.format).toBe("text");
+    expect(texts(calls).join("\n")).toMatch(/Патентоведение/);
   });
 });
 
