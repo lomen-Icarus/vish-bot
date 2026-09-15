@@ -75,8 +75,8 @@ function describeWebinarTeacher(t: WebinarTeacher, webinars: WebinarService, tod
   const title = [t.position, t.degree].filter(Boolean).join(", ");
   const next = webinars.upcoming(t, 6).map((l) => `  ${l.date} ${weekdayName(l.date)}${l.slot ? ` | ${l.slot} пара` : ""} | ${l.subject} (${lessonTypeLabel(l.type)}) | дистанционно | группы: ${l.groups.join(", ")}${l.title ? ` | тема: ${l.title}` : ""}`);
   return [
-    `${t.name}${title ? ` (${title})` : ""} — по данным страницы вебинаров ВИШ:`,
-    `ведёт: ${t.subjects.join("; ")}`,
+    `${t.name}${title ? ` (${title})` : ""} — по странице вебинаров ВИШ (только онлайн-пары ближайших дней и недавнего прошлого):`,
+    `ведёт онлайн: ${t.subjects.join("; ")}`,
     `группы: ${t.groups.join(", ")}`,
     next.length ? `ближайшие онлайн-пары (сегодня ${today}):\n${next.join("\n")}` : "ближайших онлайн-пар нет",
   ].join("\n");
@@ -160,7 +160,7 @@ export class AskService {
 
     const findTeacher = betaZodTool({
       name: "find_teacher",
-      description: "Найти преподавателя по фамилии и/или имени (в любом порядке, можно с инициалами) и получить его пары на ближайшие 2 недели: предметы, группы, время, аудитории.",
+      description: "Найти преподавателя по фамилии и/или имени (в любом порядке, можно с инициалами). С учёткой портала возвращает полное расписание преподавателя на 2 недели; без неё — только онлайн-пары ближайших дней (предмет, группы, тема).",
       inputSchema: z.object({
         query: z.string().describe("Фамилия и/или имя: «Иванова», «Дарья Иванова», «Иванова Д.А.»"),
       }),

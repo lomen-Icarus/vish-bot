@@ -4,6 +4,7 @@ import { clearPending, setPending, takePending } from "../context.js";
 import { BTN, groupLabel, isMenuText, mainKeyboard } from "../keyboards.js";
 import { featuresText, helpText, needGroup } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
+import { webinarKey } from "./teachers.js";
 import { esc } from "../../schedule/format.js";
 import { dayView } from "../views.js";
 import { findGroup } from "../../schedule/groups.js";
@@ -168,9 +169,9 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
       logger.warn({ err: String(err) }, "search: teachers failed");
     }
     for (const t of deps.webinars?.search(query, 4) ?? []) {
-      if (names.some((n) => n.toLowerCase().startsWith(t.name.split(" ")[0]!.toLowerCase()))) continue;
+      if (names.some((n) => n.toLowerCase().startsWith(t.name.toLowerCase().slice(0, 12)))) continue;
       names.push(`${t.name} (дистант)`);
-      kb.text(`👨‍🏫 ${t.name}`, `wtc:${Buffer.from(t.name, "utf8").toString("base64url").slice(0, 55)}`);
+      kb.text(`👨‍🏫 ${t.name}`, webinarKey(t.name));
       if (++buttons % 2 === 0) kb.row();
     }
     if (names.length) parts.push(`<b>Преподаватели</b>: ${names.map(esc).join("; ")}`);

@@ -173,7 +173,7 @@ function when(o: Occurrence): string {
 export function formatWebinarTeacher(t: { name: string; position: string | null; degree: string | null; subjects: string[]; groups: string[] }, upcoming: Array<{ date: LocalDate; slot: number | null; start: number | null; end: number | null; subject: string; type: string; groups: string[]; title: string | null }>, hasFullSchedule: boolean): string {
   const title = [t.position, t.degree].filter(Boolean).join(", ");
   const lines = [`👨‍🏫 <b>${esc(t.name)}</b>${title ? ` <i>${esc(title)}</i>` : ""}`, ""];
-  lines.push(`<b>Ведёт:</b> ${t.subjects.map(esc).join(", ")}`);
+  lines.push(`<b>Ведёт онлайн:</b> ${t.subjects.map(esc).join(", ")}`);
   if (t.groups.length) lines.push(`<b>Группы:</b> ${t.groups.map(esc).join(", ")}`);
   if (upcoming.length) {
     lines.push("", "<b>Ближайшие онлайн-пары</b>");
@@ -187,7 +187,7 @@ export function formatWebinarTeacher(t: { name: string; position: string | null;
   } else {
     lines.push("", "<i>Ближайших онлайн-пар нет.</i>");
   }
-  if (!hasFullSchedule) lines.push("", "<i>Это данные со страницы вебинаров портала: очные пары преподавателя портал показывает только авторизованным.</i>");
+  if (!hasFullSchedule) lines.push("", "<i>Это данные со страницы вебинаров портала: видны только онлайн-пары ближайших дней. Очные пары преподавателя портал показывает лишь авторизованным.</i>");
   return lines.join("\n");
 }
 

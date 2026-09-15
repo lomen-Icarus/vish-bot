@@ -26,6 +26,7 @@ function row(over: Partial<WebinarRow> = {}): WebinarRow {
     subgroup: null,
     title: "2 Классификация чрезвычайных ситуаций",
     groups: ["ВИШ-11-24", "ВИШ-12-24", "ВИШ-13-24"],
+    scheduled: true,
     ...over,
   };
 }
@@ -78,7 +79,7 @@ describe("webinar rows", () => {
       } as never,
       "2026-09-14",
     );
-    expect(mapped).toMatchObject({ date: "2026-09-15", slot: 3, start: 700, end: 780, teacher: "Иванова К. Ю.", position: "доц.", degree: "к.х.н.", title: "2 Классификация ЧС" });
+    expect(mapped).toMatchObject({ date: "2026-09-15", slot: 3, start: 700, end: 780, teacher: "Иванова К. Ю.", position: "доц.", degree: "к.х.н.", title: "2 Классификация ЧС", scheduled: true });
     expect(mapped.groups).toEqual(["ВИШ-11-24", "ВИШ-12-24"]);
   });
 
@@ -111,11 +112,61 @@ describe("webinar matching", () => {
     expect(svc.enrich([lesson()], ["ВИШ-12-23"])[0]!.teacher).toBe("Иванова К. Ю.");
   });
 
+  it("ignores ad-hoc webinars and rows whose time contradicts the lesson", () => {
+    // An 18:00 meeting of the same name must never be attached to an 08:20 lesson.
+    const { svc } = service([row({ scheduled: false, slot: null, start: 18 * 60, end: 19 * 60 })]);
+    expect(svc.enrich([lesson()], ["ВИШ-12-24"])[0]!.teacher).toBeNull();
+    const loose = service([row({ slot: null, start: 18 * 60, end: 19 * 60 })]);
+    expect(loose.svc.enrich([lesson()], ["ВИШ-12-24"])[0]!.teacher).toBeNull();
+    // Same subject, same slot, different start: the portal moved it, do not guess.
+    const moved = service([row({ start: 8 * 60 + 20, end: 9 * 60 + 40 })]);
+    expect(moved.svc.enrich([lesson()], ["ВИШ-12-24"])[0]!.teacher).toBeNull();
+  });
+
+  it("prefers the row of the student's subgroup", () => {
+    const { svc } = service([row({ subgroup: 1, teacher: "Первый П. П." }), row({ subgroup: 2, teacher: "Второй В. В." })]);
+    expect(svc.enrich([lesson({ subgroup: 2 })], ["ВИШ-12-24"])[0]!.teacher).toBe("Второй В. В.");
+    // No subgroup on the lesson and the rows disagree: better nothing than the wrong teacher.
+    expect(svc.enrich([lesson()], ["ВИШ-12-24"])[0]!.teacher).toBeNull();
+  });
+
   it("does not match a different slot or subject", () => {
     const { svc } = service([row()]);
     expect(svc.enrich([lesson({ slot: 5 })], ["ВИШ-12-24"])[0]!.teacher).toBeNull();
     expect(svc.enrich([lesson({ subject: "Математика" })], ["ВИШ-12-24"])[0]!.teacher).toBeNull();
     expect(svc.forLesson(lesson({ slot: 3 }), ["ВИШ-12-24"])?.teacher).toBe("Иванова К. Ю.");
+  });
+});
+
+describe("refresh", () => {
+  it("stores only rows of the requested day and drops rows without a teacher", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    const pages: Record<string, WebinarRow[]> = {
+      [today]: [row(), row({ date: addDays(today, 1), subject: "Чужой день" }), row({ teacher: "", subject: "Заседание студсовета" })],
+    };
+    const portal = {
+      getWebinars: async (date: string) =>
+        (pages[date] ?? []).map((r) => ({
+          id: "",
+          idType: 1,
+          scheduled: r.scheduled,
+          scheduledDate: r.date,
+          slotNumber: r.slot ?? undefined,
+          time: { start: { hours: Math.floor((r.start ?? 0) / 60), minutes: (r.start ?? 0) % 60 }, end: { hours: Math.floor((r.end ?? 0) / 60), minutes: (r.end ?? 0) % 60 } },
+          subject: r.subject,
+          type: r.type,
+          teacher: { name: r.teacher, position: r.position ?? undefined, degree: r.degree ?? undefined },
+          groups: r.groups,
+          title: r.title ?? "",
+          raw: "",
+        })),
+    } as unknown as PortalClient;
+    const svc = new WebinarService(portal, repo, 32);
+    await svc.refresh([today], { force: true });
+    await svc.refresh([today], { force: true });
+    const stored = repo.webinarsBetween(today, addDays(today, 1));
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.subject).toBe("Безопасность жизнедеятельности");
   });
 });
 
