@@ -49,7 +49,7 @@ function statsText(ctx: BotContext): string {
 function webinarStats(ctx: BotContext): string {
   if (!ctx.deps.webinars) return "выкл";
   const s = ctx.deps.webinars.stats();
-  return `${s.rows} пар за ${s.days} дн., преподавателей ${s.teachers}`;
+  return `${s.rows} пар за ${s.days} дн. (по ${s.until ?? "—"}), преподавателей ${s.teachers}`;
 }
 
 function healthText(ctx: BotContext): string {

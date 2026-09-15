@@ -200,4 +200,7 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX webinars_date ON webinars (date);
   CREATE INDEX webinars_teacher ON webinars (teacher);
   `,
+  `
+  ALTER TABLE webinars ADD COLUMN scheduled INTEGER NOT NULL DEFAULT 1;
+  `,
 ];

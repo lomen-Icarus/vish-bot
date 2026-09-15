@@ -77,7 +77,7 @@ describe("distance reminders and notification buttons", () => {
     expect(await n.tickReminders(clock("2026-09-14", 8, 16))).toBe(1);
     expect(sent[0]!.text).toMatch(/дистант/);
     expect(sent[0]!.text).toContain("https://tt.chuvsu.ru/webinar");
-    expect(buttons(sent[0]!.markup)).toContain("💻 Открыть вебинар");
+    expect(buttons(sent[0]!.markup)).toContain("💻 Вебинары портала");
     expect(await n.tickReminders(clock("2026-09-14", 8, 17))).toBe(0);
     expect(await n.tickReminders(clock("2026-09-14", 9, 46))).toBe(0); // Физика is offline
   });

@@ -1,8 +1,9 @@
 import { Composer, InlineKeyboard } from "grammy";
+import { createHash } from "node:crypto";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { BTN, isMenuText, teacherDayNav, teacherWeekNav } from "../keyboards.js";
-import { esc, formatDay, formatWebinarTeacher, formatWeek } from "../../schedule/format.js";
+import { clampHtml, esc, formatDay, formatWebinarTeacher, formatWeek } from "../../schedule/format.js";
 import type { LogicalGroup } from "../../schedule/groups.js";
 import type { Occurrence } from "../../schedule/model.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../../time.js";
@@ -14,23 +15,40 @@ export const teacherHandlers = new Composer<BotContext>();
 
 const UNAVAILABLE = "Расписание преподавателей портал показывает только авторизованным. Попроси админа добавить учётку портала в настройки бота (PORTAL_LOGIN / PORTAL_PASSWORD), и раздел заработает.";
 
-/** Callback key for a teacher known only from the webinar page (no portal id). */
-function webinarKey(name: string): string {
-  const raw = Buffer.from(name, "utf8").toString("base64url");
-  return `wtc:${raw.slice(0, 55)}`;
+/**
+ * Callback key for a teacher known only from the webinar page (no portal id).
+ * A digest, not the name: callback_data is limited to 64 bytes and two long
+ * Cyrillic surnames would otherwise share a truncated prefix.
+ */
+export function webinarKey(name: string): string {
+  return `wtc:${createHash("sha1").update(name.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim()).digest("base64url").slice(0, 16)}`;
 }
 
 function findWebinarTeacher(ctx: BotContext, key: string): WebinarTeacher | null {
-  const all = ctx.deps.webinars?.teachers() ?? [];
-  return all.find((t) => webinarKey(t.name) === key) ?? all.find((t) => Buffer.from(t.name, "utf8").toString("base64url").startsWith(key.slice(4))) ?? null;
+  return (ctx.deps.webinars?.teachers() ?? []).find((t) => webinarKey(t.name) === key) ?? null;
+}
+
+/** Same person? Surnames repeat, so initials decide. */
+function samePerson(a: string, b: string): boolean {
+  const parts = (x: string) =>
+    x
+      .toLowerCase()
+      .replace(/ё/g, "е")
+      .split(/[\s.]+/)
+      .filter(Boolean);
+  const [pa, pb] = [parts(a), parts(b)];
+  if (!pa.length || !pb.length || pa[0] !== pb[0]) return false;
+  const initials = (p: string[]) => p.slice(1).map((w) => w[0]).join("");
+  const [ia, ib] = [initials(pa), initials(pb)];
+  return !ia || !ib || ia === ib;
 }
 
 async function showWebinarTeacher(ctx: BotContext, t: WebinarTeacher): Promise<void> {
   const webinars = ctx.deps.webinars;
   const upcoming = webinars ? webinars.upcoming(t, 8) : [];
-  const text = formatWebinarTeacher(t, upcoming, false);
+  const text = clampHtml(formatWebinarTeacher(t, upcoming, false));
   const kb = new InlineKeyboard().text("🔎 Другой преподаватель", "t:search");
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => ctx.reply(text.replace(/<[^>]+>/g, ""), { reply_markup: kb }));
 }
 
 function pseudoGroup(t: TeacherRef, fullName: string | null): LogicalGroup {
@@ -64,7 +82,7 @@ teacherHandlers.on("message:text", async (ctx, next) => {
   await ctx.replyWithChatAction("typing");
   const found = teachers ? await teachers.search(query) : [];
   // Teachers of online lessons are readable without a portal account; keep them as a fallback.
-  const fromWebinars = (ctx.deps.webinars?.search(query, 5) ?? []).filter((w) => !found.some((t) => t.name.toLowerCase().startsWith(w.name.split(" ")[0]!.toLowerCase())));
+  const fromWebinars = (ctx.deps.webinars?.search(query, 5) ?? []).filter((w) => !found.some((t) => samePerson(t.name, w.name)));
   if (!found.length && !fromWebinars.length) {
     const err = teachers?.lastError();
     const hint = err && ctx.isAdmin ? `\n\n<i>Админу: последняя ошибка портала — ${esc(err)}</i>` : "";

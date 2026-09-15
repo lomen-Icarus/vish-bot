@@ -158,6 +158,8 @@ export interface WebinarRow {
   subgroup: number | null;
   title: string | null;
   groups: string[];
+  /** True for "вебинары по расписанию"; ad-hoc events are not lessons. */
+  scheduled: boolean;
 }
 
 function rowToWebinar(r: Record<string, unknown>): WebinarRow {
@@ -180,6 +182,7 @@ function rowToWebinar(r: Record<string, unknown>): WebinarRow {
     subgroup: r.subgroup == null ? null : Number(r.subgroup),
     title: r.title == null ? null : String(r.title),
     groups,
+    scheduled: r.scheduled == null ? true : Number(r.scheduled) === 1,
   };
 }
 
@@ -571,8 +574,8 @@ export class Repo {
   replaceWebinars(date: LocalDate, rows: WebinarRow[]): void {
     const ts = nowIso();
     const insert = this.db.prepare(
-      `INSERT INTO webinars (date, slot, start, "end", subject, type, teacher, position, degree, subgroup, title, groups_json, fetched_at)
-       VALUES (@date, @slot, @start, @end, @subject, @type, @teacher, @position, @degree, @subgroup, @title, @groups, @ts)`,
+      `INSERT INTO webinars (date, slot, start, "end", subject, type, teacher, position, degree, subgroup, title, groups_json, scheduled, fetched_at)
+       VALUES (@date, @slot, @start, @end, @subject, @type, @teacher, @position, @degree, @subgroup, @title, @groups, @scheduled, @ts)`,
     );
     this.db.transaction(() => {
       this.db.prepare("DELETE FROM webinars WHERE date = ?").run(date);
@@ -590,6 +593,7 @@ export class Repo {
           subgroup: r.subgroup,
           title: r.title,
           groups: JSON.stringify(r.groups),
+          scheduled: r.scheduled ? 1 : 0,
           ts,
         });
       }
