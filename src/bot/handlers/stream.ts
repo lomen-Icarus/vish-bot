@@ -1,7 +1,7 @@
 import { Composer, InputFile } from "grammy";
 import type { BotContext } from "../context.js";
 import { BTN, intakePicker, mainKeyboard, streamDayNav, streamKeyboard } from "../keyboards.js";
-import { needGroup } from "../views.js";
+import { editPhoto, isPhotoMessage, needGroup } from "../views.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, formatStreamWeek, mergeStream, type StreamRow } from "../../schedule/stream.js";
 import type { Occurrence } from "../../schedule/model.js";
 import { filterSubgroup } from "../../schedule/format.js";
@@ -51,7 +51,9 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
   const ownKey = ownKeyIn(ctx, intake);
   const text = formatStreamDay(intake, date, rows, ctx.deps.service.weekInfo(date), todayMsk(), ownKey);
   const renderer = ctx.deps.renderer;
-  const wantImage = !!renderer && (opts.forceImage || ctx.user.format === "image" || (ctx.user.format === "both" && !opts.edit));
+  // Navigating from a poster keeps the poster: the image is replaced in place.
+  const photoMsg = !!opts.edit && isPhotoMessage(ctx);
+  const wantImage = !!renderer && (opts.forceImage || photoMsg || ctx.user.format === "image" || (ctx.user.format === "both" && !opts.edit));
   if (opts.keyboard) {
     // A reply keyboard and an inline keyboard cannot share one message: send the mode keyboard first.
     await ctx.reply("Поток открыт. Вернуться: «◀️ В меню».", { reply_markup: streamKeyboard() });
@@ -66,13 +68,16 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
         today: todayMsk(),
         now: wallClock(),
       });
-      await ctx.replyWithPhoto(new InputFile(png, `stream-${intake}-${date}.png`), { reply_markup: streamDayNav(date, todayMsk(), { image: false, groups: ctx.deps.service.stream(intake) }) });
-      if (ctx.user.format !== "both") return;
+      const kb = streamDayNav(date, todayMsk(), { image: false, groups: ctx.deps.service.stream(intake) });
+      const fileName = `stream-${intake}-${date}.png`;
+      if (photoMsg && (await editPhoto(ctx, png, fileName, undefined, kb))) return;
+      await ctx.replyWithPhoto(new InputFile(png, fileName), { reply_markup: kb });
+      if (ctx.user.format !== "both" || opts.edit) return;
     } catch (err) {
       logger.warn({ err: String(err) }, "stream poster failed");
     }
   }
-  if (opts.edit && ctx.callbackQuery?.message && !ctx.callbackQuery.message.photo) {
+  if (opts.edit && ctx.callbackQuery?.message && !photoMsg) {
     try {
       await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk(), { image: !!renderer, groups: ctx.deps.service.stream(intake) }) });
       return;

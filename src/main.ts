@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   const webinars = new WebinarService(portal, repo, config.FACULTY_ID);
   const ask = config.ANTHROPIC_API_KEY ? new AskService(config.ANTHROPIC_API_KEY, service, { model: config.AI_MODEL }, teachers, webinars) : null;
 
-  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, news: null, pending: new Map(), startedAt: new Date() };
+  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, news: null, http: null, pending: new Map(), startedAt: new Date() };
   const bot = createBot(deps);
   await bot.init();
   deps.news = config.ANTHROPIC_API_KEY
@@ -59,6 +59,7 @@ async function main(): Promise<void> {
   // Calendar subscriptions + /health. Pterodactyl hands the allocated port in SERVER_PORT.
   const httpPort = config.HTTP_PORT || config.SERVER_PORT || 0;
   const http = httpPort > 0 ? createHttpServer({ repo, service, port: httpPort }) : null;
+  deps.http = http;
   if (!http) logger.info("http server disabled: HTTP_PORT/SERVER_PORT not set");
   else if (!config.PUBLIC_URL) logger.warn("PUBLIC_URL not set: calendar subscription links are hidden in the bot");
 

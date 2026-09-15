@@ -52,12 +52,12 @@ interface SendOpts {
   peek?: boolean;
 }
 
-function isPhotoMessage(ctx: BotContext): boolean {
+export function isPhotoMessage(ctx: BotContext): boolean {
   return !!ctx.callbackQuery?.message && "photo" in ctx.callbackQuery.message && !!ctx.callbackQuery.message.photo;
 }
 
 /** Replace the photo of the message the callback came from (poster navigation in place). */
-async function editPhoto(ctx: BotContext, png: Buffer, fileName: string, caption: string | undefined, replyMarkup: Parameters<BotContext["editMessageMedia"]>[1] extends infer T ? (T extends { reply_markup?: infer R } ? R : never) : never): Promise<boolean> {
+export async function editPhoto(ctx: BotContext, png: Buffer, fileName: string, caption: string | undefined, replyMarkup: Parameters<BotContext["editMessageMedia"]>[1] extends infer T ? (T extends { reply_markup?: infer R } ? R : never) : never): Promise<boolean> {
   try {
     await ctx.editMessageMedia(InputMediaBuilder.photo(new InputFile(png, fileName), caption ? { caption, parse_mode: "HTML" } : {}), { reply_markup: replyMarkup });
     return true;

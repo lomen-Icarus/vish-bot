@@ -7,6 +7,7 @@ import type { AskService } from "../ai/ask.js";
 import type { TeacherService } from "../portal/teachers.js";
 import type { NewsScanner } from "../news/scanner.js";
 import type { WebinarService } from "../portal/webinars.js";
+import type { Server } from "node:http";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
@@ -30,6 +31,8 @@ export interface Deps {
   teachers: TeacherService | null;
   news: NewsScanner | null;
   webinars: WebinarService | null;
+  /** Calendar-feed server; subscription links are offered only while it listens. */
+  http: Server | null;
   pending: Map<number, PendingState>;
   startedAt: Date;
 }
