@@ -80,7 +80,7 @@ function dot(color: string, active: boolean, size = 16, filled = active): El {
     return h(
       "div",
       { display: "flex", width: size + 14, height: size + 14, borderRadius: 999, backgroundColor: color + "33", alignItems: "center", justifyContent: "center" },
-      h("div", { display: "flex", width: size, height: size, borderRadius: 999, backgroundColor: color, boxShadow: `0 0 18px ${color}` }),
+      h("div", { display: "flex", width: size + 10, height: size + 10, borderRadius: 999, backgroundColor: `${color}33`, alignItems: "center", justifyContent: "center" }, h("div", { display: "flex", width: size, height: size, borderRadius: 999, backgroundColor: color })),
     );
   }
   if (filled) return h("div", { display: "flex", width: size, height: size, borderRadius: 999, backgroundColor: color });
@@ -97,7 +97,7 @@ function nowMarker(accent: string, timeWidth: number, railWidth: number, minutes
   return row(
     { width: "100%", alignItems: "center", padding: "8px 0" },
     row({ width: timeWidth, justifyContent: "flex-end", paddingRight: 18 }, text(fmtHHMM(minutes), { fontSize: 26, fontWeight: 700, color: accent, letterSpacing: 0.5, lineHeight: 1.1 })),
-    row({ width: railWidth, justifyContent: "center" }, h("div", { display: "flex", width: 12, height: 12, borderRadius: 999, backgroundColor: accent, boxShadow: `0 0 14px ${accent}` })),
+    row({ width: railWidth, justifyContent: "center" }, h("div", { display: "flex", width: 22, height: 22, borderRadius: 999, backgroundColor: `${accent}33`, alignItems: "center", justifyContent: "center" }, h("div", { display: "flex", width: 12, height: 12, borderRadius: 999, backgroundColor: accent }))),
     h("div", { display: "flex", flex: 1, height: 2, backgroundImage: `linear-gradient(90deg, ${accent} 0%, ${accent}00 100%)` }),
   );
 }
@@ -110,7 +110,7 @@ function parityBlock(info: WeekInfo, accent: Accent): El | null {
     { alignItems: "flex-end" },
     h(
       "div",
-      { display: "flex", padding: "12px 26px", borderRadius: 999, backgroundColor: accent.color, boxShadow: `0 0 44px ${accent.color}99` },
+      { display: "flex", padding: "12px 26px", borderRadius: 999, backgroundColor: accent.color, border: `4px solid ${accent.color}40` },
       text(accent.label, { fontSize: 28, fontWeight: 800, letterSpacing: 2, color: INK, lineHeight: 1.1 }),
     ),
     // Two spans with an explicit gap: tracked-out type welds "3-Я НЕДЕЛЯ" into one word.
@@ -287,7 +287,7 @@ function groupChips(groups: string[], mine: boolean, accent: string): El {
     ...groups.map((g) =>
       h(
         "div",
-        { display: "flex", padding: "4px 13px", borderRadius: 6, backgroundColor: mine ? accent : "transparent", border: `1px solid ${mine ? accent : RAIL}`, marginRight: 8, marginBottom: 6, boxShadow: mine ? `0 0 16px ${accent}66` : "none" },
+        { display: "flex", padding: "4px 13px", borderRadius: 6, backgroundColor: mine ? accent : "transparent", border: `1px solid ${mine ? accent : RAIL}`, marginRight: 8, marginBottom: 6 },
         text(g, { fontSize: 24, fontWeight: 700, color: mine ? INK : SOFT, letterSpacing: 0.5, lineHeight: 1.2 }),
       ),
     ),

@@ -147,6 +147,22 @@ describe("quiet hours", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("does not dump a new group's old changes on a student who just picked it", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(1, "u", "U");
+    repo.updateUser(1, { groupKey: group.key, notifyChanges: true, quietFrom: "22:00", quietTo: "08:00" });
+    const { api, sent } = makeApi();
+    const n = new Notifier(api, repo, makeService({}), null);
+    expect(await n.flushQuietBacklog(clock("2026-09-15", 9, 0))).toBe(0); // watermark
+    const l = lesson("2026-09-20", 2, 10 * 60, "Матан");
+    repo.insertChangeEvents([{ groupKey: group.key, date: "2026-09-20", period: 1, kind: "added", payload: { after: l } }]);
+    repo.markEventsNotified(repo.activeEvents(group.key, "2026-09-15").map((r) => r.id));
+    // The student picks the group now: what happened before is not their news.
+    repo.markGroupEventsSeen(1, group.key, "2026-09-15");
+    expect(await n.flushQuietBacklog(clock("2026-09-16", 9, 0))).toBe(0);
+    expect(sent).toHaveLength(0);
+  });
+
   it("does not resend what was already delivered normally", async () => {
     const repo = new Repo(openDatabase(":memory:"));
     repo.touchUser(1, "a", "A");

@@ -8,7 +8,7 @@ import { ScheduleService } from "./schedule/service.js";
 import { createBot, registerCommands } from "./bot/index.js";
 import { Notifier } from "./notify/dispatcher.js";
 import { startScheduler } from "./scheduler/index.js";
-import { createThemedRenderer } from "./render/themes.js";
+import { createPooledRenderer } from "./render/pool.js";
 import { AskService } from "./ai/ask.js";
 import { TeacherService } from "./portal/teachers.js";
 import { WebinarService } from "./portal/webinars.js";
@@ -26,8 +26,10 @@ async function main(): Promise<void> {
   const repo = new Repo(db);
   const portal = new PortalClient({ insecureTls: config.PORTAL_TLS_INSECURE, proxyUrl: config.HTTPS_PROXY });
   const service = new ScheduleService(repo, portal, { facultyId: config.FACULTY_ID, hiddenPrefixes: config.HIDDEN_GROUP_PREFIXES });
-  const renderer = await createThemedRenderer(config.POSTER_THEME).catch((err) => {
-    logger.warn({ err }, "image renderer unavailable, text only");
+  // Posters are drawn in a child process that is recycled: resvg never frees a
+  // rendered pixmap, so the memory only comes back when that process ends.
+  const renderer = await createPooledRenderer({ theme: config.POSTER_THEME }).catch((err) => {
+    logger.warn({ err: String(err) }, "image renderer unavailable, text only");
     return null;
   });
   const teachers =
@@ -72,6 +74,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "shutting down");
     scheduler.stop();
+    renderer?.stop();
     http?.close();
     if (runner.isRunning()) await runner.stop();
     db.close();

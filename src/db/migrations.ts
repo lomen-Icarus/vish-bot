@@ -203,4 +203,7 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE webinars ADD COLUMN scheduled INTEGER NOT NULL DEFAULT 1;
   `,
+  `
+  CREATE INDEX idx_change_events_group_date ON change_events (group_key, date, id);
+  `,
 ];

@@ -154,6 +154,8 @@ scheduleHandlers.callbackQuery(/^g:(.+)$/, async (ctx) => {
   if (!group) return void (await ctx.answerCallbackQuery({ text: "Группа не найдена, список обновился", show_alert: true }));
   const firstTime = !ctx.user.groupKey;
   ctx.deps.repo.updateUser(ctx.user.id, { groupKey: group.key, subgroup: null });
+  // Changes from before this group was theirs are not news for this student.
+  ctx.deps.repo.markGroupEventsSeen(ctx.user.id, group.key, todayMsk());
   // Keep the in-flight context in sync: later steps of this update read ctx.user.
   ctx.user.groupKey = group.key;
   ctx.user.subgroup = null;

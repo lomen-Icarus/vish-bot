@@ -66,15 +66,24 @@ const schema = z.object({
   /** Poster look: midnight (default), editorial, brutalist, timeline. */
   POSTER_THEME: z.string().default("midnight"),
   HTTPS_PROXY: z.string().optional(),
-  /** Port of the tiny HTTP server (calendar subscriptions, /health). Pterodactyl passes SERVER_PORT. 0 = off. */
-  HTTP_PORT: z.coerce.number().int().nonnegative().default(0),
-  SERVER_PORT: z.coerce.number().int().nonnegative().optional(),
+  /**
+   * Port of the tiny HTTP server (calendar subscriptions, /health). Pterodactyl
+   * passes SERVER_PORT. 0 = off. A junk value disables the server instead of
+   * stopping the bot from starting.
+   */
+  HTTP_PORT: z.coerce.number().int().min(0).max(65535).catch(0),
+  SERVER_PORT: z.coerce.number().int().min(0).max(65535).catch(0).optional(),
   /** Public base URL of that server, e.g. http://srv3.frienworld.space:40070 — enables calendar subscription links. */
   PUBLIC_URL: z
     .string()
     .optional()
-    .transform((v) => (v && v.trim() ? v.trim().replace(/\/+$/, "") : undefined))
-    .refine((v) => !v || /^https?:\/\/[^\s/]+/i.test(v), { message: "PUBLIC_URL must start with http:// or https://" }),
+    .transform((v) => {
+      const raw = v?.trim().replace(/\/+$/, "");
+      if (!raw) return undefined;
+      // A missing scheme is a typo worth fixing, not a reason to refuse to start.
+      const url = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+      return /^https?:\/\/[^\s/]+$/i.test(url.replace(/\/.*$/, (m) => (m === "/" ? "" : m))) || /^https?:\/\/\S+$/i.test(url) ? url : undefined;
+    }),
 });
 
 export type Config = z.infer<typeof schema>;
