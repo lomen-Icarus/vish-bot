@@ -108,14 +108,19 @@ export class Notifier {
               return !user.subgroup || sg == null || sg === user.subgroup;
             })
           : evs;
-        if (!mine.length) continue;
+        // The once-a-minute backlog pass may have taken an event first.
+        const fresh = mine.filter((e) => {
+          const id = idByEvent.get(e);
+          return id == null || !this.repo.reminderSent(user.id, "event", String(id));
+        });
+        if (!fresh.length) continue;
         // Quiet hours only postpone: the backlog below delivers them when the quiet window ends.
         if (this.inQuietHours(user, now)) continue;
-        for (const e of mine) {
+        for (const e of fresh) {
           const id = idByEvent.get(e);
           if (id != null) this.repo.markReminderSent(user.id, "event", String(id));
         }
-        const text = formatChanges(group, mine);
+        const text = formatChanges(group, fresh);
         // Own group: one tap re-imports just the changed lessons into the phone calendar.
         // Watched group: one tap stops these notifications.
         const kb = own ? new InlineKeyboard().text("📆 Обновить в календаре", `cics:${groupKey}`) : new InlineKeyboard().text("👁 Не следить за группой", `unwatch:${groupKey}`);
@@ -145,7 +150,9 @@ export class Notifier {
       if (this.inQuietHours(user, now)) continue;
       const group = this.service.group(user.groupKey);
       if (!group) continue;
-      const rows = this.repo.activeEvents(user.groupKey, now.date, 30).filter((r) => r.createdAt >= since && !this.repo.reminderSent(user.id, "event", String(r.id)));
+      // Only events the normal pass has already gone through: anything newer is
+      // still on its way there, and sending it here would duplicate it.
+      const rows = this.repo.activeEvents(user.groupKey, now.date, 30).filter((r) => r.notified && r.createdAt >= since && !this.repo.reminderSent(user.id, "event", String(r.id)));
       if (!rows.length) continue;
       const events: ChangeEvent[] = rows.map((r) => {
         const p = r.payload as { before?: Occurrence; after?: Occurrence; fields?: string[] };

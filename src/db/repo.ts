@@ -201,6 +201,8 @@ export interface ChangeEventRow {
   kind: string;
   payload: unknown;
   createdAt: string;
+  /** True once the change has gone through the normal dispatch pass. */
+  notified: boolean;
 }
 
 interface OccurrenceRow {
@@ -504,7 +506,7 @@ export class Repo {
       payload_json: string;
       created_at: string;
     }>;
-    return rows.map((r) => ({ id: r.id, groupKey: r.group_key, date: r.date, period: r.period as Period, kind: r.kind, payload: JSON.parse(r.payload_json), createdAt: r.created_at }));
+    return rows.map((r) => ({ id: r.id, groupKey: r.group_key, date: r.date, period: r.period as Period, kind: r.kind, payload: JSON.parse(r.payload_json), createdAt: r.created_at, notified: Number((r as { notified?: number }).notified ?? 0) === 1 }));
   }
 
   markEventsNotified(ids: number[]): void {
@@ -519,7 +521,7 @@ export class Repo {
     const rows = this.db
       .prepare("SELECT * FROM change_events WHERE group_key = ? AND date >= ? AND created_at >= ? ORDER BY date, id LIMIT ?")
       .all(groupKey, today, since, limit) as Array<{ id: number; group_key: string; date: string; period: number; kind: string; payload_json: string; created_at: string }>;
-    return rows.map((r) => ({ id: r.id, groupKey: r.group_key, date: r.date, period: r.period as Period, kind: r.kind, payload: JSON.parse(r.payload_json), createdAt: r.created_at }));
+    return rows.map((r) => ({ id: r.id, groupKey: r.group_key, date: r.date, period: r.period as Period, kind: r.kind, payload: JSON.parse(r.payload_json), createdAt: r.created_at, notified: Number((r as { notified?: number }).notified ?? 0) === 1 }));
   }
 
   // ---------- announcements board ----------
@@ -558,7 +560,7 @@ export class Repo {
       payload_json: string;
       created_at: string;
     }>;
-    return rows.map((r) => ({ id: r.id, groupKey: r.group_key, date: r.date, period: r.period as Period, kind: r.kind, payload: JSON.parse(r.payload_json), createdAt: r.created_at }));
+    return rows.map((r) => ({ id: r.id, groupKey: r.group_key, date: r.date, period: r.period as Period, kind: r.kind, payload: JSON.parse(r.payload_json), createdAt: r.created_at, notified: Number((r as { notified?: number }).notified ?? 0) === 1 }));
   }
 
   // ---------- reminders ----------

@@ -128,6 +128,25 @@ describe("quiet hours", () => {
     expect(await n.flushQuietBacklog(clock("2026-09-16", 9, 1))).toBe(0);
   });
 
+  it("does not double-send when the reminder tick lands between the poll and the dispatch", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(1, "u", "U");
+    repo.updateUser(1, { groupKey: group.key, notifyChanges: true }); // no quiet hours at all
+    const { api, sent } = makeApi();
+    const n = new Notifier(api, repo, makeService({}), null);
+    const now = clock("2026-09-15", 12, 0);
+    expect(await n.flushQuietBacklog(now)).toBe(0); // watermark
+    const l = lesson("2026-09-16", 2, 10 * 60, "Матан");
+    repo.insertChangeEvents([{ groupKey: group.key, date: "2026-09-16", period: 1, kind: "added", payload: { after: l } }]);
+    // The minute cron fires before the poll got to dispatchChangeEvents.
+    expect(await n.flushQuietBacklog(now)).toBe(0);
+    expect(await n.dispatchChangeEvents(now)).toBe(1);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).not.toMatch(/тихие часы/);
+    expect(await n.flushQuietBacklog(now)).toBe(0);
+    expect(sent).toHaveLength(1);
+  });
+
   it("does not resend what was already delivered normally", async () => {
     const repo = new Repo(openDatabase(":memory:"));
     repo.touchUser(1, "a", "A");
