@@ -11,11 +11,12 @@ import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type { DayRenderInput, Renderer, StreamRenderInput, WeekRenderInput } from "./image.js";
-import { createThemedRenderer } from "./themes.js";
+import { MultiThemeRenderer } from "./themes.js";
 import type { RenderRequest, RenderResponse, WeekWireInput } from "./worker.js";
 import { logger } from "../logger.js";
 
 export interface PoolOptions {
+  /** Default look when a render does not name one. */
   theme: string;
   /** Posters drawn before the worker is replaced (each leaks ~5 MB in resvg). */
   rendersPerWorker?: number;
@@ -153,9 +154,7 @@ export interface PooledRenderer extends Renderer {
 export async function createPooledRenderer(opts: PoolOptions): Promise<PooledRenderer | null> {
   const fromSource = import.meta.url.endsWith(".ts");
   if (fromSource) {
-    const renderer = await createThemedRenderer(opts.theme);
-    if (!renderer) return null;
-    return Object.assign(renderer, { stop: () => undefined });
+    return Object.assign(new MultiThemeRenderer(opts.theme), { stop: () => undefined });
   }
   const pool = new RenderPool({ theme: opts.theme, rendersPerWorker: opts.rendersPerWorker ?? 30, timeoutMs: opts.timeoutMs ?? 25_000 });
   try {
@@ -172,7 +171,6 @@ export async function createPooledRenderer(opts: PoolOptions): Promise<PooledRen
     // A host that will not let us fork still gets posters, just the leaky way.
     logger.warn({ err: String(err) }, "render worker unavailable, drawing posters in-process (memory grows over time)");
     pool.stop();
-    const renderer = await createThemedRenderer(opts.theme);
-    return renderer ? Object.assign(renderer, { stop: () => undefined }) : null;
+    return Object.assign(new MultiThemeRenderer(opts.theme), { stop: () => undefined });
   }
 }

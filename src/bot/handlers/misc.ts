@@ -4,6 +4,7 @@ import { clearPending, setPending, takePending } from "../context.js";
 import { BTN, groupLabel, isMenuText, mainKeyboard } from "../keyboards.js";
 import { featuresText, helpText, needGroup } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
+import { askAi } from "./ask.js";
 import { webinarKey } from "./teachers.js";
 import { esc } from "../../schedule/format.js";
 import { dayView } from "../views.js";
@@ -50,6 +51,38 @@ miscHandlers.command("suggest", startSuggest);
 // Existing chats still show the old keyboard until Telegram replaces it, and it
 // had this button; keep it working.
 miscHandlers.hears(BTN.suggest, startSuggest);
+// ---- forget me: wipe everything the bot stored about this person ----
+async function askWipe(ctx: BotContext): Promise<void> {
+  await ctx.reply(
+    "Удалить всё, что бот о тебе знает?\n\nСотрутся группа и подгруппа, все настройки уведомлений, слежение за другими группами, ссылка на календарь и история напоминаний. После этого <code>/start</code> начнётся с нуля, как у нового человека.",
+    { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🧹 Да, забудь меня", "wipe:yes").row().text("Отмена", "wipe:no") },
+  );
+}
+miscHandlers.command("soon", askWipe);
+miscHandlers.command("reset", askWipe);
+miscHandlers.command("forget", askWipe);
+
+miscHandlers.callbackQuery(/^wipe:(yes|no)$/, async (ctx) => {
+  if (ctx.match[1] === "no") {
+    await ctx.answerCallbackQuery({ text: "Ничего не трогал" });
+    try {
+      await ctx.editMessageText("Отменено, всё на месте.");
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+  clearPending(ctx.deps, ctx.user.id);
+  ctx.deps.repo.forgetUser(ctx.user.id);
+  await ctx.answerCallbackQuery({ text: "Готово" });
+  try {
+    await ctx.editMessageText("Готово, я тебя забыл. Напиши /start, чтобы начать заново.");
+  } catch {
+    /* ignore */
+  }
+  await ctx.reply("Клавиатура убрана.", { reply_markup: { remove_keyboard: true } });
+});
+
 miscHandlers.command("cancel", async (ctx) => {
   clearPending(ctx.deps, ctx.user.id);
   await ctx.reply("Отменено.");
@@ -84,8 +117,11 @@ miscHandlers.on("message", async (ctx, next) => {
 // ---- search: groups, subjects, teachers ----
 async function startSearch(ctx: BotContext): Promise<void> {
   setPending(ctx.deps, ctx.user.id, { kind: "search" }, 3 * 60_000);
+  const smart = !!ctx.deps.ask;
   await ctx.reply(
-    "Что ищем? Напиши группу (<code>14-24</code>), предмет (<code>матан</code>, <code>физика</code>) или преподавателя (<code>Иванова</code>). Отмена: /cancel",
+    smart
+      ? "Спрашивай что угодно про расписание, преподавателей и сам бот. Например:\n• <code>когда матан на этой неделе</code>\n• <code>что у 14-24 в пятницу</code>\n• <code>кто ведёт БЖД</code>\n• <code>как включить напоминания</code>\n\nОтмена: /cancel"
+      : "Что ищем? Напиши группу (<code>14-24</code>), предмет (<code>матан</code>) или преподавателя (<code>Иванова</code>). Отмена: /cancel",
     { parse_mode: "HTML" },
   );
 }
@@ -116,7 +152,13 @@ function subjectHits(list: Occurrence[], query: string): Map<string, Occurrence[
   return out;
 }
 
-async function runSearch(ctx: BotContext, query: string): Promise<void> {
+interface LocalHits {
+  parts: string[];
+  kb: InlineKeyboard;
+  buttons: number;
+}
+
+async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
   const deps = ctx.deps;
   const today = todayMsk();
   const parts: string[] = [];
@@ -181,12 +223,31 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
     if (buttons % 2) kb.row();
   }
 
-  if (!parts.length) {
+  return { parts, kb, buttons };
+}
+
+/**
+ * The search button: the model answers, and whatever the local index found
+ * (groups, teachers) rides along as buttons. Without a model, or when the
+ * daily budget is gone, the local result is the answer.
+ */
+async function runSearch(ctx: BotContext, query: string): Promise<void> {
+  const deps = ctx.deps;
+  const hits = await localSearch(ctx, query);
+  if (deps.ask) {
+    const outcome = await askAi(ctx, query, { extraButtons: hits.buttons ? hits.kb : undefined });
+    if (outcome === "answered") return;
+    if (outcome === "limit" && !hits.parts.length) {
+      await ctx.reply(`На сегодня лимит вопросов к ИИ исчерпан (${deps.config.AI_DAILY_LIMIT_PER_USER} в день). Кнопки и расписание работают без лимита.`);
+      return;
+    }
+  }
+  if (!hits.parts.length) {
     const noAccount = !deps.teachers ? " Преподавателей бот пока знает только по дистанционным парам: полный справочник портал отдаёт лишь авторизованным." : "";
     await ctx.reply(`По «${esc(query)}» ничего не нашёл. Попробуй короче: номер группы, часть названия предмета или фамилию.${noAccount}`, { parse_mode: "HTML" });
     return;
   }
-  await ctx.reply(`🔍 <b>Поиск: ${esc(query)}</b>\n\n${parts.join("\n\n")}`, { parse_mode: "HTML", reply_markup: buttons ? kb : undefined });
+  await ctx.reply(`🔍 <b>Поиск: ${esc(query)}</b>\n\n${hits.parts.join("\n\n")}`, { parse_mode: "HTML", reply_markup: hits.buttons ? hits.kb : undefined });
 }
 
 miscHandlers.on("message:text", async (ctx, next) => {

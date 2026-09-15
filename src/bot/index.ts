@@ -116,6 +116,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
   ];
   if (deps.ask) common.push({ command: "ask", description: "Спросить про расписание своими словами" });
   common.push({ command: "suggest", description: "Отправить новость медиа-ВИШ" });
+  common.push({ command: "soon", description: "Удалить мои данные и начать заново" });
   await bot.api.setMyCommands(common);
   const admin = [
     ...common,

@@ -27,9 +27,9 @@ export interface AskResult {
 }
 
 const SYSTEM = `Ты — помощник по расписанию Высшей инженерной школы (ВИШ) ЧувГУ внутри Telegram-бота.
-Отвечай ТОЛЬКО на вопросы о расписании занятий и о людях в нём: пары, время, аудитории, дни, недели, сессия, переносы, любые группы ВИШ, преподаватели (что ведут, у каких групп, когда).
+Отвечай на вопросы о расписании и о самом боте: пары, время, аудитории, дни, недели, сессия, переносы, любые группы ВИШ, преподаватели (что ведут, у каких групп, когда), а также как пользоваться ботом, что он умеет, где что нажать, как включить уведомления и календарь.
 На любые другие темы (решение задач, лабы, код, тексты, советы, болтовня) отвечай ровно одной фразой:
-"Я отвечаю только на вопросы о расписании 🙂" — без исключений.
+"Я отвечаю только на вопросы о расписании и о боте 🙂" — без исключений.
 
 Как отвечать:
 - Студенты называют предметы разговорно: «математика»/«матан» = «Математический анализ», «Алгебра и геометрия» тоже математика; «физра» = «Физическая культура и спорт»; «инфа» = «Информатика»; «прога» = «Программирование»/«Основы программирования»; «англ» = «Иностранный язык»; «история» = «История России»; «ОРГ» = «Основы российской государственности». Если точного предмета нет — ищи по смыслу инструментом find_subject и предлагай ближайшие совпадения.
@@ -38,6 +38,8 @@ const SYSTEM = `Ты — помощник по расписанию Высшей
 - В расписании групп портал НЕ указывает преподавателя. Преподаватели известны по онлайн-парам (страница вебинаров) и, если у бота есть учётка портала, по справочнику преподавателей. Отвечая про человека, опирайся только на то, что вернул find_teacher, и честно говори, если данных нет. Не угадывай.
 - Расписание своей группы на две недели уже дано в сообщении; для других дат и групп используй инструменты. Не выдумывай пары и людей.
 - Отвечай кратко, по-русски, на «ты». Формат Telegram HTML: только теги <b>, <i>, <code>. Без Markdown, без списков через «*».
+- Про сам бот отвечай инструментом bot_help: там точный список кнопок и возможностей. Не выдумывай кнопок, которых там нет.
+- Если группа пользователя не выбрана, скажи, что её нужно выбрать кнопкой «👥 Др. группы» или командой /group, и всё равно ответь тем, что можешь.
 - Даты пиши как «пн 14.09», время как 11:40–13:00.`;
 
 function normalize(s: string): string {
@@ -102,12 +104,12 @@ export class AskService {
     return found.length === 1 ? found[0]! : found.length > 1 ? (found.find((g) => g.key === fallback.key) ?? found[0]!) : null;
   }
 
-  private tools(own: LogicalGroup, subgroup: number | null) {
+  private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined) {
     const service = this.service;
     const teachers = this.teachers;
     const webinars = this.webinars;
     const today = todayMsk();
-    const resolve = (q: string) => this.resolveGroup(q, own);
+    const resolve = (q: string) => (own ? this.resolveGroup(q, own) : (findGroup(service.groups(), q)[0] ?? null));
 
     const getSchedule = betaZodTool({
       name: "get_schedule",
@@ -123,7 +125,7 @@ export class AskService {
         if (!isLocalDate(input.from) || !isLocalDate(input.to)) return "Даты нужны в формате YYYY-MM-DD";
         const to = addDays(input.from, 28) < input.to ? addDays(input.from, 28) : input.to;
         const list = service.materialize(g, input.from, to);
-        return `Расписание ${g.title} с ${input.from} по ${to}:\n${fmtLessons(g.key === own.key ? filterSubgroup(list, subgroup) : list, today)}`;
+        return `Расписание ${g.title} с ${input.from} по ${to}:\n${fmtLessons(own && g.key === own.key ? filterSubgroup(list, subgroup) : list, today)}`;
       },
     });
 
@@ -197,27 +199,34 @@ export class AskService {
       },
     });
 
-    return [getSchedule, findSubject, listGroups, findTeacher];
+    const botHelpTool = betaZodTool({
+      name: "bot_help",
+      description: "Что умеет бот и какие у него кнопки и команды. Используй для любых вопросов о боте и о том, как им пользоваться.",
+      inputSchema: z.object({}),
+      run: async () => botHelp ?? "Справка по боту недоступна.",
+    });
+
+    return [getSchedule, findSubject, listGroups, findTeacher, botHelpTool];
   }
 
-  async answer(input: { question: string; group: LogicalGroup; subgroup: number | null; userId: number }): Promise<AskResult> {
+  async answer(input: { question: string; group: LogicalGroup | null; subgroup: number | null; userId: number; botHelp?: string }): Promise<AskResult> {
     const question = input.question.slice(0, 500);
     const today = todayMsk();
     const from = mondayOf(today);
-    const own = filterSubgroup(this.service.materialize(input.group, from, addDays(from, 13)), input.subgroup);
+    const own = input.group ? filterSubgroup(this.service.materialize(input.group, from, addDays(from, 13)), input.subgroup) : [];
     const wi = this.service.weekInfo(today);
-    const context = fmtLessons(own, today);
+    const context = input.group ? fmtLessons(own, today) : "";
     const runner = this.client.beta.messages.toolRunner({
       model: this.opts.model,
       max_tokens: 1200,
       max_iterations: 6,
       system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
       output_config: { effort: "medium" },
-      tools: this.tools(input.group, input.subgroup),
+      tools: this.tools(input.group, input.subgroup, input.botHelp),
       messages: [
         {
           role: "user",
-          content: `Сегодня ${today} (${weekdayName(today)}${wi.week ? `, ${wi.week} учебная неделя, ${wi.parity === "odd" ? "нечётная" : "чётная"}` : ""}). Моя группа: ${input.group.title}${input.subgroup ? `, подгруппа ${input.subgroup}` : ""}.\n\nРасписание моей группы на эту и следующую неделю:\n${context}\n\nВопрос: ${question}`,
+          content: `Сегодня ${today} (${weekdayName(today)}${wi.week ? `, ${wi.week} учебная неделя, ${wi.parity === "odd" ? "нечётная" : "чётная"}` : ""}). ${input.group ? `Моя группа: ${input.group.title}${input.subgroup ? `, подгруппа ${input.subgroup}` : ""}.\n\nРасписание моей группы на эту и следующую неделю:\n${context}` : "Моя группа пока не выбрана."}\n\nВопрос: ${question}`,
         },
       ],
     });

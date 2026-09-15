@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, groupPicker, onboardingKeyboard } from "../keyboards.js";
+import { BTN, formatPicker, groupPicker, onboardingKeyboard } from "../keyboards.js";
 import { groupRequiredText, needGroup, sendDay, sendWeek } from "../views.js";
 import { addDays, fmtDDMM, isLocalDate, mondayOf, parseRuDate, todayMsk } from "../../time.js";
 import { clampHtml, esc, formatChangeEvent } from "../../schedule/format.js";
@@ -192,6 +192,25 @@ scheduleHandlers.callbackQuery(/^ob:(on|custom|later)$/, async (ctx) => {
   } else {
     await ctx.answerCallbackQuery();
     await ctx.editMessageText("Хорошо. Уведомления можно включить в ⚙️ Настройках.");
+  }
+  // Ask how they want to see the schedule before showing the first one.
+  if (ctx.deps.renderer) {
+    await ctx.reply("Как показывать расписание?\n\nПотом это можно поменять в ⚙️ Настройках, там же выбирается оформление картинок.", { reply_markup: formatPicker() });
+    return;
+  }
+  const group = needGroup(ctx);
+  if (group) await sendDay(ctx, group, todayMsk());
+});
+
+scheduleHandlers.callbackQuery(/^fmt:(text|image|both)$/, async (ctx) => {
+  const format = ctx.match[1] as "text" | "image" | "both";
+  ctx.deps.repo.updateUser(ctx.user.id, { format });
+  ctx.user.format = format;
+  await ctx.answerCallbackQuery({ text: { text: "Только текст", image: "Только картинка", both: "Текст и картинка" }[format] });
+  try {
+    await ctx.editMessageText(`Готово: ${{ text: "буду присылать текстом", image: "буду присылать картинкой", both: "буду присылать и текст, и картинку" }[format]}. Поменять можно в ⚙️ Настройках.`);
+  } catch {
+    /* ignore */
   }
   const group = needGroup(ctx);
   if (group) await sendDay(ctx, group, todayMsk());

@@ -73,12 +73,9 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
     // The directory is what the teacher search looks at; refresh it daily and once at startup
     // so a failing portal account shows up in the log and in /health, not on a student's first search.
     const refresh = async (reason: string): Promise<void> => {
-      try {
-        const list = await teachers.directory();
-        logger.info({ reason, count: list.length }, "teacher directory ready");
-      } catch (err) {
-        logger.warn({ err: String(err), reason }, "teacher directory refresh failed");
-      }
+      const check = await teachers.checkLogin();
+      if (check.ok) logger.info({ reason, count: (JSON.parse(opts.repo.getMeta("teachers:list") ?? "[]") as unknown[]).length }, "portal account signed in, teacher directory ready");
+      else logger.error({ reason, err: check.error }, "portal account cannot sign in: teacher schedules are unavailable");
     };
     jobs.push(new Cron("41 4 * * *", { timezone: TZ, protect: true, name: "teacher-directory" }, () => refresh("cron")));
     setTimeout(() => void refresh("startup"), 20_000).unref();

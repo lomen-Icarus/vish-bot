@@ -1,6 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { BTN, groupPicker, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL } from "../keyboards.js";
+import { THEMES, THEME_LABELS } from "../../render/themes.js";
 import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import type { User } from "../../db/repo.js";
@@ -29,6 +30,7 @@ function settingsText(ctx: BotContext): string {
     "",
     "<b>Что за уведомления</b>",
     "🔔 Изменения — переносы, замены аудиторий, отмены и новые пары твоей группы.",
+    "🎨 Оформление — как выглядят постеры: тёмная, журнальная, плакатная или лента.",
     "🎓 Сессия — то же самое для расписания зачётов и экзаменов.",
     `💻 Дистант — отдельное напоминание перед онлайн-парой со ссылкой на вебинар (${WEBINAR_URL.replace(/^https?:\/\//, "")}).`,
     ...TOPICS.map((t) => `🏷 ${TOPIC_LABELS[t]} — ${TOPIC_HINTS[t]}.`),
@@ -99,6 +101,12 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "format":
       patch.format = cycle(FORMAT_OPTIONS, user.format);
       break;
+    case "theme": {
+      const next = cycle(THEMES, (user.posterTheme ?? "midnight") as (typeof THEMES)[number]);
+      patch.posterTheme = next;
+      toast = `Оформление: ${THEME_LABELS[next] ?? next}`;
+      break;
+    }
     case "changes":
       patch.notifyChanges = !user.notifyChanges;
       break;

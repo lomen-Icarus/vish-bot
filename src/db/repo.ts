@@ -81,6 +81,8 @@ export interface User {
   calToken: string | null;
   /** Alarm minutes baked into the subscription feed; null = no alarms. */
   calAlarmMin: number | null;
+  /** Poster look; null = the bot's default (POSTER_THEME). */
+  posterTheme: string | null;
   blocked: boolean;
   createdAt: string;
   lastSeenAt: string;
@@ -106,6 +108,7 @@ interface UserRow {
   stream_intake: number | null;
   cal_token: string | null;
   cal_alarm_min: number | null;
+  poster_theme: string | null;
   blocked: number;
   created_at: string;
   last_seen_at: string;
@@ -138,6 +141,7 @@ function rowToUser(r: UserRow): User {
     streamIntake: r.stream_intake ?? null,
     calToken: r.cal_token ?? null,
     calAlarmMin: r.cal_alarm_min ?? null,
+    posterTheme: r.poster_theme ?? null,
     blocked: r.blocked === 1,
     createdAt: r.created_at,
     lastSeenAt: r.last_seen_at,
@@ -311,6 +315,7 @@ export class Repo {
     if (patch.streamIntake !== undefined) map.stream_intake = patch.streamIntake;
     if (patch.calToken !== undefined) map.cal_token = patch.calToken;
     if (patch.calAlarmMin !== undefined) map.cal_alarm_min = patch.calAlarmMin;
+    if (patch.posterTheme !== undefined) map.poster_theme = patch.posterTheme;
     if (patch.blocked !== undefined) map.blocked = patch.blocked ? 1 : 0;
     const keys = Object.keys(map);
     if (keys.length === 0) return;
@@ -628,6 +633,23 @@ export class Repo {
     const ts = nowIso();
     this.db.transaction(() => {
       for (const r of rows) stmt.run(userId, String(r.id), ts);
+    })();
+  }
+
+  /** Erase everything the bot knows about a person; /start then starts over. */
+  forgetUser(userId: number): void {
+    this.db.transaction(() => {
+      for (const sql of [
+        "DELETE FROM watch_groups WHERE user_id = ?",
+        "DELETE FROM reminders_sent WHERE user_id = ?",
+        "DELETE FROM notifications_log WHERE user_id = ?",
+        "DELETE FROM ai_usage WHERE user_id = ?",
+        "DELETE FROM ai_log WHERE user_id = ?",
+        "DELETE FROM news_complaints WHERE user_id = ?",
+        "DELETE FROM users WHERE id = ?",
+      ]) {
+        this.db.prepare(sql).run(userId);
+      }
     })();
   }
 

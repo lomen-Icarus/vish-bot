@@ -19,6 +19,8 @@ export interface PendingState {
   target?: string;
   /** For broadcast: plain text of the captured message (for the announcements board). */
   text?: string;
+  /** For broadcast: whether the admin asked to pin it to the board. */
+  board?: boolean;
   expiresAt: number;
 }
 

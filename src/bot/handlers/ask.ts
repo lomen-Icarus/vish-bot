@@ -2,37 +2,48 @@ import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { BTN, isMenuText } from "../keyboards.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { needGroup } from "../views.js";
+import { featuresText, needGroup } from "../views.js";
 import { clampHtml, esc } from "../../schedule/format.js";
 import { todayMsk } from "../../time.js";
 import { logger } from "../../logger.js";
 
 export const askHandlers = new Composer<BotContext>();
 
-async function answer(ctx: BotContext, question: string): Promise<void> {
+export type AskOutcome = "answered" | "disabled" | "limit" | "failed";
+
+/**
+ * Ask the model and deliver the answer. Shared by /ask and the search button,
+ * so both obey the same daily limits and both carry the "wrong answer" button.
+ * `extraButtons` are appended under the answer, e.g. links the local search found.
+ */
+export async function askAi(ctx: BotContext, question: string, opts: { extraButtons?: InlineKeyboard } = {}): Promise<AskOutcome> {
   const ask = ctx.deps.ask;
-  if (!ask) return void (await ctx.reply("Вопросы своими словами пока выключены."));
-  const group = needGroup(ctx);
-  if (!group) return void (await ctx.reply("Сначала выбери группу: /group"));
+  if (!ask) return "disabled";
   const day = todayMsk();
-  const used = ctx.deps.repo.aiUsage(ctx.user.id, day);
-  if (used >= ctx.deps.config.AI_DAILY_LIMIT_PER_USER) {
-    return void (await ctx.reply(`На сегодня лимит вопросов исчерпан (${ctx.deps.config.AI_DAILY_LIMIT_PER_USER} в день). Кнопки работают без лимита 🙂`));
-  }
-  if (ctx.deps.repo.aiUsageGlobal(day) >= ctx.deps.config.AI_DAILY_LIMIT_GLOBAL) {
-    return void (await ctx.reply("Сегодня бот уже много отвечал, дневной бюджет вопросов закончился. Завтра продолжим."));
-  }
+  if (ctx.deps.repo.aiUsage(ctx.user.id, day) >= ctx.deps.config.AI_DAILY_LIMIT_PER_USER) return "limit";
+  if (ctx.deps.repo.aiUsageGlobal(day) >= ctx.deps.config.AI_DAILY_LIMIT_GLOBAL) return "limit";
   await ctx.replyWithChatAction("typing");
   try {
-    const res = await ask.answer({ question, group, subgroup: ctx.user.subgroup, userId: ctx.user.id });
+    const res = await ask.answer({ question, group: needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps) });
     ctx.deps.repo.bumpAiUsage(ctx.user.id, day, res.inputTokens, res.outputTokens);
     const logId = ctx.deps.repo.logAi(ctx.user.id, question, res.text);
-    const kb = new InlineKeyboard().text("👎 Ответ неверный", `aiw:${logId}`);
-    await ctx.reply(res.text, { parse_mode: "HTML", reply_markup: kb }).catch(() => ctx.reply(res.text.replace(/<[^>]+>/g, ""), { reply_markup: kb }));
+    const kb = opts.extraButtons ?? new InlineKeyboard();
+    kb.row().text("👎 Ответ неверный", `aiw:${logId}`);
+    const text = clampHtml(res.text);
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => ctx.reply(text.replace(/<[^>]+>/g, ""), { reply_markup: kb }));
+    return "answered";
   } catch (err) {
     logger.error({ err }, "ask failed");
-    await ctx.reply(`Не получилось ответить: ${esc(String(err)).slice(0, 200)}`, { parse_mode: "HTML" });
+    return "failed";
   }
+}
+
+async function answer(ctx: BotContext, question: string): Promise<void> {
+  const outcome = await askAi(ctx, question);
+  if (outcome === "answered") return;
+  if (outcome === "disabled") return void (await ctx.reply("Вопросы своими словами пока выключены."));
+  if (outcome === "limit") return void (await ctx.reply(`На сегодня лимит вопросов исчерпан (${ctx.deps.config.AI_DAILY_LIMIT_PER_USER} в день). Кнопки работают без лимита 🙂`));
+  await ctx.reply("Не получилось ответить, попробуй ещё раз или воспользуйся кнопками.");
 }
 
 askHandlers.command("ask", async (ctx) => {

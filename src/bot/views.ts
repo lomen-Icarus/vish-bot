@@ -83,7 +83,7 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
 
   if (wantImage && deps.renderer) {
     try {
-      const png = await deps.renderer.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock() });
+      const png = await deps.renderer.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock(), theme: ctx.user.posterTheme ?? undefined });
       const caption = text.length <= 1000 ? text : undefined;
       const kb = dayNav(date, today, { image: false, peekKey });
       if (photoMsg && (await editPhoto(ctx, png, fileName, caption, kb))) return;
@@ -107,7 +107,7 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
   if (hasImages && ctx.user.format === "both" && lessons.length > 0 && !opts.edit) {
     // "both": the text goes first, the poster follows silently with its own navigation.
     try {
-      const png = await deps.renderer!.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock() });
+      const png = await deps.renderer!.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock(), theme: ctx.user.posterTheme ?? undefined });
       await ctx.replyWithPhoto(new InputFile(png, fileName), { disable_notification: true, reply_markup: dayNav(date, today, { image: false, peekKey }) });
     } catch (err) {
       logger.warn({ err: String(err) }, "day image render failed");
@@ -127,7 +127,7 @@ export async function sendWeek(ctx: BotContext, group: LogicalGroup, anyDate: Lo
   const fileName = `${group.title}-week-${monday}.png`;
   if (wantImage && deps.renderer) {
     try {
-      const png = await deps.renderer.renderWeek({ group, monday, byDate, weekInfo: deps.service.weekInfo(monday), today: todayMsk(), subgroup });
+      const png = await deps.renderer.renderWeek({ group, monday, byDate, weekInfo: deps.service.weekInfo(monday), today: todayMsk(), subgroup, theme: ctx.user.posterTheme ?? undefined });
       const kb = weekNav(monday, { image: false, peekKey });
       if (photoMsg && (await editPhoto(ctx, png, fileName, undefined, kb))) return;
       await ctx.replyWithPhoto(new InputFile(png, fileName), { reply_markup: kb });
@@ -186,9 +186,10 @@ export function featuresText(deps: Deps): string {
     "",
     "<b>Инструменты</b>",
     `${BTN.calendar} — пары в календарь телефона: ${subscriptionsLive(deps) ? "ссылка-подписка, она обновляется сама и ничего не дублирует, или файл .ics с будильником" : "файл .ics, можно с будильником"}.`,
-    `${BTN.search} — найти группу, предмет или преподавателя одним запросом.`,
-    `${BTN.settings} — группа, подгруппа, формат (текст/картинка/оба), все уведомления, слежение за другими группами.`,
+    `${BTN.search} — ${deps.ask ? "спросить своими словами про расписание, преподавателей и сам бот; ИИ ответит и покажет кнопки на найденное" : "найти группу, предмет или преподавателя одним запросом"}.`,
+    `${BTN.settings} — группа, подгруппа, формат (текст, картинка или оба), оформление картинок, все уведомления, слежение за другими группами.`,
     "📨 /suggest — отправить новость или достижение медиа-ВИШ.",
+    "🧹 /soon — стереть все свои данные и настройки; после этого /start начнёт с нуля.",
   ];
   if (deps.ask) lines.push("💬 /ask — спросить своими словами: «когда матан?», «кто такая Иванова», «что у 14-24 в пятницу».");
   lines.push("", "Inline: напиши в любом чате <code>@бот 12-23 завтра</code> — вставится расписание.");
