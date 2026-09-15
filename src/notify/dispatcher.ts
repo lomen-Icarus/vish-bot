@@ -3,7 +3,7 @@ import { GrammyError, InlineKeyboard, InputFile } from "grammy";
 import type { Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
-import { formatChanges, formatDay, formatNotice, filterSubgroup } from "../schedule/format.js";
+import { clampHtml, formatChanges, formatDay, formatNotice, filterSubgroup } from "../schedule/format.js";
 import { isSessionPeriod, type Occurrence } from "../schedule/model.js";
 import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
@@ -54,7 +54,7 @@ export class Notifier {
   }
 
   /** Deliver every stored, not-yet-notified change event. */
-  async dispatchChangeEvents(): Promise<number> {
+  async dispatchChangeEvents(now: WallClock = wallClock()): Promise<number> {
     const rows = this.repo.unnotifiedEvents();
     if (rows.length === 0) return 0;
     let delivered = 0;
@@ -98,6 +98,8 @@ export class Notifier {
           if (r) r.events.push(...sessionEvents);
           else recipients.set(u.id, { user: u, events: [...sessionEvents] });
         }
+      const idByEvent = new Map<ChangeEvent, number>();
+      list.forEach((r, i) => idByEvent.set(events[i]!, r.id));
       for (const { user, events: evs } of recipients.values()) {
         const own = user.groupKey === groupKey;
         const mine = own
@@ -107,16 +109,60 @@ export class Notifier {
             })
           : evs;
         if (!mine.length) continue;
-        if (this.inQuietHours(user)) continue; // silently skipped; the /changes view still shows them
+        // Quiet hours only postpone: the backlog below delivers them when the quiet window ends.
+        if (this.inQuietHours(user, now)) continue;
+        for (const e of mine) {
+          const id = idByEvent.get(e);
+          if (id != null) this.repo.markReminderSent(user.id, "event", String(id));
+        }
         const text = formatChanges(group, mine);
         // Own group: one tap re-imports just the changed lessons into the phone calendar.
         // Watched group: one tap stops these notifications.
         const kb = own ? new InlineKeyboard().text("📆 Обновить в календаре", `cics:${groupKey}`) : new InlineKeyboard().text("👁 Не следить за группой", `unwatch:${groupKey}`);
-        if (await this.send(user, text.length > 4000 ? text.slice(0, 3990) + "…" : text, { kind: "changes", replyMarkup: kb })) delivered++;
+        if (await this.send(user, clampHtml(text), { kind: "changes", replyMarkup: kb })) delivered++;
       }
       this.repo.markEventsNotified(list.map((r) => r.id));
     }
     return delivered;
+  }
+
+  /**
+   * Change events that were not delivered because the user was in quiet hours.
+   * They stay in `change_events` for two weeks, so once the quiet window ends
+   * every event the user has not been marked for is sent in one message.
+   */
+  async flushQuietBacklog(now: WallClock = wallClock()): Promise<number> {
+    // Only events created after the first run are eligible, so enabling this
+    // never re-sends what was already delivered before the update.
+    const since = this.repo.getMeta("backlog:since");
+    if (!since) {
+      this.repo.setMeta("backlog:since", new Date().toISOString());
+      return 0;
+    }
+    let sent = 0;
+    for (const user of this.repo.listUsers({ onlyActive: true })) {
+      if (!user.groupKey || !user.notifyChanges) continue;
+      if (this.inQuietHours(user, now)) continue;
+      const group = this.service.group(user.groupKey);
+      if (!group) continue;
+      const rows = this.repo.activeEvents(user.groupKey, now.date, 30).filter((r) => r.createdAt >= since && !this.repo.reminderSent(user.id, "event", String(r.id)));
+      if (!rows.length) continue;
+      const events: ChangeEvent[] = rows.map((r) => {
+        const p = r.payload as { before?: Occurrence; after?: Occurrence; fields?: string[] };
+        return { kind: r.kind as ChangeEvent["kind"], groupKey: r.groupKey, date: r.date, period: r.period, before: p.before, after: p.after, fields: p.fields };
+      });
+      const mine = events.filter((e) => {
+        if (isSessionPeriod(e.period) && !user.notifySession) return false;
+        const sg = e.after?.subgroup ?? e.before?.subgroup ?? null;
+        return !user.subgroup || sg == null || sg === user.subgroup;
+      });
+      for (const r of rows) this.repo.markReminderSent(user.id, "event", String(r.id));
+      if (!mine.length) continue;
+      const kb = new InlineKeyboard().text("📆 Обновить в календаре", `cics:${user.groupKey}`);
+      const text = `🌙 <i>Пока у тебя были тихие часы, расписание изменилось.</i>\n\n${formatChanges(group, mine)}`;
+      if (await this.send(user, clampHtml(text), { kind: "changes-backlog", replyMarkup: kb })) sent++;
+    }
+    return sent;
   }
 
   inQuietHours(user: User, now: WallClock = wallClock()): boolean {

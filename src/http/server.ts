@@ -17,29 +17,34 @@ export interface HttpDeps {
 }
 
 const FEED_CACHE_MS = 5 * 60_000;
-const MAX_CACHE_ENTRIES = 500;
+/** A semester feed is ~100 KB, so the cache stays small on a 2 GB container. */
+const MAX_CACHE_ENTRIES = 50;
 
 export function calendarPath(token: string): string {
   return `/cal/${token}.ics`;
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const cache = new Map<string, { at: number; body: string }>();
+  const cache = new Map<string, { at: number; body: Buffer }>();
 
-  const feed = (token: string): { status: number; body: string; type: string } => {
+  const feed = (token: string): { status: number; body: Buffer; type: string } => {
+    // A user who blocked the bot in Telegram still keeps their calendar subscription.
     const user = deps.repo.userByCalToken(token);
-    if (!user || user.blocked) return { status: 404, body: "not found", type: "text/plain; charset=utf-8" };
+    if (!user) return { status: 404, body: Buffer.from("not found"), type: "text/plain; charset=utf-8" };
     const group = user.groupKey ? deps.service.group(user.groupKey) : null;
-    if (!group) return { status: 404, body: "group not chosen", type: "text/plain; charset=utf-8" };
+    if (!group) return { status: 404, body: Buffer.from("group not chosen"), type: "text/plain; charset=utf-8" };
     // Cache key changes whenever the user's settings or the portal data change, so a fresh feed is never stale.
     const key = [token, group.key, user.subgroup ?? "", user.calAlarmMin ?? "", deps.repo.lastPollRun()?.finishedAt ?? ""].join("|");
+    const now = Date.now();
+    for (const [k, v] of cache) if (now - v.at >= FEED_CACHE_MS) cache.delete(k);
     const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < FEED_CACHE_MS) return { status: 200, body: hit.body, type: "text/calendar; charset=utf-8" };
-    const { ics } = groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H" });
+    if (hit) return { status: 200, body: hit.body, type: "text/calendar; charset=utf-8" };
+    const { ics } = groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H", stableSequence: true });
     for (const k of cache.keys()) if (k.startsWith(`${token}|`)) cache.delete(k);
     if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
-    cache.set(key, { at: Date.now(), body: ics });
-    return { status: 200, body: ics, type: "text/calendar; charset=utf-8" };
+    const body = Buffer.from(ics, "utf8");
+    cache.set(key, { at: now, body });
+    return { status: 200, body, type: "text/calendar; charset=utf-8" };
   };
 
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
@@ -49,13 +54,15 @@ export function createHttpServer(deps: HttpDeps): Server {
       res.writeHead(405, { Allow: "GET, HEAD" }).end();
       return;
     }
-    const send = (status: number, body: string, type: string, extra: Record<string, string> = {}) => {
-      res.writeHead(status, { "Content-Type": type, "Content-Length": String(Buffer.byteLength(body)), "Cache-Control": status === 200 ? "public, max-age=300" : "no-store", ...extra });
-      res.end(method === "HEAD" ? undefined : body);
+    const send = (status: number, body: string | Buffer, type: string, extra: Record<string, string> = {}) => {
+      const buf = Buffer.isBuffer(body) ? body : Buffer.from(body, "utf8");
+      // A feed is personal: never let a shared proxy cache it.
+      res.writeHead(status, { "Content-Type": type, "Content-Length": String(buf.length), "Cache-Control": status === 200 ? "private, max-age=300" : "no-store", ...extra });
+      res.end(method === "HEAD" ? undefined : buf);
     };
     if (url.pathname === "/health") {
       const p = deps.repo.lastPollRun();
-      send(200, JSON.stringify({ ok: true, lastPoll: p?.finishedAt ?? null, groups: deps.service.groups().length }), "application/json; charset=utf-8");
+      send(200, JSON.stringify({ ok: true, lastPoll: p?.finishedAt ?? null, groups: deps.service.groups().length }), "application/json; charset=utf-8", { "Cache-Control": "no-store" });
       return;
     }
     const m = /^\/cal\/([A-Za-z0-9_-]{8,64})\.ics$/.exec(url.pathname);
@@ -75,7 +82,9 @@ export function createHttpServer(deps: HttpDeps): Server {
   const server = createServer(handler);
   server.keepAliveTimeout = 5_000;
   server.headersTimeout = 10_000;
-  server.on("error", (err) => logger.error({ err }, "http server error"));
+  // The bot only offers subscription links while the server is actually listening,
+  // so a busy port degrades to "file only" instead of handing out dead links.
+  server.on("error", (err) => logger.error({ err: String(err), port: deps.port }, "http server error (calendar subscriptions are off)"));
   server.listen(deps.port, deps.host ?? "0.0.0.0", () => logger.info({ port: deps.port }, "http server listening (calendar feeds, /health)"));
   return server;
 }

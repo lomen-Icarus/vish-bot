@@ -57,6 +57,29 @@ function addDaysStr(date: LocalDate, n: number): LocalDate {
   return new Date(t).toISOString().slice(0, 10);
 }
 
+/**
+ * Telegram rejects a message whose HTML is cut mid-tag, so a long text is
+ * trimmed at a line break and every tag left open is closed again.
+ */
+export function clampHtml(html: string, limit = 3900): string {
+  if (html.length <= limit) return html;
+  let cut = html.slice(0, limit);
+  const nl = cut.lastIndexOf("\n");
+  if (nl > limit / 2) cut = cut.slice(0, nl);
+  if (cut.lastIndexOf("<") > cut.lastIndexOf(">")) cut = cut.slice(0, cut.lastIndexOf("<"));
+  const open: string[] = [];
+  for (const m of cut.matchAll(/<(\/?)(b|strong|i|em|u|s|code|pre|a)\b[^>]*>/g)) {
+    const tag = m[2]!.toLowerCase();
+    if (m[1]) {
+      const i = open.lastIndexOf(tag);
+      if (i >= 0) open.splice(i, 1);
+    } else {
+      open.push(tag);
+    }
+  }
+  return `${cut}${open.reverse().map((t) => `</${t}>`).join("")}\n…`;
+}
+
 export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   const lines: string[] = [];
   const ongoing = opts.now && opts.now.date === o.date && o.start != null && o.end != null && opts.now.minutes >= o.start && opts.now.minutes < o.end;

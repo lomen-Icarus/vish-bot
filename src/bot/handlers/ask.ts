@@ -1,9 +1,9 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN } from "../keyboards.js";
+import { BTN, isMenuText } from "../keyboards.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { needGroup } from "../views.js";
-import { esc } from "../../schedule/format.js";
+import { clampHtml, esc } from "../../schedule/format.js";
 import { todayMsk } from "../../time.js";
 import { logger } from "../../logger.js";
 
@@ -67,7 +67,7 @@ askHandlers.callbackQuery(/^aiw:(\d+)$/, async (ctx) => {
   const report = `👎 <b>ИИ ответил неверно</b> (${from.username ? `@${esc(from.username)}` : esc(from.first_name)}${group ? `, ${esc(group.title)}` : ""}, id <code>${from.id}</code>)\n\n<b>Вопрос:</b> ${esc(entry.question)}\n\n<b>Ответ:</b>\n${entry.answer}`;
   for (const adminId of ctx.deps.config.ADMIN_IDS) {
     try {
-      await ctx.api.sendMessage(adminId, report.slice(0, 4000), { parse_mode: "HTML" });
+      await ctx.api.sendMessage(adminId, clampHtml(report), { parse_mode: "HTML" });
     } catch (err) {
       logger.warn({ err: String(err), adminId }, "ai report delivery failed");
     }
@@ -78,6 +78,10 @@ askHandlers.on("message:text", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || pending.kind !== "ask") return next();
   if (ctx.msg.text.startsWith("/")) return next();
+  if (isMenuText(ctx.msg.text)) {
+    clearPending(ctx.deps, ctx.user.id);
+    return next();
+  }
   clearPending(ctx.deps, ctx.user.id);
   await answer(ctx, ctx.msg.text);
 });

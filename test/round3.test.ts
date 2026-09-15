@@ -4,6 +4,7 @@ import { Repo } from "../src/db/repo.js";
 import { Notifier } from "../src/notify/dispatcher.js";
 import { teacherMatchScore } from "../src/portal/teachers.js";
 import { changesCalendar, groupCalendar } from "../src/schedule/calendar.js";
+import { clampHtml } from "../src/schedule/format.js";
 import { createHttpServer } from "../src/http/server.js";
 import type { ScheduleService } from "../src/schedule/service.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
@@ -102,6 +103,46 @@ describe("distance reminders and notification buttons", () => {
   });
 });
 
+describe("quiet hours", () => {
+  it("delivers changes after the quiet window instead of dropping them", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(1, "q", "Q");
+    repo.updateUser(1, { groupKey: group.key, notifyChanges: true, quietFrom: "22:00", quietTo: "08:00" });
+    const before = lesson("2026-09-16", 4, 13 * 60 + 30, "Промышленный менеджмент");
+    repo.insertChangeEvents([{ groupKey: group.key, date: "2026-09-16", period: 1, kind: "changed", payload: { before, after: { ...before, room: "Т-204" }, fields: ["room"] } }]);
+    const { api, sent } = makeApi();
+    const n = new Notifier(api, repo, makeService({}), null);
+    // First call only records the watermark, so nothing older is ever re-sent.
+    expect(await n.flushQuietBacklog(clock("2026-09-15", 9, 0))).toBe(0);
+    repo.insertChangeEvents([{ groupKey: group.key, date: "2026-09-17", period: 1, kind: "removed", payload: { before: lesson("2026-09-17", 2, 9 * 60 + 50, "Физика") } }]);
+
+    // 23:00 is inside the quiet window: the push is skipped but not lost.
+    const atNight = new Notifier(api, repo, makeService({}), null);
+    expect(await atNight.dispatchChangeEvents(clock("2026-09-15", 23, 0))).toBe(0);
+    expect(sent).toHaveLength(0);
+
+    // Morning: the backlog arrives once, and only once.
+    expect(await n.flushQuietBacklog(clock("2026-09-16", 9, 0))).toBe(1);
+    expect(sent[0]!.text).toMatch(/тихие часы/);
+    expect(sent[0]!.text).toMatch(/Физика/);
+    expect(await n.flushQuietBacklog(clock("2026-09-16", 9, 1))).toBe(0);
+  });
+
+  it("does not resend what was already delivered normally", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(1, "a", "A");
+    repo.updateUser(1, { groupKey: group.key, notifyChanges: true });
+    const { api, sent } = makeApi();
+    const n = new Notifier(api, repo, makeService({}), null);
+    expect(await n.flushQuietBacklog(clock("2026-09-15", 9, 0))).toBe(0); // watermark
+    const before = lesson("2026-09-16", 4, 13 * 60 + 30, "Промышленный менеджмент");
+    repo.insertChangeEvents([{ groupKey: group.key, date: "2026-09-16", period: 1, kind: "changed", payload: { before, after: { ...before, room: "Т-204" }, fields: ["room"] } }]);
+    expect(await n.dispatchChangeEvents()).toBe(1);
+    expect(await n.flushQuietBacklog(clock("2026-09-15", 9, 5))).toBe(0);
+    expect(sent).toHaveLength(1);
+  });
+});
+
 describe("announcements board", () => {
   it("stores, lists active only, deletes early", () => {
     const repo = new Repo(openDatabase(":memory:"));
@@ -124,7 +165,45 @@ describe("announcements board", () => {
   });
 });
 
+describe("long messages", () => {
+  it("never cuts HTML mid-tag and closes what it opened", () => {
+    const block = (i: number) => `<b>Пара ${i}</b>\n<i>ауд. Т-${i}</i> · <code>11:40</code>\n`;
+    const long = Array.from({ length: 300 }, (_, i) => block(i)).join("");
+    const out = clampHtml(long, 1000);
+    expect(out.length).toBeLessThanOrEqual(1100);
+    expect(out.lastIndexOf("<")).toBeLessThan(out.lastIndexOf(">"));
+    const opens = [...out.matchAll(/<(b|i|code)>/g)].length;
+    const closes = [...out.matchAll(/<\/(b|i|code)>/g)].length;
+    expect(opens).toBe(closes);
+    expect(clampHtml("<b>коротко</b>", 1000)).toBe("<b>коротко</b>");
+    // A cut inside a tag is repaired rather than shipped.
+    expect(clampHtml("<b>привет</b> и <i>пока</i>", 12)).not.toContain("<i");
+  });
+});
+
 describe("calendar feeds", () => {
+  it("keeps the newest version when a lesson changed twice", () => {
+    const base = lesson("2026-09-16", 4, 13 * 60 + 30, "Промышленный менеджмент");
+    const first: ChangeEvent = { kind: "changed", groupKey: group.key, date: "2026-09-16", period: 1, before: base, after: { ...base, room: "Т-204" }, fields: ["room"] };
+    const second: ChangeEvent = { kind: "changed", groupKey: group.key, date: "2026-09-16", period: 1, before: { ...base, room: "Т-204" }, after: { ...base, room: "Т-300" }, fields: ["room"] };
+    const { ics, live } = changesCalendar(group, [first, second], { subgroup: null, alarmMinutes: null, now: new Date("2026-09-15T10:00:00Z") });
+    const flat = ics.replace(/\r\n[ \t]/g, "");
+    expect(live).toBe(1);
+    expect(flat.split("BEGIN:VEVENT").length - 1).toBe(1);
+    expect(flat).toContain("LOCATION:ауд. Т-300\\, ЧувГУ");
+    expect(flat).not.toContain("Т-204");
+  });
+
+  it("marks a lesson cancelled when the last event removed it", () => {
+    const base = lesson("2026-09-16", 4, 13 * 60 + 30, "Промышленный менеджмент");
+    const changed: ChangeEvent = { kind: "changed", groupKey: group.key, date: "2026-09-16", period: 1, before: base, after: { ...base, room: "Т-204" }, fields: ["room"] };
+    const removed: ChangeEvent = { kind: "removed", groupKey: group.key, date: "2026-09-16", period: 1, before: { ...base, room: "Т-204" } };
+    const { ics, live, cancelled } = changesCalendar(group, [changed, removed], { subgroup: null, alarmMinutes: null });
+    expect(live).toBe(0);
+    expect(cancelled).toBe(1);
+    expect(ics.replace(/\r\n[ \t]/g, "")).toContain("STATUS:CANCELLED");
+  });
+
   it("builds a changes-only file with live and cancelled events", () => {
     const before = lesson("2026-09-16", 4, 13 * 60 + 30, "Промышленный менеджмент");
     const moved: ChangeEvent = { kind: "moved", groupKey: group.key, date: "2026-09-16", period: 1, before, after: { ...before, date: "2026-09-18", movedFrom: { date: "2026-09-16", slot: 4 } } };

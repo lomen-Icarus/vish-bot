@@ -73,7 +73,8 @@ const schema = z.object({
   PUBLIC_URL: z
     .string()
     .optional()
-    .transform((v) => (v && v.trim() ? v.trim().replace(/\/+$/, "") : undefined)),
+    .transform((v) => (v && v.trim() ? v.trim().replace(/\/+$/, "") : undefined))
+    .refine((v) => !v || /^https?:\/\/[^\s/]+/i.test(v), { message: "PUBLIC_URL must start with http:// or https://" }),
 });
 
 export type Config = z.infer<typeof schema>;

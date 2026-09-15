@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, teacherDayNav, teacherWeekNav } from "../keyboards.js";
+import { BTN, isMenuText, teacherDayNav, teacherWeekNav } from "../keyboards.js";
 import { esc, formatDay, formatWebinarTeacher, formatWeek } from "../../schedule/format.js";
 import type { LogicalGroup } from "../../schedule/groups.js";
 import type { Occurrence } from "../../schedule/model.js";
@@ -54,6 +54,10 @@ teacherHandlers.on("message:text", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || pending.kind !== "teacher") return next();
   if (ctx.msg.text.startsWith("/")) return next();
+  if (isMenuText(ctx.msg.text)) {
+    clearPending(ctx.deps, ctx.user.id);
+    return next();
+  }
   clearPending(ctx.deps, ctx.user.id);
   const teachers = ctx.deps.teachers;
   const query = ctx.msg.text;

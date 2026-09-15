@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, groupLabel, mainKeyboard } from "../keyboards.js";
+import { BTN, groupLabel, isMenuText, mainKeyboard } from "../keyboards.js";
 import { featuresText, helpText, needGroup } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import { esc } from "../../schedule/format.js";
@@ -55,6 +55,11 @@ miscHandlers.on("message", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || pending.kind !== "suggest") return next();
   if (ctx.msg.text?.startsWith("/")) return next();
+  // A menu button means the user left the flow: drop it and let the button work.
+  if (isMenuText(ctx.msg.text)) {
+    clearPending(ctx.deps, ctx.user.id);
+    return next();
+  }
   clearPending(ctx.deps, ctx.user.id);
   const group = needGroup(ctx);
   const from = ctx.from;
@@ -119,7 +124,7 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   if (groups.length) {
     parts.push(`<b>Группы</b>: ${groups.map((g) => esc(g.title)).join(", ")}`);
     for (const g of groups.slice(0, 6)) {
-      kb.text(`📅 ${groupLabel(g)}`, `pd:${g.key}:${today}`);
+      kb.text(`📅 ${groupLabel(g)}`, `pdn:${g.key}:${today}`);
       if (++buttons % 3 === 0) kb.row();
     }
     if (buttons % 3) kb.row();
@@ -183,6 +188,10 @@ miscHandlers.on("message:text", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || pending.kind !== "search") return next();
   if (ctx.msg.text.startsWith("/")) return next();
+  if (isMenuText(ctx.msg.text)) {
+    clearPending(ctx.deps, ctx.user.id);
+    return next();
+  }
   clearPending(ctx.deps, ctx.user.id);
   await ctx.replyWithChatAction("typing");
   await runSearch(ctx, ctx.msg.text.trim().slice(0, 60));

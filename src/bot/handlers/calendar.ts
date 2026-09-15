@@ -1,6 +1,7 @@
 import { Composer, InlineKeyboard, InputFile } from "grammy";
 import type { BotContext } from "../context.js";
 import { groupRequiredText, needGroup } from "../views.js";
+import { BTN } from "../keyboards.js";
 import { icsFileName } from "../../schedule/ics.js";
 import { changesCalendar, groupCalendar } from "../../schedule/calendar.js";
 import type { ChangeEvent } from "../../schedule/diff.js";
@@ -37,6 +38,7 @@ async function offer(ctx: BotContext): Promise<void> {
 }
 
 calendarHandlers.command("calendar", offer);
+calendarHandlers.hears(BTN.calendar, offer);
 calendarHandlers.callbackQuery("ics:menu", async (ctx) => {
   await ctx.answerCallbackQuery();
   await offer(ctx);
@@ -89,7 +91,7 @@ calendarHandlers.callbackQuery(/^ics:sub:(\d{1,3})$/, async (ctx) => {
       "",
       "Ссылка личная и постоянная: сменишь группу или подгруппу в боте — подписка обновится сама. Телефон обычно проверяет подписки раз в несколько часов.",
     ].join("\n"),
-    { parse_mode: "HTML", disable_web_page_preview: true } as never,
+    { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
   );
 });
 
@@ -99,7 +101,8 @@ calendarHandlers.callbackQuery(/^cics:(.+)$/, async (ctx) => {
   const group = ctx.deps.service.group(key);
   if (!group) return void (await ctx.answerCallbackQuery({ text: "Группа не найдена" }));
   const own = ctx.user.groupKey === key;
-  const rows = ctx.deps.repo.activeEvents(key, todayMsk(), 60);
+  // Oldest first so the newest state of a lesson wins in the generated file.
+  const rows = ctx.deps.repo.activeEvents(key, todayMsk(), 60).slice().sort((a, b) => a.id - b.id);
   if (!rows.length) return void (await ctx.answerCallbackQuery({ text: "Актуальных изменений уже нет", show_alert: true }));
   const events: ChangeEvent[] = rows.map((r) => {
     const p = r.payload as { before?: ChangeEvent["before"]; after?: ChangeEvent["after"]; fields?: string[] };

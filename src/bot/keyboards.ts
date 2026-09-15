@@ -27,6 +27,13 @@ export const BTN = {
   backToMenu: "◀️ В меню",
 } as const;
 
+/** Every label of the reply keyboards; a pending flow must never swallow one. */
+export const MENU_TEXTS: ReadonlySet<string> = new Set(Object.values(BTN));
+
+export function isMenuText(text: string | undefined): boolean {
+  return !!text && MENU_TEXTS.has(text.trim());
+}
+
 /** 4 × 3 main menu, order agreed with the customer. */
 export function mainKeyboard(): Keyboard {
   return new Keyboard()
@@ -159,7 +166,8 @@ export function streamDayNav(date: LocalDate, today: LocalDate, opts: { image: b
   if (opts.image) kb.row().text("🖼 Картинкой", `simg:${date}`);
   if (opts.groups?.length) {
     kb.row();
-    for (const g of opts.groups) kb.text(String(g.number) + (g.title.includes("(") ? ` ${groupLabel(g).split(" ").slice(1).join(" ").slice(0, 5)}` : ""), `pd:${g.key}:${date}`);
+    // A new message: the stream screen stays where it is.
+    for (const g of opts.groups) kb.text(String(g.number) + (g.title.includes("(") ? ` ${groupLabel(g).split(" ").slice(1).join(" ").slice(0, 5)}` : ""), `pdn:${g.key}:${date}`);
   }
   return kb;
 }
