@@ -165,7 +165,7 @@ describe("format", () => {
     const occ = expandDays(days, { groupKey: "g", period: 1, weekOneMonday: "2026-08-31", from: "2026-09-14", to: "2026-09-14" });
     const text = formatDay({ key: "g", title: "ВИШ-12-23", prefix: "ВИШ", number: 12, intake: 23, course: 4, portalIds: [1], portalNames: ["ВИШ-12-23"] }, "2026-09-14", occ, { week: 3, parity: "odd", semester: 1 }, "2026-09-13");
     expect(text).toContain("Завтра · Понедельник, 14 сентября");
-    expect(text).toContain("3-я неделя, нечётная");
+    expect(text).toContain("НЕЧЁТНАЯ</b> · 3-я неделя");
     expect(text).toContain("3 пары");
   });
 });

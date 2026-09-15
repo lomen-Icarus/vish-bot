@@ -20,7 +20,7 @@ function pseudoGroup(t: TeacherRef, fullName: string | null): LogicalGroup {
 async function askName(ctx: BotContext): Promise<void> {
   if (!ctx.deps.teachers) return void (await ctx.reply(UNAVAILABLE));
   setPending(ctx.deps, ctx.user.id, { kind: "teacher" }, 3 * 60_000);
-  await ctx.reply("Напиши фамилию преподавателя (можно с инициалами), например <code>Иванов</code>. Отмена: /cancel", { parse_mode: "HTML" });
+  await ctx.reply("Напиши фамилию преподавателя, можно с именем или инициалами в любом порядке: <code>Иванова</code>, <code>Дарья Иванова</code>, <code>Иванова Д.А.</code> Отмена: /cancel", { parse_mode: "HTML" });
 }
 
 teacherHandlers.command("teachers", askName);
@@ -39,7 +39,11 @@ teacherHandlers.on("message:text", async (ctx, next) => {
   if (!teachers) return void (await ctx.reply(UNAVAILABLE));
   await ctx.replyWithChatAction("typing");
   const found = await teachers.search(ctx.msg.text);
-  if (!found.length) return void (await ctx.reply("Никого не нашёл. Проверь фамилию или попробуй только первые буквы."));
+  if (!found.length) {
+    const err = teachers.lastError();
+    const hint = err && ctx.isAdmin ? `\n\n<i>Админу: последняя ошибка портала — ${esc(err)}</i>` : "";
+    return void (await ctx.reply(`Никого не нашёл по «${esc(ctx.msg.text)}». Попробуй одну фамилию без имени или первые буквы фамилии; имя и фамилию можно в любом порядке.${hint}`, { parse_mode: "HTML" }));
+  }
   if (found.length === 1) return showTeacherDay(ctx, found[0]!, todayMsk());
   const kb = new InlineKeyboard();
   for (const t of found) kb.text(t.name, `t:${t.id}`).row();

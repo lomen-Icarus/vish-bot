@@ -60,7 +60,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
 
   bot.on("message:text", async (ctx) => {
     await ctx.reply("Не понял. Нажми кнопку ниже или посмотри /help", {
-      reply_markup: mainKeyboard({ ask: !!deps.ask }),
+      reply_markup: mainKeyboard(),
     });
   });
 
@@ -92,10 +92,13 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "date", description: "Расписание на дату: /date 14.09" },
     { command: "changes", description: "Последние изменения" },
     { command: "group", description: "Выбрать группу" },
+    { command: "groups", description: "Расписание другой группы" },
     { command: "teachers", description: "Расписание преподавателя" },
+    { command: "search", description: "Найти предмет, группу или преподавателя" },
     { command: "calendar", description: "Пары в календарь телефона (.ics)" },
     { command: "stream", description: "Режим потока: все группы курса" },
     { command: "settings", description: "Уведомления и напоминания" },
+    { command: "features", description: "Что умеет бот" },
     { command: "help", description: "Что умеет бот" },
   ];
   if (deps.ask) common.push({ command: "ask", description: "Спросить про расписание своими словами" });
@@ -105,6 +108,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     ...common,
     { command: "admin", description: "Админка" },
     { command: "broadcast", description: "Рассылка" },
+    { command: "announcements", description: "Доска объявлений" },
     { command: "sources", description: "Источники новостей" },
     { command: "news_scan", description: "Сканировать новости сейчас" },
     { command: "poll", description: "Опросить портал сейчас" },

@@ -1,5 +1,5 @@
 import type { Api, RawApi } from "grammy";
-import { GrammyError, InputFile } from "grammy";
+import { GrammyError, InlineKeyboard, InputFile } from "grammy";
 import type { Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
@@ -8,6 +8,14 @@ import { isSessionPeriod, type Occurrence } from "../schedule/model.js";
 import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
+import { WEBINAR_URL } from "../bot/keyboards.js";
+
+export interface SendOptions {
+  photo?: Buffer;
+  kind: string;
+  silent?: boolean;
+  replyMarkup?: InlineKeyboard;
+}
 
 export class Notifier {
   constructor(
@@ -18,13 +26,14 @@ export class Notifier {
     private readonly adminIds: number[] = [],
   ) {}
 
-  async send(user: User, html: string, opts: { photo?: Buffer; kind: string; silent?: boolean }): Promise<boolean> {
+  async send(user: User, html: string, opts: SendOptions): Promise<boolean> {
     try {
       if (opts.photo) {
-        await this.api.sendPhoto(user.id, new InputFile(opts.photo, "schedule.png"), { caption: html.length <= 1000 ? html : undefined, parse_mode: "HTML", disable_notification: opts.silent });
-        if (html.length > 1000) await this.api.sendMessage(user.id, html, { parse_mode: "HTML", disable_notification: true });
+        const short = html.length <= 1000;
+        await this.api.sendPhoto(user.id, new InputFile(opts.photo, "schedule.png"), { caption: short ? html : undefined, parse_mode: "HTML", disable_notification: opts.silent, reply_markup: short ? opts.replyMarkup : undefined });
+        if (!short) await this.api.sendMessage(user.id, html, { parse_mode: "HTML", disable_notification: true, reply_markup: opts.replyMarkup });
       } else {
-        await this.api.sendMessage(user.id, html, { parse_mode: "HTML", disable_notification: opts.silent });
+        await this.api.sendMessage(user.id, html, { parse_mode: "HTML", disable_notification: opts.silent, reply_markup: opts.replyMarkup });
       }
       this.repo.logNotification(user.id, opts.kind, true);
       await sleep(35);
@@ -88,14 +97,20 @@ export class Notifier {
           else recipients.set(u.id, { user: u, events: [...sessionEvents] });
         }
       for (const { user, events: evs } of recipients.values()) {
-        const mine = evs.filter((e) => {
-          const sg = e.after?.subgroup ?? e.before?.subgroup ?? null;
-          return !user.subgroup || sg == null || sg === user.subgroup;
-        });
+        const own = user.groupKey === groupKey;
+        const mine = own
+          ? evs.filter((e) => {
+              const sg = e.after?.subgroup ?? e.before?.subgroup ?? null;
+              return !user.subgroup || sg == null || sg === user.subgroup;
+            })
+          : evs;
         if (!mine.length) continue;
         if (this.inQuietHours(user)) continue; // silently skipped; the /changes view still shows them
         const text = formatChanges(group, mine);
-        if (await this.send(user, text.length > 4000 ? text.slice(0, 3990) + "…" : text, { kind: "changes" })) delivered++;
+        // Own group: one tap re-imports just the changed lessons into the phone calendar.
+        // Watched group: one tap stops these notifications.
+        const kb = own ? new InlineKeyboard().text("📆 Обновить в календаре", `cics:${groupKey}`) : new InlineKeyboard().text("👁 Не следить за группой", `unwatch:${groupKey}`);
+        if (await this.send(user, text.length > 4000 ? text.slice(0, 3990) + "…" : text, { kind: "changes", replyMarkup: kb })) delivered++;
       }
       this.repo.markEventsNotified(list.map((r) => r.id));
     }
@@ -111,9 +126,9 @@ export class Notifier {
     return now.minutes >= from || now.minutes < to;
   }
 
-  /** Runs every minute: first-lesson, per-lesson and evening reminders. */
+  /** Runs every minute: first-lesson, per-lesson, distance-link and evening reminders. */
   async tickReminders(now: WallClock = wallClock()): Promise<number> {
-    const users = this.repo.listUsers({ onlyActive: true }).filter((u) => u.groupKey && (u.remindFirstMin != null || u.remindEachMin != null || u.eveningAt));
+    const users = this.repo.listUsers({ onlyActive: true }).filter((u) => u.groupKey && (u.remindFirstMin != null || u.remindEachMin != null || u.remindDistanceMin != null || u.eveningAt));
     if (users.length === 0) return 0;
     const cache = new Map<string, Occurrence[]>();
     const lessonsFor = (groupKey: string, date: LocalDate): Occurrence[] => {
@@ -155,7 +170,23 @@ export class Notifier {
             const left = o.start! - now.minutes;
             const where = o.isDistance ? "💻 дистанционно" : o.room ? `ауд. ${o.room}` : "";
             const text = `⏱ Через ${humanMinutes(left)} — <b>${escapeHtml(o.subject)}</b> (${o.type})${where ? `, ${escapeHtml(where)}` : ""} · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}`;
-            if (await this.send(user, text, { kind: "remind-each" })) sent++;
+            const kb = o.isDistance ? new InlineKeyboard().url("💻 Открыть вебинар", WEBINAR_URL) : undefined;
+            if (await this.send(user, text, { kind: "remind-each", replyMarkup: kb })) sent++;
+          }
+        }
+      }
+
+      // Distance lessons: a separate short ping with the webinar link, independent of the per-lesson reminder.
+      if (user.remindDistanceMin != null) {
+        for (const o of today) {
+          if (!o.isDistance) continue;
+          const due = o.start! - user.remindDistanceMin;
+          const ref = `distance|${o.date}|${o.slot ?? o.start}|${o.subgroup ?? ""}`;
+          if (now.minutes >= due && now.minutes < o.start! && !this.repo.reminderSent(user.id, "distance", ref)) {
+            this.repo.markReminderSent(user.id, "distance", ref);
+            const left = o.start! - now.minutes;
+            const text = `💻 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} дистант — <b>${escapeHtml(o.subject)}</b> (${o.type}) · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}\nВебинар: ${WEBINAR_URL}`;
+            if (await this.send(user, text, { kind: "remind-distance", replyMarkup: new InlineKeyboard().url("💻 Открыть вебинар", WEBINAR_URL) })) sent++;
           }
         }
       }

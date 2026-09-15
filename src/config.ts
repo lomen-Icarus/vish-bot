@@ -52,7 +52,7 @@ const schema = z.object({
   NEWS_LOOKBACK_HOURS: z.coerce.number().int().positive().default(32),
   NEWS_MAX_PER_TOPIC: z.coerce.number().int().positive().default(8),
   DB_PATH: z.string().default("./data/vish-bot.sqlite"),
-  POLL_CRON_BUSY: z.string().default("*/5 7-21 * * 1-6"),
+  POLL_CRON_BUSY: z.string().default("*/6 7-21 * * 1-6"),
   POLL_CRON_IDLE: z.string().default("*/30 * * * *"),
   ANTHROPIC_API_KEY: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   AI_MODEL: z.string().default("claude-sonnet-5"),
@@ -63,7 +63,17 @@ const schema = z.object({
     .default("0")
     .transform((v) => v === "1" || v.toLowerCase() === "true"),
   LOG_LEVEL: z.string().default("info"),
+  /** Poster look: midnight (default), editorial, brutalist, timeline. */
+  POSTER_THEME: z.string().default("midnight"),
   HTTPS_PROXY: z.string().optional(),
+  /** Port of the tiny HTTP server (calendar subscriptions, /health). Pterodactyl passes SERVER_PORT. 0 = off. */
+  HTTP_PORT: z.coerce.number().int().nonnegative().default(0),
+  SERVER_PORT: z.coerce.number().int().nonnegative().optional(),
+  /** Public base URL of that server, e.g. http://srv3.frienworld.space:40070 — enables calendar subscription links. */
+  PUBLIC_URL: z
+    .string()
+    .optional()
+    .transform((v) => (v && v.trim() ? v.trim().replace(/\/+$/, "") : undefined)),
 });
 
 export type Config = z.infer<typeof schema>;

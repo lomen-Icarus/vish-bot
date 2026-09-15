@@ -166,4 +166,18 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (item_id, user_id)
   );
   `,
+  `
+  ALTER TABLE users ADD COLUMN remind_distance_min INTEGER;
+  ALTER TABLE users ADD COLUMN cal_token TEXT;
+  ALTER TABLE users ADD COLUMN cal_alarm_min INTEGER;
+  CREATE UNIQUE INDEX users_cal_token ON users (cal_token) WHERE cal_token IS NOT NULL;
+  CREATE TABLE announcements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    admin_id INTEGER,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0
+  );
+  `,
 ];

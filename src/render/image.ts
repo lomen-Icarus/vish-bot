@@ -2,17 +2,12 @@
  * Schedule posters: satori (JSX-like tree -> SVG) + resvg (SVG -> PNG).
  * No browser, no system fonts: Inter is bundled via @fontsource/inter.
  */
-import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import path from "node:path";
-import satori, { type Font } from "satori";
-import { Resvg } from "@resvg/resvg-js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import type { WeekInfo } from "../schedule/service.js";
-import { filterSubgroup, weekLabel } from "../schedule/format.js";
+import { filterSubgroup } from "../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallClock } from "../time.js";
-import { logger } from "../logger.js";
+import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El } from "./core.js";
 
 export interface DayRenderInput {
   group: LogicalGroup;
@@ -62,21 +57,6 @@ export interface Renderer {
   renderStreamDay(input: StreamRenderInput): Promise<Buffer>;
 }
 
-// ---------- tiny element helper (satori consumes React-like objects) ----------
-type Style = Record<string, string | number>;
-interface El {
-  type: string;
-  props: { style?: Style; children?: unknown };
-}
-const h = (type: string, style: Style, ...children: unknown[]): El => ({ type, props: { style, children: children.flat().filter((c) => c !== null && c !== undefined && c !== false) } });
-const text = (s: string, style: Style = {}): El => ({ type: "span", props: { style, children: s } });
-
-const W = 1080;
-const PAD = 56;
-/** Subsets are registered as separate families so satori falls back per glyph. */
-const SUBSET_FAMILIES: Record<string, string> = { latin: "Inter", cyrillic: "InterCyr", "latin-ext": "InterLatExt", "cyrillic-ext": "InterCyrExt" };
-const FONT = Object.values(SUBSET_FAMILIES).join(", ");
-
 const THEME = {
   bg: "#0b1020",
   card: "#131a2e",
@@ -99,29 +79,22 @@ function typeColor(type: string): string {
 
 const WEEKDAY_ACCENT = ["", "#6ea8ff", "#4ade80", "#fbbf24", "#f472b6", "#a78bfa", "#34d399", "#94a3b8"];
 
-// ---------- fonts ----------
-async function loadFonts(): Promise<Font[]> {
-  const require = createRequire(import.meta.url);
-  const pkg = require.resolve("@fontsource/inter/package.json");
-  const dir = path.join(path.dirname(pkg), "files");
-  const specs: Array<{ weight: 400 | 500 | 600 | 700 | 800; file: string; name: string }> = [];
-  for (const weight of [400, 500, 600, 700, 800] as const) {
-    for (const [subset, name] of Object.entries(SUBSET_FAMILIES)) specs.push({ weight, file: `inter-${subset}-${weight}-normal.woff`, name });
-  }
-  const fonts: Font[] = [];
-  for (const s of specs) {
-    try {
-      fonts.push({ name: s.name, data: await readFile(path.join(dir, s.file)), weight: s.weight, style: "normal" });
-    } catch (err) {
-      logger.warn({ err, file: s.file }, "font subset missing");
-    }
-  }
-  if (!fonts.length) throw new Error("No Inter font files found");
-  return fonts;
+// ---------- building blocks ----------
+const PARITY = { odd: { label: "НЕЧЁТНАЯ", color: "#fbbf24" }, even: { label: "ЧЁТНАЯ", color: "#38bdf8" } } as const;
+
+function parityPill(info: WeekInfo): El | null {
+  if (info.week == null || !info.parity) return null;
+  const p = PARITY[info.parity];
+  return h(
+    "div",
+    { display: "flex", flexDirection: "row", alignItems: "center", padding: "10px 18px", borderRadius: 14, backgroundColor: p.color + "26", border: `2px solid ${p.color}`, marginBottom: 12 },
+    h("div", { display: "flex", width: 14, height: 14, borderRadius: 7, backgroundColor: p.color, marginRight: 12 }),
+    text(`${p.label} НЕДЕЛЯ`, { fontSize: 22, fontWeight: 800, color: p.color, letterSpacing: 1 }),
+    text(`${info.week}-я`, { fontSize: 22, fontWeight: 600, color: THEME.muted, marginLeft: 12, paddingLeft: 12, borderLeft: `2px solid ${p.color}66` }),
+  );
 }
 
-// ---------- building blocks ----------
-function header(title: string, subtitle: string, group: LogicalGroup, accent: string): El {
+function header(title: string, subtitle: string, group: LogicalGroup, accent: string, info?: WeekInfo): El {
   return h(
     "div",
     { display: "flex", flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", width: "100%" },
@@ -133,8 +106,13 @@ function header(title: string, subtitle: string, group: LogicalGroup, accent: st
     ),
     h(
       "div",
-      { display: "flex", padding: "12px 22px", borderRadius: 999, backgroundColor: accent + "22", border: `2px solid ${accent}66` },
-      text(group.title, { fontSize: 30, fontWeight: 700, color: accent }),
+      { display: "flex", flexDirection: "column", alignItems: "flex-end" },
+      info ? parityPill(info) : null,
+      h(
+        "div",
+        { display: "flex", padding: "12px 22px", borderRadius: 999, backgroundColor: accent + "22", border: `2px solid ${accent}66` },
+        text(group.title, { fontSize: 30, fontWeight: 700, color: accent }),
+      ),
     ),
   );
 }
@@ -208,19 +186,14 @@ function page(children: unknown[]): El {
 
 function subtitleFor(date: LocalDate, info: WeekInfo, today: LocalDate): string {
   const rel = date === today ? "сегодня" : date === addDays(today, 1) ? "завтра" : date === addDays(today, -1) ? "вчера" : "";
-  const wl = weekLabel(info);
-  return [fmtDayMonth(date), rel, wl].filter(Boolean).join("  ·  ");
+  return [fmtDayMonth(date), rel].filter(Boolean).join("  ·  ");
 }
 
 // ---------- renderer ----------
 export async function createRenderer(): Promise<Renderer | null> {
   const fonts = await loadFonts();
 
-  const toPng = async (tree: El): Promise<Buffer> => {
-    const svg = await satori(tree as unknown as Parameters<typeof satori>[0], { width: W, fonts });
-    const png = new Resvg(svg, { fitTo: { mode: "width", value: W }, font: { loadSystemFonts: false } }).render().asPng();
-    return Buffer.from(png);
-  };
+  const toPng = (tree: El): Promise<Buffer> => corePng(tree, fonts);
 
   return {
     async renderDay(input) {
@@ -242,9 +215,9 @@ export async function createRenderer(): Promise<Renderer | null> {
         ? rows
         : [h("div", { display: "flex", flexDirection: "column", alignItems: "center", width: "100%", padding: "80px 0" }, text("Пар нет", { fontSize: 56, fontWeight: 800, color: THEME.fg }), text("можно выспаться", { fontSize: 28, color: THEME.muted, marginTop: 12 }))];
       const tree = page([
-        header(weekdayName(date), subtitleFor(date, weekInfo, today), group, accent),
+        header(weekdayName(date), subtitleFor(date, weekInfo, today), group, accent, weekInfo),
         h("div", { display: "flex", flexDirection: "column", width: "100%", marginTop: 34 }, ...body),
-        footer(active.length ? `${active.length} ${plural(active.length)}${span ? `  ·  ${span}` : ""}` : "", `tt.chuvsu.ru  ·  ${now ? fmtHHMM(now.minutes) : ""}`),
+        footer(active.length ? `${active.length} ${pluralPairs(active.length)}${span ? `  ·  ${span}` : ""}` : "", `tt.chuvsu.ru  ·  ${now ? fmtHHMM(now.minutes) : ""}`),
       ]);
       return toPng(tree);
     },
@@ -305,7 +278,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       });
       const body = blocks.length ? blocks : [h("div", { display: "flex", flexDirection: "column", alignItems: "center", width: "100%", padding: "80px 0" }, text("У потока пар нет", { fontSize: 52, fontWeight: 800, color: THEME.fg }))];
       const tree = page([
-        header(weekdayName(date), subtitleFor(date, weekInfo, today), pseudo, accent),
+        header(weekdayName(date), subtitleFor(date, weekInfo, today), pseudo, accent, weekInfo),
         h("div", { display: "flex", flexDirection: "column", width: "100%", marginTop: 30 }, ...body),
         footer(rows.some((r) => r.mine) ? "выделена твоя группа" : "", `tt.chuvsu.ru  ·  ${now ? fmtHHMM(now.minutes) : ""}`),
       ]);
@@ -343,28 +316,19 @@ export async function createRenderer(): Promise<Renderer | null> {
             h(
               "div",
               { display: "flex", flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", width: "100%", marginBottom: 6 },
-              h("div", { display: "flex", flexDirection: "row", alignItems: "baseline" }, text(weekdayName(date), { fontSize: 32, fontWeight: 800, color: accent }), text(`  ${fmtDayMonth(date)}${isToday ? "  ·  сегодня" : ""}`, { fontSize: 24, color: THEME.muted })),
-              text(list.filter((o) => o.status === "scheduled").length ? `${list.filter((o) => o.status === "scheduled").length} ${plural(list.filter((o) => o.status === "scheduled").length)}` : "", { fontSize: 22, color: THEME.dim }),
+              h("div", { display: "flex", flexDirection: "row", alignItems: "baseline" }, text(weekdayName(date), { fontSize: 32, fontWeight: 800, color: accent }), text(`${fmtDayMonth(date)}${isToday ? "  ·  сегодня" : ""}`, { fontSize: 24, color: THEME.muted, marginLeft: 16 })),
+              text(list.filter((o) => o.status === "scheduled").length ? `${list.filter((o) => o.status === "scheduled").length} ${pluralPairs(list.filter((o) => o.status === "scheduled").length)}` : "", { fontSize: 22, color: THEME.dim }),
             ),
             ...rows,
           ),
         );
       }
-      const wl = weekLabel(weekInfo);
       const tree = page([
-        header("Неделя", `${fmtDayMonth(monday)} – ${fmtDayMonth(addDays(monday, 6))}${wl ? `  ·  ${wl}` : ""}`, group, THEME.accent),
+        header("Неделя", `${fmtDayMonth(monday)} – ${fmtDayMonth(addDays(monday, 6))}`, group, THEME.accent, weekInfo),
         h("div", { display: "flex", flexDirection: "column", width: "100%", marginTop: 10 }, ...sections),
         footer("", "tt.chuvsu.ru"),
       ]);
       return toPng(tree);
     },
   };
-}
-
-function plural(n: number): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return "пара";
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return "пары";
-  return "пар";
 }

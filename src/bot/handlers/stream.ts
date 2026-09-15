@@ -66,7 +66,7 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
         today: todayMsk(),
         now: wallClock(),
       });
-      await ctx.replyWithPhoto(new InputFile(png, `stream-${intake}-${date}.png`), { reply_markup: streamDayNav(date, todayMsk(), { image: false }) });
+      await ctx.replyWithPhoto(new InputFile(png, `stream-${intake}-${date}.png`), { reply_markup: streamDayNav(date, todayMsk(), { image: false, groups: ctx.deps.service.stream(intake) }) });
       if (ctx.user.format !== "both") return;
     } catch (err) {
       logger.warn({ err: String(err) }, "stream poster failed");
@@ -74,13 +74,13 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
   }
   if (opts.edit && ctx.callbackQuery?.message && !ctx.callbackQuery.message.photo) {
     try {
-      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk(), { image: !!renderer }) });
+      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk(), { image: !!renderer, groups: ctx.deps.service.stream(intake) }) });
       return;
     } catch (err) {
       if (String(err).includes("message is not modified")) return;
     }
   }
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk(), { image: !!renderer && !wantImage }) });
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk(), { image: !!renderer && !wantImage, groups: ctx.deps.service.stream(intake) }) });
 }
 
 streamHandlers.callbackQuery(/^simg:(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
@@ -149,5 +149,5 @@ streamHandlers.hears(BTN.streamCommon, async (ctx) => {
 });
 
 streamHandlers.hears(BTN.backToMenu, async (ctx) => {
-  await ctx.reply("Главное меню.", { reply_markup: mainKeyboard({ ask: !!ctx.deps.ask }) });
+  await ctx.reply("Главное меню.", { reply_markup: mainKeyboard() });
 });

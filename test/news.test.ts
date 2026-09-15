@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { htmlToText, parseSourceRef, tildaDate } from "../src/news/fetchers.js";
-import { buildIcs } from "../src/schedule/ics.js";
+import { buildIcs, icsSequence } from "../src/schedule/ics.js";
 import type { Occurrence } from "../src/schedule/model.js";
 
 const fx = (name: string) => readFileSync(path.join(__dirname, "fixtures", name), "utf8");
@@ -67,7 +67,7 @@ describe("ics export", () => {
     sources: [],
   });
 
-  it("writes UTC times, alarms and skips moved lessons", () => {
+  it("writes UTC times, alarms, sequence and marks moved lessons as cancelled", () => {
     const folded = buildIcs({ name: "ВИШ-12-23", lessons: [lesson("2026-09-14", 3, "Машиностроительное оборудование"), lesson("2026-09-15", 3, "Отменённая", "moved")], alarmMinutes: 30, now: new Date("2026-09-13T00:00:00Z") });
     for (const line of folded.split("\r\n")) expect(Buffer.byteLength(line, "utf8")).toBeLessThanOrEqual(75);
     const ics = folded.replace(/\r\n[ \t]/g, ""); // unfold
@@ -77,7 +77,15 @@ describe("ics export", () => {
     expect(ics).toContain("SUMMARY:Машиностроительное оборудование (лекция)");
     expect(ics).toContain("LOCATION:ауд. Т-310\\, ЧувГУ");
     expect(ics).toContain("TRIGGER:-PT30M");
-    expect(ics).not.toContain("Отменённая");
-    expect(ics.split("BEGIN:VEVENT").length - 1).toBe(1);
+    expect(ics).toContain("SUMMARY:Отменено: Отменённая (лекция)");
+    expect(ics).toContain("STATUS:CANCELLED");
+    expect(ics.split("BEGIN:VEVENT").length - 1).toBe(2);
+    expect(ics.split("BEGIN:VALARM").length - 1).toBe(1); // no alarm on the cancelled one
+    expect(ics).toContain(`SEQUENCE:${icsSequence(new Date("2026-09-13T00:00:00Z"))}`);
+    // Same lesson, later generation -> higher SEQUENCE, same UID.
+    const later = buildIcs({ name: "ВИШ-12-23", lessons: [lesson("2026-09-14", 3, "Машиностроительное оборудование")], alarmMinutes: null, now: new Date("2026-09-20T00:00:00Z") }).replace(/\r\n[ \t]/g, "");
+    const uid = /UID:(\S+)/.exec(ics)?.[1];
+    expect(later).toContain(`UID:${uid}`);
+    expect(icsSequence(new Date("2026-09-20T00:00:00Z"))).toBeGreaterThan(icsSequence(new Date("2026-09-13T00:00:00Z")));
   });
 });

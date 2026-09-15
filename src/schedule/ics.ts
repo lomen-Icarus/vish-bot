@@ -1,6 +1,15 @@
 /**
  * iCalendar export. Phones open an .ics straight from Telegram and offer to
  * add every lesson to the calendar, alarms included, no HTTPS server needed.
+ * The same builder feeds the subscription URL (webcal), where calendars
+ * refresh themselves.
+ *
+ * Every lesson has a stable UID (its position: date + slot + subject + type +
+ * subgroup), so a re-import or a feed refresh updates the same event instead
+ * of adding a twin. SEQUENCE grows with generation time, so a newer copy
+ * always wins. Vacated slots (transfers) and removed lessons are emitted as
+ * STATUS:CANCELLED with the old UID: subscriptions drop them, Google import
+ * ignores them, and iOS import shows them as cancelled.
  */
 import { lessonTypeLabel, positionKey, type Occurrence } from "./model.js";
 import { localToMs, type LocalDate } from "../time.js";
@@ -9,10 +18,14 @@ export interface IcsOptions {
   /** Calendar display name, e.g. "ВИШ-12-23". */
   name: string;
   lessons: Occurrence[];
+  /** Lessons that no longer exist at their position (removed / moved away); emitted as cancelled. */
+  cancelled?: Occurrence[];
   /** Minutes before the lesson for a VALARM; null = no alarms. */
   alarmMinutes: number | null;
-  /** Generation time, for DTSTAMP. */
+  /** Generation time, for DTSTAMP / SEQUENCE. */
   now?: Date;
+  /** Suggested refresh interval for subscribed calendars (ISO 8601 duration). */
+  refreshInterval?: string;
 }
 
 function pad(n: number): string {
@@ -45,39 +58,65 @@ function fold(line: string): string {
   return out.join("\r\n");
 }
 
+const SEQUENCE_EPOCH = Date.UTC(2026, 0, 1);
+
+/** Monotonic per-generation revision: minutes since 2026-01-01. */
+export function icsSequence(now: Date): number {
+  return Math.max(0, Math.floor((now.getTime() - SEQUENCE_EPOCH) / 60_000));
+}
+
+export function icsUid(o: Pick<Occurrence, "date" | "slot" | "start" | "subject" | "type" | "subgroup">): string {
+  return `${Buffer.from(positionKey(o)).toString("base64url")}@vish-bot`;
+}
+
+function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: number, cancelled: boolean): string[] | null {
+  if (o.start == null || o.end == null) return null;
+  const startMs = localToMs(o.date, o.start);
+  const endMs = localToMs(o.date, o.end);
+  const summary = `${o.subject} (${lessonTypeLabel(o.type)})`;
+  const desc: string[] = [opts.name];
+  if (o.slot != null) desc.push(`${o.slot} пара`);
+  if (o.teacher) desc.push(o.teacher);
+  if (o.subgroup) desc.push(`${o.subgroup} подгруппа`);
+  if (o.movedFrom) desc.push(`перенос с ${o.movedFrom.date}`);
+  if (o.isDistance) desc.push("дистанционно");
+  if (cancelled) desc.push(o.movedTo ? `перенесена на ${o.movedTo.date}${o.movedTo.slot ? ` (${o.movedTo.slot} пара)` : ""}` : "убрана из расписания");
+  const lines = ["BEGIN:VEVENT", `UID:${icsUid(o)}`, `DTSTAMP:${stamp}`, `LAST-MODIFIED:${stamp}`, `SEQUENCE:${sequence}`, `DTSTART:${utcStamp(startMs)}`, `DTEND:${utcStamp(endMs)}`];
+  lines.push(`SUMMARY:${escapeText(cancelled ? `Отменено: ${summary}` : summary)}`);
+  if (o.room && !o.isDistance) lines.push(`LOCATION:${escapeText(`ауд. ${o.room}, ЧувГУ`)}`);
+  lines.push(`DESCRIPTION:${escapeText(desc.join(" · "))}`);
+  lines.push(`CATEGORIES:${escapeText(lessonTypeLabel(o.type))}`);
+  lines.push(`STATUS:${cancelled ? "CANCELLED" : "CONFIRMED"}`);
+  if (!cancelled && opts.alarmMinutes != null && opts.alarmMinutes > 0) {
+    lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `TRIGGER:-PT${opts.alarmMinutes}M`, `DESCRIPTION:${escapeText(`Через ${opts.alarmMinutes} мин: ${summary}`)}`, "END:VALARM");
+  }
+  lines.push("END:VEVENT");
+  return lines;
+}
+
 export function buildIcs(opts: IcsOptions): string {
   const now = opts.now ?? new Date();
   const stamp = utcStamp(now.getTime());
+  const sequence = icsSequence(now);
   const lines: string[] = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//vish-bot//Расписание ВИШ ЧувГУ//RU", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", `X-WR-CALNAME:${escapeText(opts.name)}`, "X-WR-TIMEZONE:Europe/Moscow"];
-  for (const o of opts.lessons) {
-    if (o.status !== "scheduled" || o.start == null || o.end == null) continue;
-    const startMs = localToMs(o.date, o.start);
-    const endMs = localToMs(o.date, o.end);
-    const summary = `${o.subject} (${lessonTypeLabel(o.type)})`;
-    const desc: string[] = [opts.name];
-    if (o.slot != null) desc.push(`${o.slot} пара`);
-    if (o.teacher) desc.push(o.teacher);
-    if (o.subgroup) desc.push(`${o.subgroup} подгруппа`);
-    if (o.movedFrom) desc.push(`перенос с ${o.movedFrom.date}`);
-    if (o.isDistance) desc.push("дистанционно");
-    lines.push("BEGIN:VEVENT");
-    lines.push(`UID:${Buffer.from(positionKey(o)).toString("base64url")}@vish-bot`);
-    lines.push(`DTSTAMP:${stamp}`);
-    lines.push(`DTSTART:${utcStamp(startMs)}`);
-    lines.push(`DTEND:${utcStamp(endMs)}`);
-    lines.push(`SUMMARY:${escapeText(summary)}`);
-    if (o.room && !o.isDistance) lines.push(`LOCATION:${escapeText(`ауд. ${o.room}, ЧувГУ`)}`);
-    lines.push(`DESCRIPTION:${escapeText(desc.join(" · "))}`);
-    lines.push(`CATEGORIES:${escapeText(lessonTypeLabel(o.type))}`);
-    if (opts.alarmMinutes != null && opts.alarmMinutes > 0) {
-      lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `TRIGGER:-PT${opts.alarmMinutes}M`, `DESCRIPTION:${escapeText(`Через ${opts.alarmMinutes} мин: ${summary}`)}`, "END:VALARM");
-    }
-    lines.push("END:VEVENT");
-  }
+  if (opts.refreshInterval) lines.push(`REFRESH-INTERVAL;VALUE=DURATION:${opts.refreshInterval}`, `X-PUBLISHED-TTL:${opts.refreshInterval}`);
+  const seen = new Set<string>();
+  const push = (o: Occurrence, cancelled: boolean) => {
+    const uid = icsUid(o);
+    if (seen.has(uid)) return;
+    const ev = eventLines(o, opts, stamp, sequence, cancelled);
+    if (!ev) return;
+    seen.add(uid);
+    lines.push(...ev);
+  };
+  // Live lessons first so a position that is both current and "cancelled" in the input stays live.
+  for (const o of opts.lessons) if (o.status === "scheduled") push(o, false);
+  for (const o of opts.lessons) if (o.status === "moved") push(o, true);
+  for (const o of opts.cancelled ?? []) push(o, true);
   lines.push("END:VCALENDAR");
   return lines.map(fold).join("\r\n") + "\r\n";
 }
 
-export function icsFileName(title: string, from: LocalDate): string {
-  return `${title.replace(/[^\p{L}\p{N}-]+/gu, "_")}_${from}.ics`;
+export function icsFileName(title: string, from: LocalDate, suffix = ""): string {
+  return `${title.replace(/[^\p{L}\p{N}-]+/gu, "_")}_${from}${suffix}.ics`;
 }

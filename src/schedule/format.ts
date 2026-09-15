@@ -37,11 +37,19 @@ export function weekLabel(info: WeekInfo): string {
   return `${info.week}-я неделя${parity ? `, ${parity}` : ""}`;
 }
 
+/** Loud parity marker for Telegram text: "🔶 НЕЧЁТНАЯ · 3-я неделя". */
+export function parityLine(info: WeekInfo): string {
+  if (info.week == null) return "";
+  if (info.parity === "odd") return `🔶 <b>НЕЧЁТНАЯ</b> · ${info.week}-я неделя`;
+  if (info.parity === "even") return `🔷 <b>ЧЁТНАЯ</b> · ${info.week}-я неделя`;
+  return `${info.week}-я неделя`;
+}
+
 export function dayHeader(date: LocalDate, info: WeekInfo, today: LocalDate): string {
   const rel = date === today ? "Сегодня" : date === addDaysStr(today, 1) ? "Завтра" : date === addDaysStr(today, -1) ? "Вчера" : null;
-  const wl = weekLabel(info);
+  const pl = parityLine(info);
   const main = `${weekdayName(date)}, ${fmtDayMonth(date)}`;
-  return `<b>${rel ? `${rel} · ` : ""}${main}</b>${wl ? `\n<i>${wl}</i>` : ""}`;
+  return `<b>${rel ? `${rel} · ` : ""}${main}</b>${pl ? `\n${pl}` : ""}`;
 }
 
 function addDaysStr(date: LocalDate, n: number): LocalDate {
@@ -101,13 +109,13 @@ export function countLessons(n: number): string {
 }
 
 export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<LocalDate, Occurrence[]>, info: WeekInfo, today: LocalDate, opts: FormatOptions = {}): string {
-  const wl = weekLabel(info);
-  const parts: string[] = [`<b>Неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDaysStr(monday, 6))}</b>${wl ? ` · <i>${wl}</i>` : ""}\n${esc(group.title)}`];
+  const pl = parityLine(info);
+  const parts: string[] = [`<b>Неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDaysStr(monday, 6))}</b>${pl ? `\n${pl}` : ""}\n${esc(group.title)}`];
   for (let i = 0; i < 7; i++) {
     const date = addDaysStr(monday, i);
     const list = filterSubgroup(byDate.get(date) ?? [], opts.subgroup);
     if (list.length === 0 && i === 6) continue;
-    const title = `<b>${weekdayName(date)}</b> <i>${fmtDDMM(date)}${date === today ? " · сегодня" : ""}</i>`;
+    const title = `<b>${weekdayName(date)}</b> · <i>${fmtDDMM(date)}${date === today ? " · сегодня" : ""}</i>`;
     if (list.length === 0) {
       parts.push(`${title}\n   — пар нет`);
       continue;
