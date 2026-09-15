@@ -1,7 +1,8 @@
 /**
  * Natural-language questions about the timetable. The model gets the own
  * group's next two weeks inline plus tools to look at any group, search a
- * subject by a colloquial name and list groups; it must refuse off-topic asks.
+ * subject by a colloquial name, list groups and look up teachers; it must
+ * refuse off-topic asks.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
@@ -10,6 +11,7 @@ import type { ScheduleService } from "../schedule/service.js";
 import { findGroup, type LogicalGroup } from "../schedule/groups.js";
 import { filterSubgroup } from "../schedule/format.js";
 import { lessonTypeLabel, type Occurrence } from "../schedule/model.js";
+import type { TeacherService } from "../portal/teachers.js";
 import { addDays, fmtHHMM, isLocalDate, mondayOf, todayMsk, weekdayName, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 
@@ -24,14 +26,16 @@ export interface AskResult {
 }
 
 const SYSTEM = `Ты — помощник по расписанию Высшей инженерной школы (ВИШ) ЧувГУ внутри Telegram-бота.
-Отвечай ТОЛЬКО на вопросы о расписании занятий: пары, время, аудитории, дни, недели, сессия, переносы, любые группы ВИШ.
+Отвечай ТОЛЬКО на вопросы о расписании занятий и о людях в нём: пары, время, аудитории, дни, недели, сессия, переносы, любые группы ВИШ, преподаватели (что ведут, у каких групп, когда).
 На любые другие темы (решение задач, лабы, код, тексты, советы, болтовня) отвечай ровно одной фразой:
 "Я отвечаю только на вопросы о расписании 🙂" — без исключений.
 
 Как отвечать:
 - Студенты называют предметы разговорно: «математика»/«матан» = «Математический анализ», «Алгебра и геометрия» тоже математика; «физра» = «Физическая культура и спорт»; «инфа» = «Информатика»; «прога» = «Программирование»/«Основы программирования»; «англ» = «Иностранный язык»; «история» = «История России»; «ОРГ» = «Основы российской государственности». Если точного предмета нет — ищи по смыслу инструментом find_subject и предлагай ближайшие совпадения.
 - Если спрашивают про другую группу (например «у 14-26») — используй get_schedule для неё; названия групп вида «14-26» = «ВИШ-14-26».
-- Расписание своей группы на две недели уже дано в сообщении; для других дат и групп используй инструменты. Не выдумывай пары.
+- Вопросы про преподавателя («кто такая Иванова», «что ведёт Петров», «когда у Сидорова пары», «кто ведёт физику») — это вопросы о расписании. Используй find_teacher: он ищет по фамилии или имени в любом порядке и возвращает предметы, группы и ближайшие пары. Отвечай тем, что есть в расписании: какие предметы ведёт, у каких групп, когда ближайшие пары. Биографию, должность и контакты бот не знает — так и скажи, если спросят.
+- Кто ведёт предмет у своей группы — видно в поле «преп.» в расписании ниже; если поля нет, честно скажи, что портал не указал преподавателя.
+- Расписание своей группы на две недели уже дано в сообщении; для других дат и групп используй инструменты. Не выдумывай пары и людей.
 - Отвечай кратко, по-русски, на «ты». Формат Telegram HTML: только теги <b>, <i>, <code>. Без Markdown, без списков через «*».
 - Даты пиши как «пн 14.09», время как 11:40–13:00.`;
 
@@ -48,7 +52,18 @@ function fmtLessons(list: Occurrence[], today: LocalDate): string {
       lines.push(`\n${o.date} ${weekdayName(o.date)}${o.date === today ? " (сегодня)" : ""}:`);
     }
     const t = o.start != null && o.end != null ? `${fmtHHMM(o.start)}-${fmtHHMM(o.end)}` : "";
-    const bits = [o.slot != null ? `${o.slot} пара` : "", t, o.subject, `(${lessonTypeLabel(o.type)})`, o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.groups?.length ? `группы: ${o.groups.join(", ")}` : "", o.status === "moved" ? `ПЕРЕНЕСЕНА на ${o.movedTo?.date ?? "?"}` : "", o.movedFrom ? `перенос с ${o.movedFrom.date}` : ""].filter(Boolean);
+    const bits = [
+      o.slot != null ? `${o.slot} пара` : "",
+      t,
+      o.subject,
+      `(${lessonTypeLabel(o.type)})`,
+      o.teacher ? `преп. ${o.teacher}` : "",
+      o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "",
+      o.subgroup ? `${o.subgroup} подгр.` : "",
+      o.groups?.length ? `группы: ${o.groups.join(", ")}` : "",
+      o.status === "moved" ? `ПЕРЕНЕСЕНА на ${o.movedTo?.date ?? "?"}` : "",
+      o.movedFrom ? `перенос с ${o.movedFrom.date}` : "",
+    ].filter(Boolean);
     lines.push(`  ${bits.join(" | ")}`);
   }
   return lines.join("\n").trim() || "пар нет";
@@ -61,6 +76,7 @@ export class AskService {
     apiKey: string,
     private readonly service: ScheduleService,
     private readonly opts: AskOptions,
+    private readonly teachers: TeacherService | null = null,
   ) {
     this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 90_000 });
   }
@@ -74,6 +90,7 @@ export class AskService {
 
   private tools(own: LogicalGroup, subgroup: number | null) {
     const service = this.service;
+    const teachers = this.teachers;
     const today = todayMsk();
     const resolve = (q: string) => this.resolveGroup(q, own);
 
@@ -97,7 +114,7 @@ export class AskService {
 
     const findSubject = betaZodTool({
       name: "find_subject",
-      description: "Найти предмет по разговорному или частичному названию в расписании группы на ближайшие 8 недель. Возвращает подходящие предметы и их ближайшие пары.",
+      description: "Найти предмет по разговорному или частичному названию в расписании группы на ближайшие 8 недель. Возвращает подходящие предметы, их преподавателей и ближайшие пары.",
       inputSchema: z.object({
         query: z.string().describe("Слово или часть названия: «математика», «физ», «прога»"),
         group: z.string().optional().describe("Группа; по умолчанию своя"),
@@ -126,7 +143,47 @@ export class AskService {
       run: async () => service.groups().map((g) => `${g.title} (${g.course} курс)`).join("\n"),
     });
 
-    return [getSchedule, findSubject, listGroups];
+    const findTeacher = betaZodTool({
+      name: "find_teacher",
+      description: "Найти преподавателя по фамилии и/или имени (в любом порядке, можно с инициалами) и получить его пары на ближайшие 2 недели: предметы, группы, время, аудитории. Также ищет фамилию среди преподавателей в расписании своей группы.",
+      inputSchema: z.object({
+        query: z.string().describe("Фамилия и/или имя: «Иванова», «Дарья Иванова», «Иванова Д.А.»"),
+      }),
+      run: async (input) => {
+        const q = normalize(input.query);
+        const out: string[] = [];
+        // What the own group's timetable says (teacher column), works without a portal account.
+        const ownList = service.materialize(own, today, addDays(today, 56));
+        const inOwn = ownList.filter((o) => o.teacher && q.split(" ").every((w) => normalize(o.teacher!).includes(w.slice(0, Math.max(3, w.length - 1)))));
+        if (inOwn.length) {
+          const subjects = [...new Set(inOwn.map((o) => `${o.subject} (${lessonTypeLabel(o.type)})`))];
+          out.push(`В расписании ${own.title}: ${inOwn[0]!.teacher} ведёт ${subjects.join("; ")}. Ближайшие пары:\n${fmtLessons(inOwn.slice(0, 6), today)}`);
+        }
+        if (!teachers) {
+          out.push(inOwn.length ? "Полное расписание преподавателя недоступно: у бота нет учётки портала." : `Преподаватель «${input.query}» в расписании ${own.title} не найден, а полный справочник преподавателей недоступен: у бота нет учётки портала.`);
+          return out.join("\n\n");
+        }
+        const found = await teachers.search(input.query, 5);
+        if (!found.length) {
+          out.push(`В справочнике преподавателей ЧувГУ «${input.query}» не найден. Возможно, фамилия написана иначе.`);
+          return out.join("\n\n");
+        }
+        if (found.length > 1) out.push(`Похожие преподаватели: ${found.map((t) => t.name).join("; ")}. Показываю первого.`);
+        const t = found[0]!;
+        try {
+          const { lessons, fullName } = await teachers.lessons(t, today, addDays(today, 14));
+          const subjects = [...new Set(lessons.map((o) => o.subject))];
+          const groups = [...new Set(lessons.flatMap((o) => o.groups ?? []))];
+          out.push(`${fullName ?? t.name}: ${subjects.length ? `ведёт ${subjects.join("; ")}` : "в ближайшие 2 недели пар нет"}${groups.length ? `. Группы: ${groups.join(", ")}` : ""}.\nПары на 2 недели:\n${fmtLessons(lessons.slice(0, 20), today)}`);
+        } catch (err) {
+          logger.warn({ err: String(err), teacher: t.id }, "ask: teacher page failed");
+          out.push(`${t.name} есть в справочнике, но портал не отдал расписание (попробуй позже).`);
+        }
+        return out.join("\n\n");
+      },
+    });
+
+    return [getSchedule, findSubject, listGroups, findTeacher];
   }
 
   async answer(input: { question: string; group: LogicalGroup; subgroup: number | null; userId: number }): Promise<AskResult> {

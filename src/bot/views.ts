@@ -1,11 +1,10 @@
-import type { InputFile } from "grammy";
+import { InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext, Deps } from "./context.js";
-import { dayNav, weekNav } from "./keyboards.js";
+import { BTN, dayNav, weekNav } from "./keyboards.js";
 import { esc, filterSubgroup, formatDay, formatWeek } from "../schedule/format.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
 import type { Occurrence } from "../schedule/model.js";
-import { InputFile as GrammyInputFile } from "grammy";
 import { logger } from "../logger.js";
 
 export function needGroup(ctx: BotContext): LogicalGroup | null {
@@ -35,63 +34,99 @@ export function weekView(deps: Deps, group: LogicalGroup, anyDate: LocalDate, su
   return { text, monday, byDate };
 }
 
+interface SendOpts {
+  edit?: boolean;
+  forceImage?: boolean;
+  /** Viewing a group that is not the user's own: navigation carries the group key. */
+  peek?: boolean;
+}
+
+function isPhotoMessage(ctx: BotContext): boolean {
+  return !!ctx.callbackQuery?.message && "photo" in ctx.callbackQuery.message && !!ctx.callbackQuery.message.photo;
+}
+
+/** Replace the photo of the message the callback came from (poster navigation in place). */
+async function editPhoto(ctx: BotContext, png: Buffer, fileName: string, caption: string | undefined, replyMarkup: Parameters<BotContext["editMessageMedia"]>[1] extends infer T ? (T extends { reply_markup?: infer R } ? R : never) : never): Promise<boolean> {
+  try {
+    await ctx.editMessageMedia(InputMediaBuilder.photo(new InputFile(png, fileName), caption ? { caption, parse_mode: "HTML" } : {}), { reply_markup: replyMarkup });
+    return true;
+  } catch (err) {
+    if (String(err).includes("message is not modified")) return true;
+    logger.debug({ err: String(err) }, "editMessageMedia failed");
+    return false;
+  }
+}
+
 /** Send or edit a day view according to the user's format preference. */
-export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalDate, opts: { edit?: boolean; forceImage?: boolean } = {}): Promise<void> {
+export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalDate, opts: SendOpts = {}): Promise<void> {
   const deps = ctx.deps;
-  const subgroup = ctx.user.subgroup;
+  const own = group.key === ctx.user.groupKey;
+  const subgroup = own ? ctx.user.subgroup : null;
+  const peekKey = opts.peek || !own ? group.key : undefined;
   const { text, lessons } = dayView(deps, group, date, subgroup);
   const today = todayMsk();
   const hasImages = !!deps.renderer;
-  const wantImage = hasImages && (opts.forceImage || ctx.user.format === "image");
-  const keyboard = dayNav(date, today, { image: hasImages && !wantImage });
+  const photoMsg = !!opts.edit && isPhotoMessage(ctx);
+  const wantImage = hasImages && (opts.forceImage || ctx.user.format === "image" || photoMsg);
+  const fileName = `${group.title}-${date}.png`;
 
   if (wantImage && deps.renderer) {
     try {
       const png = await deps.renderer.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock() });
       const caption = text.length <= 1000 ? text : undefined;
-      await ctx.replyWithPhoto(new GrammyInputFile(png, `${group.title}-${date}.png`), { caption, parse_mode: "HTML", reply_markup: dayNav(date, today, { image: false }) });
+      const kb = dayNav(date, today, { image: false, peekKey });
+      if (photoMsg && (await editPhoto(ctx, png, fileName, caption, kb))) return;
+      await ctx.replyWithPhoto(new InputFile(png, fileName), { caption, parse_mode: "HTML", reply_markup: kb });
       return;
     } catch (err) {
-      logger.warn({ err }, "day image render failed, falling back to text");
+      logger.warn({ err: String(err) }, "day image render failed, falling back to text");
     }
   }
-  if (opts.edit && ctx.callbackQuery?.message && !ctx.callbackQuery.message.photo) {
+  const keyboard = dayNav(date, today, { image: hasImages, peekKey });
+  if (opts.edit && ctx.callbackQuery?.message && !photoMsg) {
     try {
       await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
       return;
     } catch (err) {
-      if (!String(err).includes("message is not modified")) logger.debug({ err }, "edit failed, sending new message");
-      else return;
+      if (String(err).includes("message is not modified")) return;
+      logger.debug({ err: String(err) }, "edit failed, sending new message");
     }
   }
   await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
   if (hasImages && ctx.user.format === "both" && lessons.length > 0 && !opts.edit) {
-    // "both": the text goes first, the poster follows silently.
+    // "both": the text goes first, the poster follows silently with its own navigation.
     try {
       const png = await deps.renderer!.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock() });
-      await ctx.replyWithPhoto(new GrammyInputFile(png, `${group.title}-${date}.png`), { disable_notification: true });
+      await ctx.replyWithPhoto(new InputFile(png, fileName), { disable_notification: true, reply_markup: dayNav(date, today, { image: false, peekKey }) });
     } catch (err) {
-      logger.warn({ err }, "day image render failed");
+      logger.warn({ err: String(err) }, "day image render failed");
     }
   }
 }
 
-export async function sendWeek(ctx: BotContext, group: LogicalGroup, anyDate: LocalDate, opts: { edit?: boolean; forceImage?: boolean } = {}): Promise<void> {
+export async function sendWeek(ctx: BotContext, group: LogicalGroup, anyDate: LocalDate, opts: SendOpts = {}): Promise<void> {
   const deps = ctx.deps;
-  const { text, monday, byDate } = weekView(deps, group, anyDate, ctx.user.subgroup);
+  const own = group.key === ctx.user.groupKey;
+  const subgroup = own ? ctx.user.subgroup : null;
+  const peekKey = opts.peek || !own ? group.key : undefined;
+  const { text, monday, byDate } = weekView(deps, group, anyDate, subgroup);
   const hasImages = !!deps.renderer;
-  const wantImage = hasImages && (opts.forceImage || ctx.user.format === "image");
+  const photoMsg = !!opts.edit && isPhotoMessage(ctx);
+  const wantImage = hasImages && (opts.forceImage || ctx.user.format === "image" || photoMsg);
+  const fileName = `${group.title}-week-${monday}.png`;
   if (wantImage && deps.renderer) {
     try {
-      const png = await deps.renderer.renderWeek({ group, monday, byDate, weekInfo: deps.service.weekInfo(monday), today: todayMsk(), subgroup: ctx.user.subgroup });
-      await ctx.replyWithPhoto(new GrammyInputFile(png, `${group.title}-week-${monday}.png`), { reply_markup: weekNav(monday, { image: false }) });
+      const png = await deps.renderer.renderWeek({ group, monday, byDate, weekInfo: deps.service.weekInfo(monday), today: todayMsk(), subgroup });
+      const kb = weekNav(monday, { image: false, peekKey });
+      if (photoMsg && (await editPhoto(ctx, png, fileName, undefined, kb))) return;
+      await ctx.replyWithPhoto(new InputFile(png, fileName), { reply_markup: kb });
       return;
     } catch (err) {
-      logger.warn({ err }, "week image render failed, falling back to text");
+      logger.warn({ err: String(err) }, "week image render failed, falling back to text");
     }
   }
-  const keyboard = weekNav(monday, { image: hasImages && !wantImage });
-  if (opts.edit && ctx.callbackQuery?.message && !ctx.callbackQuery.message.photo) {
+  const keyboard = weekNav(monday, { image: hasImages, peekKey });
+  if (opts.edit && ctx.callbackQuery?.message && !photoMsg) {
     try {
       await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
       return;
@@ -106,27 +141,39 @@ export function groupRequiredText(): string {
   return `Сначала выбери свою группу: /group`;
 }
 
-export function helpText(deps: Deps): string {
+/** The "Функции" screen: everything a student can do, grouped. */
+export function featuresText(deps: Deps): string {
   const lines = [
-    "<b>Что умеет бот</b>",
+    "<b>🧭 Что умеет бот</b>",
     "",
-    "📅 <b>Сегодня / Завтра</b> — пары на день, стрелками листаются соседние дни.",
-    "🗓 <b>Неделя</b> — вся неделя одним сообщением.",
-    "📆 Напиши дату, например <code>14.09</code>, и получишь расписание на неё.",
-    "🔔 <b>Изменения</b> — что поменялось в расписании твоей группы за последнее время.",
-    "⚙️ <b>Настройки</b> — группа, подгруппа, уведомления об изменениях, напоминания за N часов до первой пары, перед каждой парой, вечером на завтра, тихие часы, темы новостей.",
-    "📨 <b>Отправить новость</b> — твоя новость, достижение или объявление уйдёт медиа-ВИШ.",
-    "👨‍🏫 <b>Преподаватели</b> — расписание любого преподавателя по фамилии.",
-    "🎓 <b>Поток</b> — все группы курса сразу и общие пары с твоей группой.",
-    "📆 /calendar — файл с парами до конца семестра для календаря телефона, можно с будильником.",
+    "<b>Расписание</b>",
+    `${BTN.today} / ${BTN.tomorrow} — пары на день, стрелками листаются соседние дни, кнопка «Картинкой» рисует постер.`,
+    `${BTN.week} / ${BTN.nextWeek} — вся неделя, есть постер и экспорт в календарь.`,
+    `${BTN.otherGroups} — расписание любой группы ВИШ без смены своей.`,
+    `${BTN.stream} — все группы курса одним экраном, общие лекции, мини-кнопки групп.`,
+    `${BTN.teachers} — расписание преподавателя по фамилии.`,
+    "Напиши дату вида <code>14.09</code> — покажу этот день.",
     "",
-    "Бот сам проверяет портал tt.chuvsu.ru каждые несколько минут и присылает изменения только по твоей группе.",
+    "<b>Уведомления</b>",
+    `${BTN.changes} — доска объявлений ВИШ и что изменилось в расписании твоей группы.`,
+    "Бот сам следит за порталом каждые несколько минут: переносы, замены аудиторий, отмены, новые пары.",
+    "Напоминания: до первой пары, перед каждой парой, за 5 минут до дистанта со ссылкой на вебинар, вечером на завтра. Тихие часы.",
+    "Темы новостей: конкурсы и стипендии, объявления, события ВИШ.",
     "",
-    "Команды: /today /tomorrow /week /group /teachers /stream /settings /changes /suggest /help",
+    "<b>Инструменты</b>",
+    `${BTN.calendar} — файл .ics с парами до конца семестра, можно с будильником.`,
+    `${BTN.search} — найти предмет, группу или преподавателя.`,
+    `${BTN.settings} — группа, подгруппа, формат, все уведомления, слежение за другими группами.`,
+    "📨 /suggest — отправить новость или достижение медиа-ВИШ.",
   ];
-  if (deps.ask) lines.push("💬 /ask &lt;вопрос&gt; — спросить про расписание своими словами.");
-  lines.push("", `Группы, которые бот знает: ${deps.service.groups().length}. Портал опрошен: ${lastPoll(deps)}.`);
+  if (deps.ask) lines.push("💬 /ask — спросить о расписании своими словами (ИИ).");
+  lines.push("", "Inline: напиши в любом чате <code>@бот 12-23 завтра</code>, и он вставит расписание.");
+  lines.push("", `Групп в боте: ${deps.service.groups().length}. Портал опрошен: ${lastPoll(deps)}.`);
   return lines.join("\n");
+}
+
+export function helpText(deps: Deps): string {
+  return featuresText(deps);
 }
 
 export function lastPoll(deps: Deps): string {
@@ -143,5 +190,3 @@ export function subgroupHint(): string {
 export function escapeHtml(s: string): string {
   return esc(s);
 }
-
-export type { InputFile };

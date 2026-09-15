@@ -9,12 +9,14 @@ import type { NewsScanner } from "../news/scanner.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
-  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher";
+  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher" | "search";
   /** For broadcast: captured message to forward. */
   chatId?: number;
   messageId?: number;
   /** For broadcast: chosen audience (all | topic:<t> | c<course>). */
   target?: string;
+  /** For broadcast: plain text of the captured message (for the announcements board). */
+  text?: string;
   expiresAt: number;
 }
 

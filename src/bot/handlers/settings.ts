@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, groupPicker, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS } from "../keyboards.js";
+import { BTN, groupPicker, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL } from "../keyboards.js";
 import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import type { User } from "../../db/repo.js";
@@ -15,6 +15,7 @@ function cycle<T>(list: readonly T[], current: T): T {
 
 const FIRST_OPTIONS = [null, 30, 60, 120, 180] as const;
 const EACH_OPTIONS = [null, 10, 15, 30] as const;
+const DISTANCE_OPTIONS = [null, 5, 10, 15] as const;
 const EVENING_OPTIONS = [null, "19:00", "20:00", "21:00", "22:00"] as const;
 const QUIET_OPTIONS = [null, "22:00-07:00", "23:00-07:00", "00:00-08:00"] as const;
 const FORMAT_OPTIONS = ["text", "image", "both"] as const;
@@ -29,6 +30,7 @@ function settingsText(ctx: BotContext): string {
     "<b>Что за уведомления</b>",
     "🔔 Изменения — переносы, замены аудиторий, отмены и новые пары твоей группы.",
     "🎓 Сессия — то же самое для расписания зачётов и экзаменов.",
+    `💻 Дистант — отдельное напоминание перед онлайн-парой со ссылкой на вебинар (${WEBINAR_URL.replace(/^https?:\/\//, "")}).`,
     ...TOPICS.map((t) => `🏷 ${TOPIC_LABELS[t]} — ${TOPIC_HINTS[t]}.`),
     "Темы — это рассылки от ВИШ, включи те, что хочешь получать.",
   );
@@ -55,6 +57,17 @@ async function renderSettings(ctx: BotContext, edit: boolean): Promise<void> {
 
 settingsHandlers.command("settings", (ctx) => renderSettings(ctx, false));
 settingsHandlers.hears(BTN.settings, (ctx) => renderSettings(ctx, false));
+
+/** Group picker for the watch list with watched groups marked, plus "clear all" and "done". */
+function watchKeyboard(ctx: BotContext): InlineKeyboard {
+  const watching = new Set(ctx.deps.repo.watchGroups(ctx.user.id));
+  const kb = groupPicker(ctx.deps.service.groups(), { prefix: "wt" });
+  for (const row of kb.inline_keyboard) for (const btn of row) if ("callback_data" in btn && btn.callback_data?.startsWith("wt:") && watching.has(btn.callback_data.slice(3))) btn.text = `👀 ${btn.text}`;
+  kb.row();
+  if (watching.size) kb.text("◻️ Убрать все слежения", "wt:clear");
+  kb.text("Готово", "wt:done");
+  return kb;
+}
 
 settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
   const field = ctx.match[1]!;
@@ -102,6 +115,10 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "each":
       patch.remindEachMin = cycle(EACH_OPTIONS, user.remindEachMin as (typeof EACH_OPTIONS)[number]);
       break;
+    case "distance":
+      patch.remindDistanceMin = cycle(DISTANCE_OPTIONS, user.remindDistanceMin as (typeof DISTANCE_OPTIONS)[number]);
+      toast = patch.remindDistanceMin ? `Перед дистантом напомню за ${patch.remindDistanceMin} мин со ссылкой` : "Отдельных напоминаний о дистанте не будет";
+      break;
     case "evening":
       patch.eveningAt = cycle(EVENING_OPTIONS, user.eveningAt as (typeof EVENING_OPTIONS)[number]);
       break;
@@ -126,13 +143,7 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     }
     case "watch": {
       await ctx.answerCallbackQuery();
-      const groups = ctx.deps.service.groups();
-      const watching = new Set(repo.watchGroups(user.id));
-      const kb = groupPicker(groups, { prefix: "wt" });
-      // Mark watched groups.
-      for (const row of kb.inline_keyboard) for (const btn of row) if ("callback_data" in btn && btn.callback_data?.startsWith("wt:") && watching.has(btn.callback_data.slice(3))) btn.text = `👀 ${btn.text}`;
-      kb.row().text("Готово", "wt:done");
-      await ctx.reply("Изменения каких ещё групп присылать? Нажми, чтобы включить или выключить.", { reply_markup: kb });
+      await ctx.reply("Изменения каких ещё групп присылать? Нажми, чтобы включить или выключить.", { reply_markup: watchKeyboard(ctx) });
       return;
     }
     default:
@@ -159,16 +170,36 @@ settingsHandlers.callbackQuery(/^wt:(.+)$/, async (ctx) => {
     await renderSettings(ctx, false);
     return;
   }
+  if (key === "clear") {
+    const n = ctx.deps.repo.clearWatchGroups(ctx.user.id);
+    await ctx.answerCallbackQuery({ text: n ? `Убрал слежение за ${n} гр.` : "Слежений и не было" });
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: watchKeyboard(ctx) });
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   const group = ctx.deps.service.group(key);
   if (!group) return void (await ctx.answerCallbackQuery({ text: "Группа не найдена" }));
   const on = ctx.deps.repo.toggleWatchGroup(ctx.user.id, key);
   await ctx.answerCallbackQuery({ text: on ? `Слежу за ${group.title}` : `Больше не слежу за ${group.title}` });
-  const watching = new Set(ctx.deps.repo.watchGroups(ctx.user.id));
-  const kb = groupPicker(ctx.deps.service.groups(), { prefix: "wt" });
-  for (const row of kb.inline_keyboard) for (const btn of row) if ("callback_data" in btn && btn.callback_data?.startsWith("wt:") && watching.has(btn.callback_data.slice(3))) btn.text = `👀 ${btn.text}`;
-  kb.row().text("Готово", "wt:done");
   try {
-    await ctx.editMessageReplyMarkup({ reply_markup: kb });
+    await ctx.editMessageReplyMarkup({ reply_markup: watchKeyboard(ctx) });
+  } catch {
+    /* ignore */
+  }
+});
+
+/** "Не следить" button under a change notification of a watched group. */
+settingsHandlers.callbackQuery(/^unwatch:(.+)$/, async (ctx) => {
+  const key = ctx.match[1]!;
+  const group = ctx.deps.service.group(key);
+  const watching = ctx.deps.repo.watchGroups(ctx.user.id).includes(key);
+  if (watching) ctx.deps.repo.toggleWatchGroup(ctx.user.id, key);
+  await ctx.answerCallbackQuery({ text: watching ? `Больше не слежу за ${group?.title ?? key}` : "Слежение уже выключено" });
+  try {
+    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text(`✅ Не слежу за ${group?.title ?? key}`, "noop") });
   } catch {
     /* ignore */
   }

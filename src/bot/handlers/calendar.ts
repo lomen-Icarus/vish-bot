@@ -1,29 +1,39 @@
 import { Composer, InlineKeyboard, InputFile } from "grammy";
 import type { BotContext } from "../context.js";
 import { groupRequiredText, needGroup } from "../views.js";
-import { buildIcs, icsFileName } from "../../schedule/ics.js";
-import { filterSubgroup } from "../../schedule/format.js";
-import { SEMESTER_WEEKS } from "../../schedule/service.js";
-import { addDays, todayMsk } from "../../time.js";
+import { icsFileName } from "../../schedule/ics.js";
+import { changesCalendar, groupCalendar } from "../../schedule/calendar.js";
+import type { ChangeEvent } from "../../schedule/diff.js";
+import { esc } from "../../schedule/format.js";
+import { calendarPath } from "../../http/server.js";
+import { fmtDDMM, todayMsk } from "../../time.js";
 
 export const calendarHandlers = new Composer<BotContext>();
 
-export function calendarKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text("📆 Без напоминаний", "ics:0")
-    .row()
-    .text("⏰ за 15 мин", "ics:15")
-    .text("⏰ за 30 мин", "ics:30")
-    .text("⏰ за 60 мин", "ics:60");
+function subscriptionsEnabled(ctx: BotContext): boolean {
+  return !!ctx.deps.config.PUBLIC_URL && (ctx.deps.config.HTTP_PORT > 0 || (ctx.deps.config.SERVER_PORT ?? 0) > 0);
+}
+
+export function calendarKeyboard(ctx: BotContext): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (subscriptionsEnabled(ctx)) kb.text("🔗 Подписка: обновляется сама", "ics:sub").row();
+  return kb.text("📎 Файл без напоминаний", "ics:0").row().text("📎 ⏰ за 15 мин", "ics:15").text("📎 ⏰ за 30 мин", "ics:30").text("📎 ⏰ за 60 мин", "ics:60");
+}
+
+function alarmKeyboard(prefix: string): InlineKeyboard {
+  return new InlineKeyboard().text("Без напоминаний", `${prefix}:0`).row().text("⏰ за 15 мин", `${prefix}:15`).text("⏰ за 30 мин", `${prefix}:30`).text("⏰ за 60 мин", `${prefix}:60`);
 }
 
 async function offer(ctx: BotContext): Promise<void> {
   const group = needGroup(ctx);
   if (!group) return void (await ctx.reply(groupRequiredText()));
-  await ctx.reply(
-    "Пришлю файл календаря со всеми парами до конца семестра. Открой его на телефоне, и календарь предложит добавить события. Хочешь напоминание-будильник перед каждой парой?",
-    { reply_markup: calendarKeyboard() },
-  );
+  const lines = ["<b>📆 Пары в календарь телефона</b>", ""];
+  if (subscriptionsEnabled(ctx)) {
+    lines.push("<b>Подписка</b> — лучший вариант: телефон сам подтягивает расписание, переносы и отмены появляются в календаре без твоего участия, ничего не дублируется.", "");
+  }
+  lines.push("<b>Файл .ics</b> — все пары до конца семестра одним файлом. Открой его на телефоне и добавь события; можно с напоминанием-будильником.");
+  if (!subscriptionsEnabled(ctx)) lines.push("", "<i>Расписание меняется, файл придётся обновлять: перед повторным импортом удали старые события (проще всего заводить для пар отдельный календарь).</i>");
+  await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: calendarKeyboard(ctx) });
 }
 
 calendarHandlers.command("calendar", offer);
@@ -32,20 +42,82 @@ calendarHandlers.callbackQuery("ics:menu", async (ctx) => {
   await offer(ctx);
 });
 
+// ---- one-off file ----
 calendarHandlers.callbackQuery(/^ics:(\d{1,3})$/, async (ctx) => {
   const group = needGroup(ctx);
   if (!group) return void (await ctx.answerCallbackQuery({ text: "Сначала выбери группу", show_alert: true }));
   const alarm = Number(ctx.match[1]);
   await ctx.answerCallbackQuery({ text: "Собираю календарь…" });
   const today = todayMsk();
-  const service = ctx.deps.service;
-  const anchor = service.weekOneMonday(service.semesterFor(today));
-  const semesterEnd = anchor ? addDays(anchor, SEMESTER_WEEKS * 7 + 21) : addDays(today, 120);
-  const to = semesterEnd < addDays(today, 150) ? semesterEnd : addDays(today, 150);
-  const lessons = filterSubgroup(service.materialize(group, today, to), ctx.user.subgroup);
-  const ics = buildIcs({ name: group.title, lessons, alarmMinutes: alarm > 0 ? alarm : null });
-  const count = lessons.filter((o) => o.status === "scheduled").length;
+  const { ics, count, to } = groupCalendar(ctx.deps.service, group, { subgroup: ctx.user.subgroup, alarmMinutes: alarm > 0 ? alarm : null });
+  const tips = subscriptionsEnabled(ctx) ? "Чтобы календарь обновлялся сам, выбери «Подписка» в /calendar." : "Расписание меняется: раз в пару недель обновляй файл, перед этим удалив старые события (удобно держать пары в отдельном календаре).";
   await ctx.replyWithDocument(new InputFile(Buffer.from(ics, "utf8"), icsFileName(group.title, today)), {
-    caption: `${group.title}: ${count} пар с ${today.slice(8, 10)}.${today.slice(5, 7)} по ${to.slice(8, 10)}.${to.slice(5, 7)}${alarm ? `, напоминание за ${alarm} мин` : ""}.\n\nОткрой файл → «Добавить в календарь». Расписание меняется, поэтому раз в пару недель обновляй файл заново: старые события с теми же парами заменятся.`,
+    caption: `${group.title}: ${count} пар с ${fmtDDMM(today)} по ${fmtDDMM(to)}${alarm ? `, напоминание за ${alarm} мин` : ""}.\n\nОткрой файл → «Добавить в календарь». ${tips}`,
   });
 });
+
+// ---- subscription (webcal) ----
+calendarHandlers.callbackQuery("ics:sub", async (ctx) => {
+  if (!subscriptionsEnabled(ctx)) return void (await ctx.answerCallbackQuery({ text: "Подписка пока не настроена", show_alert: true }));
+  const group = needGroup(ctx);
+  if (!group) return void (await ctx.answerCallbackQuery({ text: "Сначала выбери группу", show_alert: true }));
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Напоминание перед каждой парой в самом календаре?", { reply_markup: alarmKeyboard("ics:sub") });
+});
+
+calendarHandlers.callbackQuery(/^ics:sub:(\d{1,3})$/, async (ctx) => {
+  if (!subscriptionsEnabled(ctx)) return void (await ctx.answerCallbackQuery({ text: "Подписка пока не настроена", show_alert: true }));
+  const group = needGroup(ctx);
+  if (!group) return void (await ctx.answerCallbackQuery({ text: "Сначала выбери группу", show_alert: true }));
+  const alarm = Number(ctx.match[1]);
+  ctx.deps.repo.updateUser(ctx.user.id, { calAlarmMin: alarm > 0 ? alarm : null });
+  const token = ctx.deps.repo.ensureCalToken(ctx.user.id);
+  const base = ctx.deps.config.PUBLIC_URL!;
+  const http = `${base}${calendarPath(token)}`;
+  const webcal = http.replace(/^https?:\/\//, "webcal://");
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    [
+      `<b>🔗 Подписка на расписание ${esc(group.title)}</b>${ctx.user.subgroup ? ` (${ctx.user.subgroup} подгруппа)` : ""}${alarm ? `, напоминание за ${alarm} мин` : ""}`,
+      "",
+      `<code>${esc(http)}</code>`,
+      "",
+      "<b>iPhone:</b> Настройки → Приложения → Календарь → Учётные записи → Добавить → Другое → «Подписной календарь» → вставь ссылку. Или просто открой:",
+      `<code>${esc(webcal)}</code>`,
+      "",
+      "<b>Android / Google Календарь:</b> на сайте calendar.google.com слева «Другие календари» → «+» → «По URL» → вставь ссылку. Телефон подхватит календарь сам.",
+      "",
+      "Ссылка личная и постоянная: сменишь группу или подгруппу в боте — подписка обновится сама. Телефон обычно проверяет подписки раз в несколько часов.",
+    ].join("\n"),
+    { parse_mode: "HTML", disable_web_page_preview: true } as never,
+  );
+});
+
+// ---- "just the changes" file from «Изменения» ----
+calendarHandlers.callbackQuery(/^cics:(.+)$/, async (ctx) => {
+  const key = ctx.match[1]!;
+  const group = ctx.deps.service.group(key);
+  if (!group) return void (await ctx.answerCallbackQuery({ text: "Группа не найдена" }));
+  const own = ctx.user.groupKey === key;
+  const rows = ctx.deps.repo.activeEvents(key, todayMsk(), 60);
+  if (!rows.length) return void (await ctx.answerCallbackQuery({ text: "Актуальных изменений уже нет", show_alert: true }));
+  const events: ChangeEvent[] = rows.map((r) => {
+    const p = r.payload as { before?: ChangeEvent["before"]; after?: ChangeEvent["after"]; fields?: string[] };
+    return { kind: r.kind as ChangeEvent["kind"], groupKey: r.groupKey, date: r.date, period: r.period, before: p.before, after: p.after, fields: p.fields };
+  });
+  const alarm = ctx.user.calAlarmMin;
+  const { ics, live, cancelled } = changesCalendar(group, events, { subgroup: own ? ctx.user.subgroup : null, alarmMinutes: alarm });
+  await ctx.answerCallbackQuery({ text: "Собираю изменения…" });
+  const sub = subscriptionsEnabled(ctx) ? "\n\nС подпиской (в /calendar) это не нужно: там всё меняется само." : "";
+  await ctx.replyWithDocument(new InputFile(Buffer.from(ics, "utf8"), icsFileName(group.title, todayMsk(), "_changes")), {
+    caption: `${group.title}: только изменения — ${live} ${plural(live, "пара", "пары", "пар")} обновить, ${cancelled} ${plural(cancelled, "отмена", "отмены", "отмен")}.\n\nОткрой файл → «Добавить». Google-календарь заменит события с теми же парами; на iPhone изменённые пары добавятся, а отменённые придут помеченными «Отменено» — их можно удалить.${sub}`,
+  });
+});
+
+function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Db } from "./index.js";
 import { nowIso } from "./index.js";
 import type { Occurrence, Period } from "../schedule/model.js";
@@ -68,12 +69,18 @@ export interface User {
   notifyNotices: boolean;
   remindFirstMin: number | null;
   remindEachMin: number | null;
+  /** Minutes before a distance (online) lesson to send the webinar link; null = off. */
+  remindDistanceMin: number | null;
   eveningAt: string | null;
   quietFrom: string | null;
   quietTo: string | null;
   topics: string[];
   /** Intake year (two digits) selected in stream mode; null = follow own group. */
   streamIntake: number | null;
+  /** Secret token of the personal calendar subscription URL; null until requested. */
+  calToken: string | null;
+  /** Alarm minutes baked into the subscription feed; null = no alarms. */
+  calAlarmMin: number | null;
   blocked: boolean;
   createdAt: string;
   lastSeenAt: string;
@@ -91,11 +98,14 @@ interface UserRow {
   notify_notices: number;
   remind_first_min: number | null;
   remind_each_min: number | null;
+  remind_distance_min: number | null;
   evening_at: string | null;
   quiet_from: string | null;
   quiet_to: string | null;
   topics: string;
   stream_intake: number | null;
+  cal_token: string | null;
+  cal_alarm_min: number | null;
   blocked: number;
   created_at: string;
   last_seen_at: string;
@@ -120,11 +130,14 @@ function rowToUser(r: UserRow): User {
     notifyNotices: r.notify_notices === 1,
     remindFirstMin: r.remind_first_min,
     remindEachMin: r.remind_each_min,
+    remindDistanceMin: r.remind_distance_min ?? null,
     eveningAt: r.evening_at,
     quietFrom: r.quiet_from,
     quietTo: r.quiet_to,
     topics,
     streamIntake: r.stream_intake ?? null,
+    calToken: r.cal_token ?? null,
+    calAlarmMin: r.cal_alarm_min ?? null,
     blocked: r.blocked === 1,
     createdAt: r.created_at,
     lastSeenAt: r.last_seen_at,
@@ -210,6 +223,19 @@ export class Repo {
     return row ? rowToUser(row) : null;
   }
 
+  userByCalToken(token: string): User | null {
+    if (!token) return null;
+    const row = this.db.prepare("SELECT * FROM users WHERE cal_token = ?").get(token) as UserRow | undefined;
+    return row ? rowToUser(row) : null;
+  }
+  /** Returns the user's calendar token, minting one on first use. */
+  ensureCalToken(id: number): string {
+    const u = this.getUser(id);
+    if (u?.calToken) return u.calToken;
+    const token = randomBytes(18).toString("base64url");
+    this.updateUser(id, { calToken: token });
+    return token;
+  }
   touchUser(id: number, username: string | null, firstName: string | null): User {
     const ts = nowIso();
     this.db
@@ -233,11 +259,14 @@ export class Repo {
     if (patch.notifyNotices !== undefined) map.notify_notices = patch.notifyNotices ? 1 : 0;
     if (patch.remindFirstMin !== undefined) map.remind_first_min = patch.remindFirstMin;
     if (patch.remindEachMin !== undefined) map.remind_each_min = patch.remindEachMin;
+    if (patch.remindDistanceMin !== undefined) map.remind_distance_min = patch.remindDistanceMin;
     if (patch.eveningAt !== undefined) map.evening_at = patch.eveningAt;
     if (patch.quietFrom !== undefined) map.quiet_from = patch.quietFrom;
     if (patch.quietTo !== undefined) map.quiet_to = patch.quietTo;
     if (patch.topics !== undefined) map.topics = JSON.stringify(patch.topics);
     if (patch.streamIntake !== undefined) map.stream_intake = patch.streamIntake;
+    if (patch.calToken !== undefined) map.cal_token = patch.calToken;
+    if (patch.calAlarmMin !== undefined) map.cal_alarm_min = patch.calAlarmMin;
     if (patch.blocked !== undefined) map.blocked = patch.blocked ? 1 : 0;
     const keys = Object.keys(map);
     if (keys.length === 0) return;
@@ -440,6 +469,41 @@ export class Repo {
     if (ids.length === 0) return;
     const stmt = this.db.prepare("UPDATE change_events SET notified = 1 WHERE id = ?");
     this.db.transaction(() => ids.forEach((id) => stmt.run(id)))();
+  }
+
+  /** Events still worth showing: lesson date not in the past, noticed within the last two weeks. */
+  activeEvents(groupKey: string, today: LocalDate, limit = 30): ChangeEventRow[] {
+    const since = new Date(Date.now() - 14 * 86_400_000).toISOString();
+    const rows = this.db
+      .prepare("SELECT * FROM change_events WHERE group_key = ? AND date >= ? AND created_at >= ? ORDER BY date, id LIMIT ?")
+      .all(groupKey, today, since, limit) as Array<{ id: number; group_key: string; date: string; period: number; kind: string; payload_json: string; created_at: string }>;
+    return rows.map((r) => ({ id: r.id, groupKey: r.group_key, date: r.date, period: r.period as Period, kind: r.kind, payload: JSON.parse(r.payload_json), createdAt: r.created_at }));
+  }
+
+  // ---------- announcements board ----------
+  addAnnouncement(text: string, adminId: number | null, hours: number): number {
+    const r = this.db
+      .prepare("INSERT INTO announcements (text, admin_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
+      .run(text, adminId, nowIso(), new Date(Date.now() + hours * 3_600_000).toISOString());
+    return r.lastInsertRowid;
+  }
+
+  activeAnnouncements(): Array<{ id: number; text: string; createdAt: string; expiresAt: string }> {
+    const rows = this.db.prepare("SELECT id, text, created_at, expires_at FROM announcements WHERE deleted = 0 AND expires_at > ? ORDER BY id DESC").all(nowIso()) as Array<{
+      id: number;
+      text: string;
+      created_at: string;
+      expires_at: string;
+    }>;
+    return rows.map((r) => ({ id: r.id, text: r.text, createdAt: r.created_at, expiresAt: r.expires_at }));
+  }
+
+  deleteAnnouncement(id: number): boolean {
+    return this.db.prepare("UPDATE announcements SET deleted = 1 WHERE id = ? AND deleted = 0").run(id).changes > 0;
+  }
+
+  clearWatchGroups(userId: number): number {
+    return this.db.prepare("DELETE FROM watch_groups WHERE user_id = ?").run(userId).changes;
   }
 
   recentEvents(groupKey: string, limit = 20): ChangeEventRow[] {

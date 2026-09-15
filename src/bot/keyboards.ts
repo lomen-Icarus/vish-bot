@@ -6,14 +6,18 @@ import { addDays, fmtDDMM, type LocalDate } from "../time.js";
 export const BTN = {
   today: "📅 Сегодня",
   tomorrow: "📅 Завтра",
+  otherGroups: "👥 Др. группы",
   week: "🗓 Неделя",
   nextWeek: "🗓 Следующая",
-  changes: "🔔 Изменения",
-  settings: "⚙️ Настройки",
-  suggest: "📨 Отправить новость",
-  teachers: "👨‍🏫 Преподаватели",
   stream: "🎓 Поток",
+  changes: "🔔 Изменения",
+  calendar: "📆 Календарь",
+  teachers: "👨‍🏫 Преподаватели",
+  features: "🧭 Функции",
+  search: "🔍 Поиск",
+  settings: "⚙️ Настройки",
   ask: "💬 Спросить",
+  suggest: "📨 Отправить новость",
   // stream mode
   streamYesterday: "Поток: вчера",
   streamToday: "Поток: сегодня",
@@ -23,21 +27,26 @@ export const BTN = {
   backToMenu: "◀️ В меню",
 } as const;
 
-export function mainKeyboard(opts: { ask: boolean }): Keyboard {
-  const kb = new Keyboard()
+/** 4 × 3 main menu, order agreed with the customer. */
+export function mainKeyboard(): Keyboard {
+  return new Keyboard()
     .text(BTN.today)
     .text(BTN.tomorrow)
-    .text(BTN.teachers)
+    .text(BTN.otherGroups)
     .row()
     .text(BTN.week)
     .text(BTN.nextWeek)
     .text(BTN.stream)
     .row()
     .text(BTN.changes)
-    .text(BTN.suggest)
-    .text(BTN.settings);
-  if (opts.ask) kb.row().text(BTN.ask);
-  return kb.resized().persistent();
+    .text(BTN.calendar)
+    .text(BTN.teachers)
+    .row()
+    .text(BTN.features)
+    .text(BTN.search)
+    .text(BTN.settings)
+    .resized()
+    .persistent();
 }
 
 export function streamKeyboard(): Keyboard {
@@ -61,6 +70,10 @@ export function intakePicker(intakes: number[], selected: number): InlineKeyboar
   return kb;
 }
 
+export function groupLabel(g: LogicalGroup): string {
+  return g.title.replace(/^ВИШ-/, "").replace(/^ОЗВИШ-/, "оз ").replace(/\s*\((.*?)\)\s*$/, " $1");
+}
+
 /** Group picker grouped by course; callback "<prefix>:<key>". */
 export function groupPicker(groups: LogicalGroup[], opts: { prefix?: string; selected?: string | null } = {}): InlineKeyboard {
   const kb = new InlineKeyboard();
@@ -77,7 +90,7 @@ export function groupPicker(groups: LogicalGroup[], opts: { prefix?: string; sel
     let inRow = 0;
     for (const g of list) {
       const mark = opts.selected === g.key ? "✅ " : "";
-      const label = g.title.replace(/^ВИШ-/, "").replace(/^ОЗВИШ-/, "оз ").replace(/\s*\((.*?)\)\s*$/, " $1");
+      const label = groupLabel(g);
       kb.text(`${mark}${label}`, `${cb}:${g.key}`);
       inRow++;
       const wide = label.length > 8;
@@ -91,24 +104,33 @@ export function groupPicker(groups: LogicalGroup[], opts: { prefix?: string; sel
   return kb;
 }
 
-export function dayNav(date: LocalDate, today: LocalDate, opts: { image: boolean }): InlineKeyboard {
-  const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `d:${addDays(date, -1)}`);
-  if (date !== today) kb.text("сегодня", `d:${today}`);
-  kb.text(`${fmtDDMM(addDays(date, 1))} ▶️`, `d:${addDays(date, 1)}`).row();
-  kb.text("🗓 Неделя", `w:${date}`);
-  if (opts.image) kb.text("🖼 Картинкой", `img:${date}`);
+/**
+ * Day navigation. Without `peekKey` the callbacks act on the user's own group
+ * ("d:<date>"); with it they carry the group key ("pd:<key>:<date>").
+ */
+export function dayNav(date: LocalDate, today: LocalDate, opts: { image: boolean; peekKey?: string }): InlineKeyboard {
+  const d = (x: LocalDate) => (opts.peekKey ? `pd:${opts.peekKey}:${x}` : `d:${x}`);
+  const w = (x: LocalDate) => (opts.peekKey ? `pw:${opts.peekKey}:${x}` : `w:${x}`);
+  const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, d(addDays(date, -1)));
+  if (date !== today) kb.text("сегодня", d(today));
+  kb.text(`${fmtDDMM(addDays(date, 1))} ▶️`, d(addDays(date, 1))).row();
+  kb.text("🗓 Неделя", w(date));
+  if (opts.image) kb.text("🖼 Картинкой", opts.peekKey ? `pimg:${opts.peekKey}:${date}` : `img:${date}`);
+  if (opts.peekKey) kb.row().text("✅ Сделать моей группой", `g:${opts.peekKey}`);
   return kb;
 }
 
-export function weekNav(monday: LocalDate, opts: { image: boolean }): InlineKeyboard {
+export function weekNav(monday: LocalDate, opts: { image: boolean; peekKey?: string }): InlineKeyboard {
+  const w = (x: LocalDate) => (opts.peekKey ? `pw:${opts.peekKey}:${x}` : `w:${x}`);
+  const d = (x: LocalDate) => (opts.peekKey ? `pd:${opts.peekKey}:${x}` : `d:${x}`);
   const kb = new InlineKeyboard()
-    .text("◀️ пред.", `w:${addDays(monday, -7)}`)
-    .text("текущая", `w:today`)
-    .text("след. ▶️", `w:${addDays(monday, 7)}`)
+    .text("◀️ пред.", w(addDays(monday, -7)))
+    .text("текущая", opts.peekKey ? `pw:${opts.peekKey}:today` : "w:today")
+    .text("след. ▶️", w(addDays(monday, 7)))
     .row()
-    .text("📅 День", `d:${monday}`);
-  if (opts.image) kb.text("🖼 Картинкой", `wimg:${monday}`);
-  kb.text("📆 В календарь", "ics:menu");
+    .text("📅 День", d(monday));
+  if (opts.image) kb.text("🖼 Картинкой", opts.peekKey ? `pwimg:${opts.peekKey}:${monday}` : `wimg:${monday}`);
+  if (!opts.peekKey) kb.text("📆 В календарь", "ics:menu");
   return kb;
 }
 
@@ -129,15 +151,20 @@ export function teacherWeekNav(teacherId: number, monday: LocalDate): InlineKeyb
     .text("🔎 Другой", "t:search");
 }
 
-export function streamDayNav(date: LocalDate, today: LocalDate, opts: { image: boolean } = { image: false }): InlineKeyboard {
+/** Stream day: date arrows, optional poster button, and one tiny button per group of the stream. */
+export function streamDayNav(date: LocalDate, today: LocalDate, opts: { image: boolean; groups?: LogicalGroup[] } = { image: false }): InlineKeyboard {
   const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `sd:${addDays(date, -1)}`);
   if (date !== today) kb.text("сегодня", `sd:${today}`);
   kb.text(`${fmtDDMM(addDays(date, 1))} ▶️`, `sd:${addDays(date, 1)}`);
   if (opts.image) kb.row().text("🖼 Картинкой", `simg:${date}`);
+  if (opts.groups?.length) {
+    kb.row();
+    for (const g of opts.groups) kb.text(String(g.number) + (g.title.includes("(") ? ` ${groupLabel(g).split(" ").slice(1).join(" ").slice(0, 5)}` : ""), `pd:${g.key}:${date}`);
+  }
   return kb;
 }
 
-const onoff = (v: boolean) => (v ? "вкл ✅" : "выкл ❌");
+const onoff = (v: boolean) => (v ? "вкл ✅" : "выкл ◻️");
 
 export function minutesLabel(min: number | null): string {
   if (min == null) return "выкл";
@@ -154,6 +181,7 @@ export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: {
   kb.text(`🔔 Изменения: ${onoff(user.notifyChanges)}`, "s:changes").text(`🎓 Сессия: ${onoff(user.notifySession)}`, "s:session").row();
   kb.text(`⏰ До первой пары: ${minutesLabel(user.remindFirstMin)}`, "s:first").row();
   kb.text(`⏱ Перед каждой парой: ${minutesLabel(user.remindEachMin)}`, "s:each").row();
+  kb.text(`💻 Дистант, ссылка на вебинар: ${minutesLabel(user.remindDistanceMin)}`, "s:distance").row();
   kb.text(`🌙 Вечером на завтра: ${user.eveningAt ?? "выкл"}`, "s:evening").row();
   kb.text(`🤫 Тихие часы: ${user.quietFrom ? `${user.quietFrom}–${user.quietTo}` : "выкл"}`, "s:quiet").row();
   for (const t of opts.topics) kb.text(`${user.topics.includes(t) ? "✅" : "▫️"} ${TOPIC_LABELS[t] ?? t}`, `s:topic:${t}`);
@@ -186,3 +214,5 @@ export const TOPIC_HASHTAGS: Record<Topic, RegExp> = {
 export function onboardingKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text("✅ Включить рекомендуемые", "ob:on").row().text("⚙️ Настроить самому", "ob:custom").text("Позже", "ob:later");
 }
+
+export const WEBINAR_URL = "https://tt.chuvsu.ru/webinar";

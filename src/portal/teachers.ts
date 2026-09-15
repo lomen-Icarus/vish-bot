@@ -28,6 +28,53 @@ interface CachedPage {
   fullName: string | null;
 }
 
+function norm(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[.,;:()"'«»]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Score how well a directory entry ("Иванова И.И." / "Иванова Ирина Ивановна")
+ * matches a typed query ("иванова", "Ирина Иванова", "иванова и", "иван").
+ * Words may come in any order; a one-letter name word is an initial and
+ * matches any query word starting with it. 0 = no match, higher = better.
+ */
+export function teacherMatchScore(name: string, query: string): number {
+  const q = norm(query).split(" ").filter((w) => w.length >= 1);
+  const n = norm(name).split(" ").filter(Boolean);
+  if (!q.length || !n.length) return 0;
+  const surname = n[0]!;
+  let score = 0;
+  const used = new Set<number>();
+  for (const qw of q) {
+    let best = 0;
+    let bestIdx = -1;
+    n.forEach((nw, i) => {
+      if (used.has(i)) return;
+      let s = 0;
+      if (nw === qw) s = i === 0 ? 6 : 4;
+      else if (nw.length === 1 && qw.startsWith(nw)) s = 1; // initial
+      else if (qw.length === 1 && nw.startsWith(qw)) s = 1; // typed initial
+      else if (nw.startsWith(qw) && qw.length >= 2) s = i === 0 ? 5 : 3;
+      else if (qw.startsWith(nw) && nw.length >= 3) s = 2; // typed a longer form ("иванова" vs "иванов")
+      else if (qw.length >= 4 && nw.includes(qw)) s = 1;
+      if (s > best) {
+        best = s;
+        bestIdx = i;
+      }
+    });
+    if (best === 0) return 0; // every query word must match something
+    used.add(bestIdx);
+    score += best;
+  }
+  if (q.length === 1 && q[0]!.length >= 3 && surname.startsWith(q[0]!)) score += 2;
+  return score;
+}
+
 export class TeacherService {
   private readonly pages = new Map<string, CachedPage>();
   private directoryPromise: Promise<TeacherRef[]> | null = null;
@@ -51,11 +98,15 @@ export class TeacherService {
         if (list.length) {
           this.repo.setMeta("teachers:list", JSON.stringify(list));
           this.repo.setMeta("teachers:fetchedAt", String(Date.now()));
+          this.repo.setMeta("teachers:lastError", "");
           logger.info({ count: list.length }, "teacher directory refreshed");
           return list;
         }
+        this.repo.setMeta("teachers:lastError", "справочник /index/tech пуст — портал не отдал список (учётка не авторизована?)");
+        logger.warn("teacher directory came back empty");
         return cached;
       } catch (err) {
+        this.repo.setMeta("teachers:lastError", String(err).slice(0, 300));
         logger.warn({ err: String(err) }, "teacher directory refresh failed");
         return cached;
       } finally {
@@ -65,19 +116,32 @@ export class TeacherService {
     return this.directoryPromise;
   }
 
-  /** Case-insensitive surname/initials search over the directory (portal search as a fallback). */
+  /** Fuzzy search over the directory (any word order, initials), then the portal's own search. */
   async search(query: string, limit = 8): Promise<TeacherRef[]> {
-    const q = query.trim().toLowerCase().replace(/ё/g, "е");
+    const q = query.trim();
     if (q.length < 2) return [];
-    const norm = (s: string) => s.toLowerCase().replace(/ё/g, "е");
     const dir = await this.directory();
-    const starts = dir.filter((t) => norm(t.name).startsWith(q));
-    const contains = dir.filter((t) => !norm(t.name).startsWith(q) && norm(t.name).includes(q));
-    const local = [...starts, ...contains].slice(0, limit);
-    if (local.length || dir.length) return local;
+    const scored = dir
+      .map((t) => ({ t, s: teacherMatchScore(t.name, q) }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s || a.t.name.localeCompare(b.t.name, "ru"));
+    if (scored.length) return scored.slice(0, limit).map((x) => x.t);
+    // Portal search understands surnames only: try the longest word (usually the surname).
+    const surname = norm(q)
+      .split(" ")
+      .sort((a, b) => b.length - a.length)[0]!;
     try {
-      return (await this.portal.searchTeachers(query)).slice(0, limit);
+      const found = await this.portal.searchTeachers(surname);
+      if (found.length) {
+        // Remember them so the next lookup is local.
+        const merged = [...dir];
+        for (const f of found) if (!merged.some((t) => t.id === f.id)) merged.push(f);
+        this.repo.setMeta("teachers:list", JSON.stringify(merged));
+      }
+      const rescored = found.map((t) => ({ t, s: teacherMatchScore(t.name, q) })).sort((a, b) => b.s - a.s);
+      return (rescored.some((x) => x.s > 0) ? rescored.filter((x) => x.s > 0) : rescored).slice(0, limit).map((x) => x.t);
     } catch (err) {
+      this.repo.setMeta("teachers:lastError", String(err).slice(0, 300));
       logger.warn({ err: String(err) }, "portal teacher search failed");
       return [];
     }
@@ -86,6 +150,11 @@ export class TeacherService {
   async byId(id: number): Promise<TeacherRef | null> {
     const dir = await this.directory();
     return dir.find((t) => t.id === id) ?? null;
+  }
+
+  lastError(): string | null {
+    const e = this.repo.getMeta("teachers:lastError");
+    return e ? e : null;
   }
 
   private async page(teacherId: number, period: 1 | 2 | 3 | 4): Promise<CachedPage> {

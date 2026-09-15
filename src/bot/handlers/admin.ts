@@ -12,6 +12,9 @@ export const adminHandlers = new Composer<BotContext>();
 
 const adminOnly = adminHandlers.filter((ctx) => ctx.isAdmin);
 
+/** How long a broadcast stays on the "Объявления" board inside «Изменения». */
+export const BOARD_HOURS = 24;
+
 function adminMenu(): InlineKeyboard {
   return new InlineKeyboard()
     .text("📊 Статистика", "adm:stats")
@@ -20,7 +23,9 @@ function adminMenu(): InlineKeyboard {
     .text("🔄 Опросить портал", "adm:poll")
     .text("📣 Рассылка", "adm:broadcast")
     .row()
+    .text("📌 Доска объявлений", "adm:board")
     .text("👥 Группы", "adm:groups")
+    .row()
     .text("📰 Источники", "adm:sources");
 }
 
@@ -48,6 +53,9 @@ function healthText(ctx: BotContext): string {
   const up = Math.round((Date.now() - deps.startedAt.getTime()) / 60_000);
   const anchor1 = deps.service.weekOneMonday(1);
   const anchor3 = deps.service.weekOneMonday(3);
+  const teacherDir = deps.repo.getMeta("teachers:list");
+  const teacherCount = teacherDir ? (JSON.parse(teacherDir) as unknown[]).length : 0;
+  const teacherErr = deps.repo.getMeta("teachers:lastError");
   return [
     "<b>🩺 Здоровье</b>",
     `Аптайм: ${up} мин · RSS ${Math.round(mem.rss / 1048576)} МБ · Node ${process.version}`,
@@ -55,12 +63,53 @@ function healthText(ctx: BotContext): string {
     p?.error ? `Ошибка: <code>${esc(p.error).slice(0, 300)}</code>` : "",
     `Учебный год: ${deps.service.academicYear}/${deps.service.academicYear + 1}`,
     `Неделя 1 осень: ${anchor1 ?? "не калибрована"} · весна: ${anchor3 ?? "не калибрована"}`,
-    `Групп: ${deps.service.groups().length} · рендер картинок: ${deps.renderer ? "да" : "нет"} · ИИ: ${deps.ask ? deps.config.AI_MODEL : "выкл"} · преподаватели: ${deps.teachers ? "да" : "нет учётки"} · каналы новостей: ${deps.config.NEWS_CHANNEL_IDS.length} · ИИ-сканер: ${deps.news ? `${deps.repo.listNewsSources(true).length} источн.` : "выкл"}`,
+    `Групп: ${deps.service.groups().length} · рендер картинок: ${deps.renderer ? "да" : "нет"} · ИИ: ${deps.ask ? deps.config.AI_MODEL : "выкл"} · каналы новостей: ${deps.config.NEWS_CHANNEL_IDS.length} · ИИ-сканер: ${deps.news ? `${deps.repo.listNewsSources(true).length} источн.` : "выкл"}`,
+    `Преподаватели: ${deps.teachers ? `учётка есть · в справочнике ${teacherCount}` : "нет учётки (PORTAL_LOGIN/PORTAL_PASSWORD)"}${teacherErr ? ` · последняя ошибка: <code>${esc(teacherErr).slice(0, 200)}</code>` : ""}`,
+    `Доска объявлений: ${deps.repo.activeAnnouncements().length} активных`,
     `Баннер портала: ${deps.repo.getMeta("banner") ? esc(deps.repo.getMeta("banner")!.slice(0, 120)) : "нет"}`,
   ]
     .filter(Boolean)
     .join("\n");
 }
+
+// ---- announcements board ----
+function boardText(ctx: BotContext): { text: string; kb: InlineKeyboard } {
+  const items = ctx.deps.repo.activeAnnouncements();
+  const kb = new InlineKeyboard();
+  if (!items.length) return { text: `<b>📌 Доска объявлений</b>\n\nПусто. Рассылка «Всем» или в тему «Объявления» автоматически попадает сюда на ${BOARD_HOURS} ч и видна всем в «${esc("🔔 Изменения")}».`, kb };
+  const lines = items.map((a, i) => {
+    const left = Math.max(0, Math.round((Date.parse(a.expiresAt) - Date.now()) / 3_600_000));
+    kb.text(`🗑 Убрать #${a.id}`, `ann:del:${a.id}`);
+    if (i % 2 === 1) kb.row();
+    return `<b>#${a.id}</b> · ещё ${left} ч\n${esc(a.text.length > 300 ? a.text.slice(0, 290).trimEnd() + "…" : a.text)}`;
+  });
+  kb.row();
+  return { text: `<b>📌 Доска объявлений</b> (${items.length})\n\n${lines.join("\n\n")}`, kb };
+}
+
+async function showBoard(ctx: BotContext): Promise<void> {
+  const { text, kb } = boardText(ctx);
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
+}
+
+adminOnly.command("announcements", showBoard);
+
+adminOnly.callbackQuery(/^ann:del:(\d+)$/, async (ctx) => {
+  const id = Number(ctx.match[1]);
+  const ok = ctx.deps.repo.deleteAnnouncement(id);
+  await ctx.answerCallbackQuery({ text: ok ? `Объявление #${id} убрано с доски` : "Уже убрано" });
+  try {
+    const { text, kb } = boardText(ctx);
+    await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
+  } catch {
+    /* message may be the broadcast report, not the board */
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text("✅ Убрано с доски", "noop") });
+    } catch {
+      /* ignore */
+    }
+  }
+});
 
 adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx) => {
   const action = ctx.match[1];
@@ -72,6 +121,10 @@ adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx) => {
     case "health":
       await ctx.answerCallbackQuery();
       await ctx.reply(healthText(ctx), { parse_mode: "HTML" });
+      return;
+    case "board":
+      await ctx.answerCallbackQuery();
+      await showBoard(ctx);
       return;
     case "groups": {
       await ctx.answerCallbackQuery();
@@ -95,8 +148,7 @@ adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx) => {
       return;
     case "broadcast":
       await ctx.answerCallbackQuery();
-      setPending(ctx.deps, ctx.user.id, { kind: "broadcast" });
-      await ctx.reply("Пришли сообщение для рассылки: текст, фото с подписью, документ. Перед отправкой я покажу, кому и сколько людям, и попрошу подтвердить.", { reply_markup: cancelKeyboard() });
+      await startBroadcast(ctx);
       return;
     default:
       await ctx.answerCallbackQuery();
@@ -114,10 +166,15 @@ adminOnly.command("poll", async (ctx) => {
     await ctx.reply(`Ошибка: ${String(err).slice(0, 500)}`);
   }
 });
-adminOnly.command("broadcast", async (ctx) => {
+
+async function startBroadcast(ctx: BotContext): Promise<void> {
   setPending(ctx.deps, ctx.user.id, { kind: "broadcast" });
-  await ctx.reply("Пришли сообщение для рассылки: текст, фото с подписью, документ. Перед отправкой я покажу, кому и сколько людям, и попрошу подтвердить.", { reply_markup: cancelKeyboard() });
-});
+  await ctx.reply(
+    `Пришли сообщение для рассылки: текст, фото с подписью, документ. Перед отправкой я покажу, кому и сколько людям, и попрошу подтвердить.\n\nРассылка «Всем» или в тему «Объявления» ещё и повиснет на ${BOARD_HOURS} ч на доске в «🔔 Изменения»; убрать раньше можно кнопкой или через /announcements.`,
+    { reply_markup: cancelKeyboard() },
+  );
+}
+adminOnly.command("broadcast", startBroadcast);
 
 function cancelKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text("✖️ Отмена", "bc:cancel");
@@ -134,22 +191,23 @@ function targetKeyboard(): InlineKeyboard {
   return kb;
 }
 
-function resolveTarget(ctx: BotContext, action: string): { users: User[]; label: string } {
-  if (action === "all") return { users: ctx.deps.repo.listUsers({ onlyActive: true }), label: "всем" };
+function resolveTarget(ctx: BotContext, action: string): { users: User[]; label: string; board: boolean } {
+  if (action === "all") return { users: ctx.deps.repo.listUsers({ onlyActive: true }), label: "всем", board: true };
   if (action.startsWith("topic:")) {
     const topic = action.slice(6);
-    return { users: ctx.deps.repo.usersForTopic(topic), label: `подписчикам темы «${TOPIC_LABELS[topic] ?? topic}»` };
+    return { users: ctx.deps.repo.usersForTopic(topic), label: `подписчикам темы «${TOPIC_LABELS[topic] ?? topic}»`, board: topic === "announcements" };
   }
   const course = Number(action.slice(1));
   const keys = new Set(ctx.deps.service.groups().filter((g) => g.course === course).map((g) => g.key));
-  return { users: ctx.deps.repo.listUsers({ onlyActive: true }).filter((u) => u.groupKey && keys.has(u.groupKey)), label: `${course} курсу` };
+  return { users: ctx.deps.repo.listUsers({ onlyActive: true }).filter((u) => u.groupKey && keys.has(u.groupKey)), label: `${course} курсу`, board: false };
 }
 
 /** Captures the message to broadcast (must run before generic text handlers). */
 adminOnly.on("message", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || pending.kind !== "broadcast") return next();
-  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: ctx.chat.id, messageId: ctx.msg.message_id }, 15 * 60_000);
+  const text = (ctx.msg.text ?? ctx.msg.caption ?? "").trim();
+  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: ctx.chat.id, messageId: ctx.msg.message_id, text }, 15 * 60_000);
   await ctx.reply("Кому отправить?", { reply_markup: targetKeyboard() });
 });
 
@@ -180,10 +238,10 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go|topic:\w+|c\d)$/, async (ctx)
   }
   if (action !== "go") {
     // Target chosen: ask for confirmation.
-    const { users, label } = resolveTarget(ctx, action);
-    setPending(ctx.deps, ctx.user.id, { kind: "broadcast-confirm", chatId: pending.chatId, messageId: pending.messageId, target: action }, 15 * 60_000);
+    const { users, label, board } = resolveTarget(ctx, action);
+    setPending(ctx.deps, ctx.user.id, { kind: "broadcast-confirm", chatId: pending.chatId, messageId: pending.messageId, text: pending.text, target: action }, 15 * 60_000);
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText(`Отправить ${label}: <b>${users.length}</b> чел.?\n\nЭто нельзя отменить после нажатия.`, {
+    await ctx.editMessageText(`Отправить ${label}: <b>${users.length}</b> чел.?${board && pending.text ? `\nТекст повиснет на доске объявлений на ${BOARD_HOURS} ч.` : ""}\n\nЭто нельзя отменить после нажатия.`, {
       parse_mode: "HTML",
       reply_markup: new InlineKeyboard().text(`✅ Отправить ${users.length} чел.`, "bc:go").row().text("◀️ Другая аудитория", "bc:back").text("✖️ Отмена", "bc:cancel"),
     });
@@ -193,7 +251,7 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go|topic:\w+|c\d)$/, async (ctx)
     await ctx.answerCallbackQuery({ text: "Сначала выбери аудиторию", show_alert: true });
     return;
   }
-  const { users, label } = resolveTarget(ctx, pending.target);
+  const { users, label, board } = resolveTarget(ctx, pending.target);
   clearPending(ctx.deps, ctx.user.id);
   await ctx.answerCallbackQuery();
   await ctx.editMessageText(`Отправляю ${label}: ${users.length} чел…`);
@@ -211,13 +269,20 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go|topic:\w+|c\d)$/, async (ctx)
     }
     await sleep(40);
   }
-  await ctx.reply(`Рассылка ${label} завершена: доставлено ${ok}, не доставлено ${failed}.`);
+  let boardNote = "";
+  let kb: InlineKeyboard | undefined;
+  if (board && pending.text) {
+    const id = ctx.deps.repo.addAnnouncement(pending.text.slice(0, 2000), ctx.user.id, BOARD_HOURS);
+    boardNote = `\nНа доске объявлений ${BOARD_HOURS} ч как #${id}.`;
+    kb = new InlineKeyboard().text("🗑 Убрать с доски", `ann:del:${id}`);
+  }
+  await ctx.reply(`Рассылка ${label} завершена: доставлено ${ok}, не доставлено ${failed}.${boardNote}`, { reply_markup: kb });
 });
 
 adminOnly.callbackQuery("bc:back", async (ctx) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || !pending.chatId || !pending.messageId) return void (await ctx.answerCallbackQuery({ text: "Начни заново: /broadcast", show_alert: true }));
-  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: pending.chatId, messageId: pending.messageId }, 15 * 60_000);
+  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: pending.chatId, messageId: pending.messageId, text: pending.text }, 15 * 60_000);
   await ctx.answerCallbackQuery();
   await ctx.editMessageText("Кому отправить?", { reply_markup: targetKeyboard() });
 });

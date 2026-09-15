@@ -4,7 +4,7 @@
  */
 import type { LogicalGroup } from "./groups.js";
 import { lessonTypeLabel, type Occurrence } from "./model.js";
-import { esc, weekLabel } from "./format.js";
+import { esc, parityLine } from "./format.js";
 import type { WeekInfo } from "./service.js";
 import { addDays, fmtDDMM, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate } from "../time.js";
 
@@ -88,8 +88,8 @@ function groupBySlot(rows: StreamRow[]): Array<{ header: string; rows: StreamRow
 
 export function formatStreamDay(intake: number, date: LocalDate, rows: StreamRow[], info: WeekInfo, today: LocalDate, ownKey: string | null): string {
   const rel = date === today ? "Сегодня · " : date === addDays(today, 1) ? "Завтра · " : date === addDays(today, -1) ? "Вчера · " : "";
-  const wl = weekLabel(info);
-  const head = `<b>Поток 20${intake} · ${rel}${weekdayName(date)}, ${fmtDayMonth(date)}</b>${wl ? `\n<i>${wl}</i>` : ""}`;
+  const pl = parityLine(info);
+  const head = `<b>Поток 20${intake} · ${rel}${weekdayName(date)}, ${fmtDayMonth(date)}</b>${pl ? `\n${pl}` : ""}`;
   const dayRows = rows.filter((r) => r.date === date);
   if (!dayRows.length) return `${head}\n\n😴 У потока пар нет`;
   const blocks = groupBySlot(dayRows).map((b) => `${b.header}\n${b.rows.map((r) => rowLine(r, ownKey)).join("\n")}`);
@@ -98,14 +98,14 @@ export function formatStreamDay(intake: number, date: LocalDate, rows: StreamRow
 
 /** Week view split into day chunks; каждый чанк ≤ ~3900 символов. */
 export function formatStreamWeek(intake: number, monday: LocalDate, rows: StreamRow[], info: WeekInfo, today: LocalDate, ownKey: string | null): string[] {
-  const wl = weekLabel(info);
-  const head = `<b>Поток 20${intake} · неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDays(monday, 6))}</b>${wl ? ` · <i>${wl}</i>` : ""}`;
+  const pl = parityLine(info);
+  const head = `<b>Поток 20${intake} · неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDays(monday, 6))}</b>${pl ? `\n${pl}` : ""}`;
   const chunks: string[] = [];
   let current = head;
   for (let i = 0; i < 6; i++) {
     const date = addDays(monday, i);
     const dayRows = rows.filter((r) => r.date === date);
-    const title = `<b>${weekdayName(date)}</b> <i>${fmtDDMM(date)}${date === today ? " · сегодня" : ""}</i>`;
+    const title = `<b>${weekdayName(date)}</b> · <i>${fmtDDMM(date)}${date === today ? " · сегодня" : ""}</i>`;
     const body = dayRows.length ? groupBySlot(dayRows).map((b) => `${b.header}\n${b.rows.map((r) => rowLine(r, ownKey)).join("\n")}`).join("\n") : "   — пар нет";
     const section = `\n\n${title}\n${body}`;
     if (current.length + section.length > 3900) {
