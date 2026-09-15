@@ -40,6 +40,8 @@ export interface Occurrence {
   groups?: string[];
   /** Human hint like "2–16 нед., нечётные" (semester rows only). */
   weeksHint?: string;
+  /** Topic of an online session, from the portal's webinar page (display only, never diffed). */
+  topic?: string;
 }
 
 /** Identity of a lesson inside one day: what "the same lesson" means for diffing. */

@@ -11,6 +11,7 @@ import { startScheduler } from "./scheduler/index.js";
 import { createThemedRenderer } from "./render/themes.js";
 import { AskService } from "./ai/ask.js";
 import { TeacherService } from "./portal/teachers.js";
+import { WebinarService } from "./portal/webinars.js";
 import { NewsScanner } from "./news/scanner.js";
 import type { Deps } from "./bot/context.js";
 import { createHttpServer } from "./http/server.js";
@@ -38,9 +39,11 @@ async function main(): Promise<void> {
         )
       : null;
   if (!teachers) logger.info("teacher schedules disabled: PORTAL_LOGIN/PORTAL_PASSWORD not set");
-  const ask = config.ANTHROPIC_API_KEY ? new AskService(config.ANTHROPIC_API_KEY, service, { model: config.AI_MODEL }, teachers) : null;
+  // The webinar page is guest-readable and is the only source of teacher names without an account.
+  const webinars = new WebinarService(portal, repo, config.FACULTY_ID);
+  const ask = config.ANTHROPIC_API_KEY ? new AskService(config.ANTHROPIC_API_KEY, service, { model: config.AI_MODEL }, teachers, webinars) : null;
 
-  const deps: Deps = { config, repo, service, renderer, ask, teachers, news: null, pending: new Map(), startedAt: new Date() };
+  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, news: null, pending: new Map(), startedAt: new Date() };
   const bot = createBot(deps);
   await bot.init();
   deps.news = config.ANTHROPIC_API_KEY
@@ -50,8 +53,8 @@ async function main(): Promise<void> {
   logger.info({ username: bot.botInfo.username }, "bot authorised");
   await registerCommands(bot, deps);
 
-  const notifier = new Notifier(bot.api, repo, service, renderer, config.ADMIN_IDS);
-  const scheduler = startScheduler({ service, notifier, repo, busyCron: config.POLL_CRON_BUSY, idleCron: config.POLL_CRON_IDLE, newsCron: config.NEWS_SCAN_CRON, news: deps.news });
+  const notifier = new Notifier(bot.api, repo, service, renderer, config.ADMIN_IDS, webinars);
+  const scheduler = startScheduler({ service, notifier, repo, busyCron: config.POLL_CRON_BUSY, idleCron: config.POLL_CRON_IDLE, newsCron: config.NEWS_SCAN_CRON, news: deps.news, teachers, webinars });
 
   // Calendar subscriptions + /health. Pterodactyl hands the allocated port in SERVER_PORT.
   const httpPort = config.HTTP_PORT || config.SERVER_PORT || 0;

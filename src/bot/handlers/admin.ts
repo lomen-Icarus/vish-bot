@@ -46,6 +46,12 @@ function statsText(ctx: BotContext): string {
   return lines.join("\n");
 }
 
+function webinarStats(ctx: BotContext): string {
+  if (!ctx.deps.webinars) return "выкл";
+  const s = ctx.deps.webinars.stats();
+  return `${s.rows} пар за ${s.days} дн., преподавателей ${s.teachers}`;
+}
+
 function healthText(ctx: BotContext): string {
   const deps = ctx.deps;
   const p = deps.repo.lastPollRun();
@@ -65,6 +71,7 @@ function healthText(ctx: BotContext): string {
     `Неделя 1 осень: ${anchor1 ?? "не калибрована"} · весна: ${anchor3 ?? "не калибрована"}`,
     `Групп: ${deps.service.groups().length} · рендер картинок: ${deps.renderer ? "да" : "нет"} · ИИ: ${deps.ask ? deps.config.AI_MODEL : "выкл"} · каналы новостей: ${deps.config.NEWS_CHANNEL_IDS.length} · ИИ-сканер: ${deps.news ? `${deps.repo.listNewsSources(true).length} источн.` : "выкл"}`,
     `Преподаватели: ${deps.teachers ? `учётка есть · в справочнике ${teacherCount}` : "нет учётки (PORTAL_LOGIN/PORTAL_PASSWORD)"}${teacherErr ? ` · последняя ошибка: <code>${esc(teacherErr).slice(0, 200)}</code>` : ""}`,
+    `Вебинары (преподаватели дистанта): ${webinarStats(ctx)}`,
     `Доска объявлений: ${deps.repo.activeAnnouncements().length} активных`,
     `Баннер портала: ${deps.repo.getMeta("banner") ? esc(deps.repo.getMeta("banner")!.slice(0, 120)) : "нет"}`,
   ]

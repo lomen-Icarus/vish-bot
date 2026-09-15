@@ -41,6 +41,12 @@ export function parsePeriod(html: string): Period | null {
   return p === 1 || p === 2 || p === 3 || p === 4 ? p : null;
 }
 
+/**
+ * True only for the portal's own sign-in page. The login inputs (`wname` /
+ * `wpass`) also appear in the "join a webinar" dialog of /webinar, so the
+ * submit buttons of the login form are what actually identify it.
+ */
 export function isLoginPage(html: string): boolean {
-  return html.includes('name="wname"');
+  if (!html.includes('name="wname"')) return false;
+  return html.includes('name="auth"') || html.includes('name="guest"');
 }

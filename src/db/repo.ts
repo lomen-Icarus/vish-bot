@@ -144,6 +144,45 @@ function rowToUser(r: UserRow): User {
   };
 }
 
+/** One online lesson from the portal's webinar page (guest-readable, carries the teacher). */
+export interface WebinarRow {
+  date: LocalDate;
+  slot: number | null;
+  start: number | null;
+  end: number | null;
+  subject: string;
+  type: string;
+  teacher: string;
+  position: string | null;
+  degree: string | null;
+  subgroup: number | null;
+  title: string | null;
+  groups: string[];
+}
+
+function rowToWebinar(r: Record<string, unknown>): WebinarRow {
+  let groups: string[] = [];
+  try {
+    groups = JSON.parse(String(r.groups_json)) as string[];
+  } catch {
+    groups = [];
+  }
+  return {
+    date: String(r.date),
+    slot: r.slot == null ? null : Number(r.slot),
+    start: r.start == null ? null : Number(r.start),
+    end: r.end == null ? null : Number(r.end),
+    subject: String(r.subject),
+    type: String(r.type),
+    teacher: String(r.teacher),
+    position: r.position == null ? null : String(r.position),
+    degree: r.degree == null ? null : String(r.degree),
+    subgroup: r.subgroup == null ? null : Number(r.subgroup),
+    title: r.title == null ? null : String(r.title),
+    groups,
+  };
+}
+
 export interface PortalGroupRow {
   id: number;
   name: string;
@@ -526,6 +565,49 @@ export class Repo {
 
   markReminderSent(userId: number, kind: string, ref: string): void {
     this.db.prepare("INSERT OR IGNORE INTO reminders_sent (user_id, kind, ref, sent_at) VALUES (?, ?, ?, ?)").run(userId, kind, ref, nowIso());
+  }
+
+  // ---- webinars (online lessons; the only guest-readable source of teacher names) ----
+  replaceWebinars(date: LocalDate, rows: WebinarRow[]): void {
+    const ts = nowIso();
+    const insert = this.db.prepare(
+      `INSERT INTO webinars (date, slot, start, "end", subject, type, teacher, position, degree, subgroup, title, groups_json, fetched_at)
+       VALUES (@date, @slot, @start, @end, @subject, @type, @teacher, @position, @degree, @subgroup, @title, @groups, @ts)`,
+    );
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM webinars WHERE date = ?").run(date);
+      for (const r of rows) {
+        insert.run({
+          date: r.date,
+          slot: r.slot,
+          start: r.start,
+          end: r.end,
+          subject: r.subject,
+          type: r.type,
+          teacher: r.teacher,
+          position: r.position,
+          degree: r.degree,
+          subgroup: r.subgroup,
+          title: r.title,
+          groups: JSON.stringify(r.groups),
+          ts,
+        });
+      }
+    })();
+  }
+
+  webinarsBetween(from: LocalDate, to: LocalDate): WebinarRow[] {
+    const rows = this.db.prepare('SELECT * FROM webinars WHERE date >= ? AND date <= ? ORDER BY date, slot, subject').all(from, to) as Array<Record<string, unknown>>;
+    return rows.map(rowToWebinar);
+  }
+
+  webinarDates(): LocalDate[] {
+    return (this.db.prepare("SELECT DISTINCT date FROM webinars ORDER BY date").all() as Array<{ date: string }>).map((r) => r.date);
+  }
+
+  pruneWebinars(olderThanDays = 60): void {
+    const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString().slice(0, 10);
+    this.db.prepare("DELETE FROM webinars WHERE date < ?").run(cutoff);
   }
 
   pruneReminders(olderThanDays = 14): void {

@@ -1,0 +1,378 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ru" lang="ru">
+<head>
+<meta name="HandheldFriendly" content="true" />
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" /><link rel="stylesheet" href="/javascript/jquery-ui-1.10.1/themes/start/jquery-ui.css" type="text/css" media="screen" />
+
+<script type="text/javascript" src="/javascript/jquery-1.12.4/jquery-1.12.4.min.js"></script>
+<script type="text/javascript" src="/javascript/jquery-ui-1.10.1/jquery-ui-1.10.1.custom.js"></script>
+<script type="text/javascript" src="/javascript/jquery-1.9.1/jquery-migrate-1.1.1.js"></script>
+
+<script type="text/javascript" src="/js/jquery.dataTables.min.js"></script>
+<script type="text/javascript" src="/js/uhpv-full.js"></script><link href="/css/site.css" media="screen" rel="stylesheet" type="text/css" />
+<link href="/css/jquery.dataTables.css" media="screen" rel="stylesheet" type="text/css" />
+<link href="/css/highlight.css" media="screen" rel="stylesheet" type="text/css" />
+<link href="/css/special.css" media="screen" rel="stylesheet" type="text/css" /><title>Вебинары</title></head>
+<body style="min-width: 1250px;">
+<div id="logo" style="background-color: white;" class="unspecial">
+<!--    
+    <div id="finevision_banner" onclick="finevision.activate_navbar()" style="cursor: pointer; z-index: 9999; background: rgb(255, 255, 255); border: 2px solid rgb(0, 0, 0); float: right; position: fixed; top: 0px; left: auto; right: 0px;">
+        <img width="128" src="http://finevision.ru/static/banner1.jpg"></div>
+-->
+    <center><a href="https://www.chuvsu.ru" title="www.chuvsu.ru"><img src="/images/logo.jpg" ></a></center>
+</div>
+<div id="banner" style="background-color: lightcoral; border: 2px solid red; color: white; text-align: center; font-size: 30px; margin-top: 5px; margin-bottom: 5px; width: 100%; height: 70px; ">
+ВНИМАНИЕ! Учебные занятия проводятся в смешанном формате с применением дистанционных образовательных технологий
+</div>
+    <table style="width: 100%;"><tr><td align="right"> 
+<div style="float: right; width: 100%; background-color: lightyellow;">Вы вошли как <font id="uname">Гость. </font><a href="/auth/logout">Выйти</a></div>            </td></tr></table>
+    <div id="header">
+    <div style="float: right; background-color: white; margin: 5px 5px;">
+        <a id="specialButton" href="#" >
+            <img src="/images/special.png" alt="ВЕРСИЯ ДЛЯ СЛАБОВИДЯЩИХ" title="ВЕРСИЯ ДЛЯ СЛАБОВИДЯЩИХ" />
+        </a>        
+    </div>    
+<div id="path" class="sbtext">
+<a href="/">Расписание занятий</a> &nbsp;&nbsp;/&nbsp;&nbsp; Вебинары</div>
+</div>
+<div id="content" >
+<style>
+    .ui-widget-overlay {
+        opacity: 30;
+    }
+.htext {font-family: 'Arial'; font-size: 24px; color: #666666;}
+.htextb {font-family: 'Arial'; font-size: 24px; color: #000000;}
+.ui-button.ui-widget .ui-button-text{
+    font-size: 12px;
+}
+.headphone { height: 15px; }
+.want{
+    
+  background: -moz-linear-gradient(45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%),-moz-linear-gradient(-45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%);
+  background: -webkit-linear-gradient(45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%),-webkit-linear-gradient(-45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%);
+  background: -ms-linear-gradient(45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%),-ms-linear-gradient(-45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%);
+  background: linear-gradient(45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%),linear-gradient(-45deg,rgba(0, 0, 0, 0) 48%,rgba(0, 0, 0, 0.2) 50%,rgba(0, 0, 0, 0) 52%);
+  background-size: 1em 1em;
+/*  background-color: #fff; */
+  background-color: lightyellow;
+}    
+
+.trfd {
+}
+</style>
+<div id="ttdiv" style=''>
+<form id="tt" method="post"><table width="100%">
+    <tr><td valign="top">    
+<div style="float: left;">
+<table>
+    <tr>
+        <td class="uname" valign="top">Факультет</td>
+        <td valign="top"><select name="selfac" id="selfac" onchange="submit();" style="width: 500px;">
+    <option value="0">Все</option>
+    <option value="14">Иностранных языков</option>
+    <option value="19">Информатики и вычислительной техники</option>
+    <option value="20">Искусств</option>
+    <option value="10">Историко-географический</option>
+    <option value="7">Машиностроительный</option>
+    <option value="15">Медицинский</option>
+    <option value="2">Прикладной математики, физики и информационных технологий</option>
+    <option value="16">Радиоэлектроники и автоматики</option>
+    <option value="25">Русской и чувашской филологии и журналистики</option>
+    <option value="8">Строительный</option>
+    <option value="17">Управления и социальных технологий</option>
+    <option value="3">Химико-фармацевтический</option>
+    <option value="4">Экономический</option>
+    <option value="24">Энергетики и электротехники</option>
+    <option value="12">Юридический</option>
+    <option value="32" selected="selected">Высшая инженерная школа</option>
+    <option value="21">Алатырский филиал</option>
+    <option value="30">Отдел подготовки и повышения квалификации научно-педагогических кадров</option>
+    <option value="33">Военный учебный центр при ЧувГУ</option>
+    <option value="26">Отдел международного образования УМД</option>
+    <option value="99">Управление</option>
+</select></td>
+        <td width="30px"></td>
+        <td id="uname" valign="top" >Дата: </td>
+        <td valign="top"><select name="seldate" id="seldate" onchange="submit();">
+    <option value="2026-09-15" selected="selected">15 Сентябрь, Вторник</option>
+    <option value="2026-09-16">16 Сентябрь, Среда</option>
+    <option value="2026-09-17">17 Сентябрь, Четверг</option>
+    <option value="2026-09-18">18 Сентябрь, Пятница</option>
+    <option value="2026-09-19">19 Сентябрь, Суббота</option>
+    <option value="2026-09-21">21 Сентябрь, Понедельник</option>
+    <option value="2026-09-22">22 Сентябрь, Вторник</option>
+    <option value="2026-09-23">23 Сентябрь, Среда</option>
+    <option value="2026-09-24">24 Сентябрь, Четверг</option>
+    <option value="2026-09-25">25 Сентябрь, Пятница</option>
+    <option value="2026-09-26">26 Сентябрь, Суббота</option>
+    <option value="2026-09-28">28 Сентябрь, Понедельник</option>
+</select></td>
+    </tr>
+</table>
+<p>
+<hr><p>
+<span class="htext sbtext" style="color: blue;">Вебинары по расписанию (ВО)</span><table id="webstt" width="100%">
+    <thead>
+        <tr>
+            <th width="80">Время
+            </th>
+            <th >Занятия
+            </th>
+        </tr>
+    </thead>
+    <tbody>
+<tr><td class="trf trdata" ><div id="trd2026-09-15t1" class="trfd">1 пара<br>08:20 - 09:40</div></td><td id="td2026-09-15t1" align="left" valign="top" class="trdata"><div id="tdd2026-09-15t1" class="tdd"></div></td></tr><tr><td class="trf trdata" ><div id="trd2026-09-15t2" class="trfd">2 пара<br>09:50 - 11:10</div></td><td id="td2026-09-15t2" align="left" valign="top" class="trdata"><div id="tdd2026-09-15t2" class="tdd"></div></td></tr><tr><td class="trf trdata" ><div id="trd2026-09-15t3" class="trfd">3 пара<br>11:40 - 13:00</div></td><td id="td2026-09-15t3" align="left" valign="top" class="trdata"><div id="tdd2026-09-15t3" class="tdd"><table width="100%" cellspacing="10"><tr><td style="width: 50%; font-size: large;">Безопасность жизнедеятельности(лк) доц.  к.х.н. Иванова К. Ю. ВИШ-11-24 ВИШ-12-24 ВИШ-13-24 ВИШ-14-24 ВИШ-15-24</td><td style="color: blue; font-size: large;">2 Классификация чрезвычайных ситуаций</td><td style="width: 20px;"></td></tr></table></div></td></tr>    </tbody>
+</table>
+    
+<p><hr><p>            
+</div>
+        </td><td valign="top" width="200" style='border-left: 1px solid #e0e0e0;' class="unspecial">
+            <div style='margin-top: 30px;' width="100%"><center>
+        <span  style="color: blue; font-size: 20px;">
+        15 Сентября 2026г.<br />
+        </span>
+        Вторник<br />
+        <p>
+идет 3<sup>*</sup> неделя осеннего семестра        </p>
+        </center>
+        
+    </div>  
+<div style='margin-top: 30px; padding: 20px;' class='want'><center><b>
+Для подключения к вебинару необходим современный браузер, поддерживающий HTML5: 
+<a href="https://www.google.com/chrome/browser/desktop/index.html" target="_blank">Chrome</a>, 
+<a href="https://www.mozilla.org/ru/firefox/new/" target="_blank">FireFox</a>, 
+<a href="https://www.microsoft.com/ru-ru/edge" target="_blank">Edge</a>, 
+<a href="https://browser.yandex.ru/" target="_blank">Yandex</a>
+</b></center></div>
+<div style='margin-top: 30px;' >
+    <ul><b>Полезные ссылки:</b>
+        <li style="margin: 10px 0;"><a href="https://tt.chuvsu.ru/docs/Инструкция_по_управлению_сервером_вебинаров_ЧГУ.pdf" target="_blank">
+            Краткая инструкция по управлению сервером вебинаров ЧГУ
+            </a></li>
+        <li style="margin: 10px 0;"><a href="https://tt.chuvsu.ru/docs/Инструкция_по_работе_на_вебинарной_платформе_ЧГУ.pdf" target="_blank">
+            Инструкция по работе на вебинарной платформе ЧГУ
+            </a></li>
+            <li style="margin: 10px 0;"><a href="https://www.youtube.com/watch?v=duBVsV1_keo" target="_blank">
+                BigBlueButton (обучающее видео)
+            </a></li>
+            <li style="margin: 10px 0;"><a href="https://docs.bigbluebutton.org" target="_blank">
+                Документация проекта
+                </a></li>
+    </ul>
+</div>            
+<div style='margin-top: 30px;' >
+    <ul><b>События:</b>
+        <span style="font-size: small;">
+<li style="margin: 10px 0;">
+            <span class="blue">9 ноября 2021г.</span><br> Зарегистрировано проведение максимального количества вебинаров в день на вебинарной платформе ЧГУ: 564.</li><li style="margin: 10px 0;">
+            <span class="blue">4 ноября 2021г.</span><br> Обновлено программное обеспечение 1-5 и 9 серверов до версии BigBlueButton 2.3.
+Запущен 20 сервер вебинаров.</li><li style="margin: 10px 0;">
+            <span class="blue">3 ноября 2021г.</span><br> Зарегистрировано проведение максимального количества вебинаров в день на вебинарной платформе ЧГУ: 467.</li><li style="margin: 10px 0;">
+            <span class="blue">29 октября 2021г.</span><br> Запущен в работу второй пул из пяти серверов вебинаров на платформе BigBlueButton 2.3 для самостоятельного назначения вебинаров по расписанию преподавателями ЧГУ. Суммарная емкость одновременных подключений на вебинарной платформе ЧГУ достигла 7000 челове</li><li style="margin: 10px 0;">
+            <span class="blue">10 марта 2021г.</span><br> Запущен в работу пул из пяти серверов вебинаров на платформе BigBlueButton 2.2 для самостоятельного назначения вебинаров по расписанию преподавателями ЧГУ.</li><li style="margin: 10px 0;">
+            <span class="blue">24 ноября 2020г.</span><br> Зарегистрировано проведение максимального количества вебинаров в день на вебинарной платформе ЧГУ: 382.</li><li style="margin: 10px 0;">
+            <span class="blue">3 сентября 2020г.</span><br> Запущен в работу восьмой сервер вебинаров ЧГУ на платформе BigBlueButton 2.2 на оборудовании Машиностроительного факультета.</li><li style="margin: 10px 0;">
+            <span class="blue">31 августа 2020г.</span><br> Запущен в работу седьмой сервер вебинаров ЧГУ на платформе BigBlueButton 2.2 на оборудовании Машиностроительного факультета.</li><li style="margin: 10px 0;">
+            <span class="blue">28 августа 2020г.</span><br> Запущен в работу шестой сервер вебинаров ЧГУ на платформе BigBlueButton 2.2 на оборудовании факультета ИВТ.</li><li style="margin: 10px 0;">
+            <span class="blue">19 июня 2020г.</span><br> Запущен в работу пятый сервер вебинаров ЧГУ на платформе BigBlueButton 2.2.</li><li style="margin: 10px 0;">
+            <span class="blue">15 июня 2020г.</span><br> Зарегистрировано проведение максимального количества вебинаров в день на вебинарной платформе ЧГУ: 127.</li><li style="margin: 10px 0;">
+            <span class="blue">29 мая 2020г.</span><br> Запущен в работу четвертый сервер вебинаров ЧГУ на платформе BigBlueButton 2.2. Аппаратная часть - виртуальный сервер, выделенный МСЦ РАН</li><li style="margin: 10px 0;">
+            <span class="blue">20 апреля 2020г.</span><br> Запущен в работу третий сервер вебинаров ЧГУ на платформе BigBlueButton 2.2.</li><li style="margin: 10px 0;">
+            <span class="blue">10 апреля 2020г.</span><br> Запущен в работу второй сервер вебинаров ЧГУ на платформе BigBlueButton 2.2. Создана мультисерверная конфигурация.</li><li style="margin: 10px 0;">
+            <span class="blue">6 апреля 2020г.</span><br> Запущен в работу сервер вебинаров ЧГУ. Используемая платформа серверной части - BigBlueButton 2.2 (Open Source). FrontEnd для управления сервером и интеграции в систему электронного расписания ЧГУ создан самостоятельно.</li>    </span></ul>
+</div>            
+</td></tr>
+</table>    
+<input type="hidden" name="offset" value="0" id="offset" /></form>
+</div>
+<script language="JavaScript">
+var tid=0;    
+var idw=0;    
+var idwt=1;    
+var webw='';
+var offset=;
+
+$(document).ready(function(){
+$( ".headphone" ).button({ text: false, icons: {primary: "ui-icon-power"}});
+        var olang= {
+            "sProcessing":   "Подождите...",
+            "sLengthMenu":   "Показать _MENU_ записей",
+            "sZeroRecords":  "Записи отсутствуют.",
+            "sInfo":         "Записи с _START_ до _END_ из _TOTAL_ записей",
+            "sInfoEmpty":    "Записи с 0 до 0 из 0 записей",
+            "sInfoFiltered": "(отфильтровано из _MAX_ записей)",
+            "sInfoPostFix":  "",
+            "sSearch":       "Поиск:",
+            "sUrl":          "",
+            "oPaginate": {         "sFirst": "Первая",
+                             "sPrevious": "Предыдущая",
+                             "sNext": "Следующая",
+                             "sLast": "Последняя"
+            }
+         };
+    $('#webstt').dataTable({
+        "bjQueryUI":false,
+        "bPaginate":false,
+        "bFilter":false,
+        "bInfo":false,
+        "sScrollX": "100%",
+        "bScrollCollapse":  true,
+        "bSort": false,
+        "oLanguage": olang
+    });
+    $('#webstt2').dataTable({
+        "bjQueryUI":false,
+        "bPaginate":false,
+        "bFilter":false,
+        "bInfo":false,
+        "sScrollX": "100%",
+        "bScrollCollapse":  true,
+        "bSort": false,
+        "oLanguage": olang
+    });
+    $('#websttext').dataTable({
+        "bjQueryUI":false,
+        "bPaginate":false,
+        "bFilter":false,
+        "bInfo":false,
+        "sScrollX": "100%",
+        "bScrollCollapse":  true,
+        "bSort": false,
+        "oLanguage": olang
+    });
+    $('#websttsub').dataTable({
+        "bjQueryUI":false,
+        "bPaginate":false,
+        "bFilter":false,
+        "bInfo":false,
+        "sScrollX": "100%",
+        "bScrollCollapse":  true,
+        "bSort": false,
+        "oLanguage": olang
+    });
+    $("#joindialog").dialog({
+        autoOpen: false,
+        draggable: false,
+        modal: true,
+        resizable: false,
+        closeOnEscape: true,
+        width: 600,
+        title: "Подключение к вебинару",
+        buttons: [
+            { text: "Подключиться", click: function() { getjoin();} },
+            { text: "Вернуться", click: function() { $( this ).dialog( "close" );tid=setInterval('offs();$("#tt").submit();', 60000); } }
+        ]
+    });
+tid=setInterval('offs();$("#tt").submit();', 60000);
+$(document).scrollTop(offset);
+});
+
+function offs() {
+   $('#offset').val($(document).scrollTop());
+}
+
+
+function jointo(id, idt) {
+    clearInterval(tid);
+    idw=id;
+    idwt=idt;
+    $("#wauto").val(0);
+    $("#wauto option[value=1]").removeAttr('disabled');
+    $("#wname").val('');
+    $("#wpass").val('');
+    $(".terror").hide();
+    $("#errtext").empty();
+    selauto();
+    $("#joindialog").dialog("open");
+}    
+    
+function jointosub(id, idt) {
+    clearInterval(tid);
+    idw=id;
+    idwt=idt;
+    $("#wauto").val(0);
+    $("#wauto option[value=1]").attr('disabled', 'disabled');
+    $("#wname").val('');
+    $("#wpass").val('');
+    $(".terror").hide();
+    $("#errtext").empty();
+    selauto();
+    $("#joindialog").dialog("open");
+}    
+    
+function selauto() {
+    var auto=$("#wauto").val();
+    $(".auto").hide();
+    $(".auto"+auto).show();
+}    
+    
+    
+function getjoin() {
+    $('body').css('cursor','progress');
+    var name=$("#wname").val();
+    var pass=$("#wpass").val();
+    var auto=$("#wauto").val();
+    $(".terror").hide();
+    $("#errtext").empty();
+    $.ajax({ type: "POST",
+            url: "/webinar/getjoin",
+            async: false,
+            cache: false,
+            success: function(data) {
+                var pardata = jQuery.parseJSON(data);
+                $('body').css('cursor','default');
+                if (pardata['mes']=='SUCCESS') {
+                    if (pardata['url'].substring(0,4)=='http') {
+                        $("#joindialog").dialog("close");
+//                        if (webw) webw.close();webw=window.open(pardata['url'],'cweb');webw.focus();
+                        window.location.href=pardata['url'];
+                    }
+                    else {
+                    $(".terror").show();
+                    $("#errtext").html(pardata['mes']);
+                    }    
+                } else {
+                    $(".terror").show();
+                    $("#errtext").html(pardata['mes']);
+                    if (pardata['auto']==1) {
+                        $("#wauto").val(1);
+                        $("#wname").val('');
+                        $("#wpass").val('');
+                        $(".auto").hide();
+                        $(".auto1").show();
+                    }    
+                }    
+                     },
+            data: {idw: idw, idwt: idwt, name: name, pass: pass, auto: auto}
+    });
+}
+
+</script>
+
+<div id="joindialog"><table cellspacing="20"><tr class="nshow"><td class="uname">Авторизация: </td><td><select name="wauto" id="wauto" onchange="selauto();">
+    <option value="0" selected="selected">Слушатель (сервер вебинаров)</option>
+    <option value="1">Обучающийся (сервер &quot;Портфолио&quot;)</option>
+    <option value="4">Преподаватель (сервер &quot;БРС&quot;)</option>
+    <option value="2">Сотрудник (Служебный Портал)</option>
+</select></td></tr><tr><td colspan="2"><hr></td></tr><tr ><td class="uname"><span class="auto auto0">Полное имя:</span><span class="auto auto1">E-mail:</span><span class="auto auto2">Логин:</span><span class="auto auto4">E-mail:</span></td><td><input type="text" name="wname" id="wname" value="" size="30" /></td></tr><tr ><td class="uname">Пароль: </td><td><input type="password" name="wpass" id="wpass" value="" size="30" /></td></tr><tr class="terror"><td colspan="2"><hr></td></tr><tr class="terror"><td colspan="2"><div id="errtext" style="color: red; "></div></td></tr></table></div>
+</div>
+<div id="footer">
+<div id='footmessage'>
+© ФГБОУ ВО «ЧГУ им. И.Н. Ульянова»</div>
+</div>
+<!-- Top.Mail.Ru counter -->
+<script type="text/javascript">
+var _tmr = window._tmr || (window._tmr = []);
+_tmr.push({id: "3607308", type: "pageView", start: (new Date()).getTime()});
+(function (d, w, id) {
+  if (d.getElementById(id)) return;
+  var ts = d.createElement("script"); ts.type = "text/javascript"; ts.async = true; ts.id = id;
+  ts.src = "https://top-fwz1.mail.ru/js/code.js";
+  var f = function () {var s = d.getElementsByTagName("script")[0]; s.parentNode.insertBefore(ts, s);};
+  if (w.opera == "[object Opera]") { d.addEventListener("DOMContentLoaded", f, false); } else { f(); }
+})(document, window, "tmr-code");
+</script>
+<noscript><div><img src="https://top-fwz1.mail.ru/counter?id=3607308;js=na" style="position:absolute;left:-9999px;" alt="Top.Mail.Ru" /></div></noscript>
+<!-- /Top.Mail.Ru counter -->
+</body>
+</html>
+

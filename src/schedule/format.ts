@@ -71,6 +71,7 @@ export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   if (o.subgroup) meta.push(`${o.subgroup} подгр.`);
   if (o.groups?.length) meta.push(o.groups.map(esc).join(", "));
   lines.push(`     ${meta.join(" · ")}`);
+  if (o.topic && o.isDistance) lines.push(`     📝 ${esc(o.topic.length > 90 ? o.topic.slice(0, 87).trimEnd() + "…" : o.topic)}`);
   if (moved && o.movedTo) lines.push(`     ↪️ перенесена на ${fmtDDMM(o.movedTo.date)}${o.movedTo.slot ? ` (${o.movedTo.slot} пара)` : ""}`);
   if (o.movedFrom) lines.push(`     ↩️ перенос с ${fmtDDMM(o.movedFrom.date)} (${o.movedFrom.slot} пара)`);
   if (o.substituted) {
@@ -143,6 +144,28 @@ function when(o: Occurrence): string {
   const slot = o.slot != null ? `${o.slot} пара` : "";
   const time = timeRange(o);
   return `${fmtDDMM(o.date)} (${weekdayShort(o.date)})${slot ? `, ${slot}` : ""}${time ? ` ${time}` : ""}`;
+}
+
+/** Teacher card built from the portal's webinar page (works without an account). */
+export function formatWebinarTeacher(t: { name: string; position: string | null; degree: string | null; subjects: string[]; groups: string[] }, upcoming: Array<{ date: LocalDate; slot: number | null; start: number | null; end: number | null; subject: string; type: string; groups: string[]; title: string | null }>, hasFullSchedule: boolean): string {
+  const title = [t.position, t.degree].filter(Boolean).join(", ");
+  const lines = [`👨‍🏫 <b>${esc(t.name)}</b>${title ? ` <i>${esc(title)}</i>` : ""}`, ""];
+  lines.push(`<b>Ведёт:</b> ${t.subjects.map(esc).join(", ")}`);
+  if (t.groups.length) lines.push(`<b>Группы:</b> ${t.groups.map(esc).join(", ")}`);
+  if (upcoming.length) {
+    lines.push("", "<b>Ближайшие онлайн-пары</b>");
+    for (const l of upcoming) {
+      const when = `${weekdayName(l.date).slice(0, 2).toLowerCase()} ${fmtDDMM(l.date)}`;
+      const time = l.start != null ? ` · <code>${fmtHHMM(l.start)}${l.end != null ? `–${fmtHHMM(l.end)}` : ""}</code>` : "";
+      lines.push(`${when}${time}${l.slot ? ` · ${l.slot} пара` : ""} — <b>${esc(l.subject)}</b> (${lessonTypeLabel(l.type)})`);
+      if (l.groups.length) lines.push(`     ${esc(l.groups.join(", "))}`);
+      if (l.title) lines.push(`     📝 ${esc(l.title.length > 90 ? l.title.slice(0, 87).trimEnd() + "…" : l.title)}`);
+    }
+  } else {
+    lines.push("", "<i>Ближайших онлайн-пар нет.</i>");
+  }
+  if (!hasFullSchedule) lines.push("", "<i>Это данные со страницы вебинаров портала: очные пары преподавателя портал показывает только авторизованным.</i>");
+  return lines.join("\n");
 }
 
 export function formatChangeEvent(e: ChangeEvent): string {
