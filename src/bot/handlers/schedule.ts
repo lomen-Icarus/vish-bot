@@ -220,8 +220,9 @@ export function changesText(ctx: BotContext): { text: string; hasEvents: boolean
   const board = ctx.deps.repo.activeAnnouncements();
   if (board.length) {
     const items = board.map((a) => {
-      const ago = Math.max(1, Math.round((Date.now() - Date.parse(a.createdAt)) / 3_600_000));
-      return `• ${esc(a.text.length > 400 ? a.text.slice(0, 390).trimEnd() + "…" : a.text)}\n   <i>${ago} ч назад</i>`;
+      const minutes = Math.round((Date.now() - Date.parse(a.createdAt)) / 60_000);
+      const ago = minutes < 60 ? (minutes < 5 ? "только что" : `${minutes} мин назад`) : `${Math.round(minutes / 60)} ч назад`;
+      return `• ${esc(a.text.length > 400 ? a.text.slice(0, 390).trimEnd() + "…" : a.text)}\n   <i>${ago}</i>`;
     });
     parts.push(`📌 <b>Объявления ВИШ</b>\n\n${items.join("\n\n")}`);
   }

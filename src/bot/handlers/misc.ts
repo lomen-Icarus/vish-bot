@@ -182,7 +182,8 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   }
 
   if (!parts.length) {
-    await ctx.reply(`По «${esc(query)}» ничего не нашёл. Попробуй короче: номер группы, часть названия предмета или фамилию.`, { parse_mode: "HTML" });
+    const noAccount = !deps.teachers ? " Преподавателей бот пока знает только по дистанционным парам: полный справочник портал отдаёт лишь авторизованным." : "";
+    await ctx.reply(`По «${esc(query)}» ничего не нашёл. Попробуй короче: номер группы, часть названия предмета или фамилию.${noAccount}`, { parse_mode: "HTML" });
     return;
   }
   await ctx.reply(`🔍 <b>Поиск: ${esc(query)}</b>\n\n${parts.join("\n\n")}`, { parse_mode: "HTML", reply_markup: buttons ? kb : undefined });

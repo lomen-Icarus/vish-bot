@@ -167,7 +167,10 @@ export function streamDayNav(date: LocalDate, today: LocalDate, opts: { image: b
   if (opts.groups?.length) {
     kb.row();
     // A new message: the stream screen stays where it is.
-    for (const g of opts.groups) kb.text(String(g.number) + (g.title.includes("(") ? ` ${groupLabel(g).split(" ").slice(1).join(" ").slice(0, 5)}` : ""), `pdn:${g.key}:${date}`);
+    for (const g of opts.groups) {
+      const qualifier = /\((.*?)\)/.exec(g.title)?.[1]?.trim();
+      kb.text(qualifier ? `${g.number} ${qualifier}` : String(g.number), `pdn:${g.key}:${date}`);
+    }
   }
   return kb;
 }
