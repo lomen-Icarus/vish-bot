@@ -12,7 +12,8 @@ import { fmtDDMM, todayMsk } from "../../time.js";
 export const calendarHandlers = new Composer<BotContext>();
 
 function subscriptionsEnabled(ctx: BotContext): boolean {
-  return !!ctx.deps.config.PUBLIC_URL && (ctx.deps.config.HTTP_PORT > 0 || (ctx.deps.config.SERVER_PORT ?? 0) > 0);
+  // A busy port or a failed listen() must not leave the bot handing out dead links.
+  return !!ctx.deps.config.PUBLIC_URL && ctx.deps.http?.listening === true;
 }
 
 export function calendarKeyboard(ctx: BotContext): InlineKeyboard {
