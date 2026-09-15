@@ -70,14 +70,19 @@ export function teacherMatchScore(name: string, query: string): number {
         bestIdx = i;
       }
     });
-    if (best === 0) return 0; // every query word must match something
+    if (best === 0) {
+      // An extra word the entry does not have ("преподаватель Иванова") costs a
+      // point instead of killing the match outright.
+      score -= 1;
+      continue;
+    }
     used.add(bestIdx);
     score += best;
     // Matching an initial (a one-letter name word) never counts as substantive,
     // even when it is exact: "к ю" must not match every "… К. Ю." in the directory.
     if (best >= 2 && qw.length >= 2 && (n[bestIdx]?.length ?? 0) >= 2) substantive = true;
   }
-  if (!substantive) return 0;
+  if (!substantive || score <= 0) return 0;
   if (q.length === 1 && q[0]!.length >= 3 && surname.startsWith(q[0]!)) score += 2;
   return score;
 }
@@ -133,25 +138,29 @@ export class TeacherService {
       .filter((x) => x.s > 0)
       .sort((a, b) => b.s - a.s || a.t.name.localeCompare(b.t.name, "ru"));
     if (scored.length) return scored.slice(0, limit).map((x) => x.t);
-    // Portal search understands surnames only: try the longest word (usually the surname).
-    const surname = norm(q)
-      .split(" ")
-      .sort((a, b) => b.length - a.length)[0]!;
-    try {
-      const found = await this.portal.searchTeachers(surname);
-      if (found.length) {
+    // The portal search box understands a surname. People type it first
+    // ("Троишестова Дарья"), so try that word first and only then the others,
+    // longest first, until the portal returns something.
+    const words = norm(q).split(" ").filter((w) => w.length >= 3);
+    const candidates = [...new Set([words[0], ...words.slice(1).sort((a, b) => b.length - a.length)].filter(Boolean) as string[])];
+    for (const word of candidates) {
+      try {
+        const found = await this.portal.searchTeachers(word);
+        if (!found.length) continue;
         // Remember them so the next lookup is local.
         const merged = [...dir];
         for (const f of found) if (!merged.some((t) => t.id === f.id)) merged.push(f);
         this.repo.setMeta("teachers:list", JSON.stringify(merged));
+        const rescored = found.map((t) => ({ t, s: teacherMatchScore(t.name, q) })).sort((a, b) => b.s - a.s);
+        const hits = rescored.filter((x) => x.s > 0);
+        return (hits.length ? hits : rescored).slice(0, limit).map((x) => x.t);
+      } catch (err) {
+        this.repo.setMeta("teachers:lastError", String(err).slice(0, 300));
+        logger.warn({ err: String(err), word }, "portal teacher search failed");
+        return [];
       }
-      const rescored = found.map((t) => ({ t, s: teacherMatchScore(t.name, q) })).sort((a, b) => b.s - a.s);
-      return (rescored.some((x) => x.s > 0) ? rescored.filter((x) => x.s > 0) : rescored).slice(0, limit).map((x) => x.t);
-    } catch (err) {
-      this.repo.setMeta("teachers:lastError", String(err).slice(0, 300));
-      logger.warn({ err: String(err) }, "portal teacher search failed");
-      return [];
     }
+    return [];
   }
 
   async byId(id: number): Promise<TeacherRef | null> {

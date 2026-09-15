@@ -24,9 +24,6 @@ const RULE_SOFT = "#e4dfd3";
 const ACCENT = { odd: "#ff5a1f", even: "#1d3fd6", none: INK } as const;
 const PARITY_LABEL = { odd: "НЕЧЁТНАЯ", even: "ЧЁТНАЯ" } as const;
 
-/** Weekday marks: small squares next to the weekday name (1 = Mon ... 7 = Sun). */
-const WEEKDAY_MARK = ["", "#1d3fd6", "#2f855a", "#b7791f", "#c2415a", "#6b46c1", "#0f8a8a", "#7a7468"];
-
 function typeColor(type: string): string {
   const t = type.replace(/\.$/, "").toLowerCase();
   if (t === "лк") return "#2b6cb0";
@@ -51,17 +48,17 @@ function rule(color = RULE, thickness = 1, style: Style = {}): El {
   return h("div", { display: "flex", width: "100%", height: thickness, backgroundColor: color, ...style });
 }
 
-/** Small-caps style label with tracking. */
+/** Small-caps style label with tracking. Never below the 22px legibility floor. */
 function label(s: string, style: Style = {}): El {
-  return text(up(s), { fontSize: 19, fontWeight: 600, letterSpacing: 2.5, color: MUTED, ...style });
+  return text(up(s), { fontSize: 22, fontWeight: 600, letterSpacing: 2.2, color: MUTED, ...style });
 }
 
 /** Outlined (or filled) square-cornered tag. */
 function tag(s: string, color: string, filled = false, style: Style = {}): El {
   return h(
     "div",
-    { display: "flex", border: `2px solid ${color}`, backgroundColor: filled ? color : "transparent", padding: "5px 11px 4px 11px", marginRight: 10, marginTop: 8, ...style },
-    text(up(s), { fontSize: 17, fontWeight: 700, letterSpacing: 1.8, color: filled ? PAPER : color, lineHeight: 1.1 }),
+    { display: "flex", border: `2px solid ${color}`, backgroundColor: filled ? color : "transparent", padding: "6px 12px 5px 12px", marginRight: 10, marginTop: 8, ...style },
+    text(up(s), { fontSize: 23, fontWeight: 700, letterSpacing: 1.6, color: filled ? PAPER : color, lineHeight: 1.1 }),
   );
 }
 
@@ -88,12 +85,11 @@ function masthead(right: string): El {
   );
 }
 
-function hero(word: string, subline: unknown[], accent: string, trailing?: El): El {
+function hero(word: string, subline: unknown[], trailing?: El): El {
   return col(
-    { width: "100%", marginTop: 26 },
+    { width: "100%", marginTop: 26, paddingBottom: 26 },
     row({ width: "100%", justifyContent: "space-between", alignItems: "flex-end" }, text(up(word), { fontSize: 108, fontWeight: 800, letterSpacing: -4.5, lineHeight: 0.95, color: INK }), trailing ?? null),
     row({ width: "100%", alignItems: "center", marginTop: 18 }, ...subline),
-    h("div", { display: "flex", width: 120, height: 6, backgroundColor: accent, marginTop: 22 }),
   );
 }
 
@@ -133,7 +129,7 @@ function footer(left: string, right: string): El {
   return col(
     { width: "100%", marginTop: 34 },
     rule(INK, 3),
-    row({ width: "100%", justifyContent: "space-between", alignItems: "center", paddingTop: 16 }, label(left, { color: INK }), text(right, { fontSize: 21, fontWeight: 500, color: MUTED })),
+    row({ width: "100%", justifyContent: "space-between", alignItems: "center", paddingTop: 16 }, label(left, { color: INK }), text(right, { fontSize: 22, fontWeight: 500, color: MUTED })),
   );
 }
 
@@ -144,20 +140,24 @@ function page(children: unknown[]): El {
 // ---------- day rows ----------
 const TIME_COL = 172;
 
-function timeColumn(start: number | null, end: number | null, slot: number | null, opts: { faded?: boolean } = {}): El {
+/**
+ * Time column. The "сейчас" tag always lives here (day and stream alike) so the
+ * marker sits next to the clock it refers to rather than under the subject.
+ */
+function timeColumn(start: number | null, end: number | null, slot: number | null, opts: { faded?: boolean; nowAccent?: string } = {}): El {
   const c = opts.faded ? MUTED : INK;
   return col(
-    { width: TIME_COL, flexShrink: 0 },
+    { width: TIME_COL, flexShrink: 0, alignItems: "flex-start" },
     text(start != null ? fmtHHMM(start) : "—", { fontSize: 42, fontWeight: 700, color: c, lineHeight: 1, letterSpacing: -1 }),
     text(end != null ? fmtHHMM(end) : "", { fontSize: 24, fontWeight: 400, color: MUTED, marginTop: 8, lineHeight: 1 }),
-    slot != null ? label(`${slot} пара`, { marginTop: 14, fontSize: 17 }) : null,
+    slot != null ? label(`${slot} пара`, { marginTop: 14 }) : null,
+    opts.nowAccent ? tag("сейчас", opts.nowAccent, true, { marginTop: 14, marginRight: 0 }) : null,
   );
 }
 
 function lessonRow(o: Occurrence, accent: string, ongoing: boolean): El {
   const moved = o.status === "moved";
   const badges: El[] = [];
-  if (ongoing) badges.push(tag("сейчас", accent, true));
   if (moved && o.movedTo) badges.push(tag(`перенесена на ${ddmm(o.movedTo.date)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, MUTED));
   if (o.movedFrom) badges.push(tag(`перенос с ${ddmm(o.movedFrom.date)}`, accent));
   if (o.substituted) badges.push(tag("замена", "#d1495b"));
@@ -170,7 +170,7 @@ function lessonRow(o: Occurrence, accent: string, ongoing: boolean): El {
   return row(
     { width: "100%", position: "relative", padding: "24px 0 26px 0", borderTop: `1px solid ${RULE}`, opacity: moved ? 0.55 : 1 },
     ongoing ? marginBar(accent) : null,
-    timeColumn(o.start, o.end, o.slot, { faded: moved }),
+    timeColumn(o.start, o.end, o.slot, { faded: moved, nowAccent: ongoing ? accent : undefined }),
     col(
       { flex: 1, minWidth: 0 },
       text(o.subject, { fontSize: 36, fontWeight: 700, color: INK, lineHeight: 1.15, letterSpacing: -0.8, textDecoration: moved ? "line-through" : "none" }),
@@ -185,7 +185,7 @@ function gapRow(minutes: number): El {
   const s = minutes >= 60 ? `окно ${Math.floor(minutes / 60)} ч${minutes % 60 ? ` ${minutes % 60} мин` : ""}` : `перерыв ${minutes} мин`;
   return row(
     { width: "100%", alignItems: "center", paddingLeft: TIME_COL, paddingTop: 4, paddingBottom: 4 },
-    label(s, { fontSize: 16, marginRight: 18 }),
+    label(s, { marginRight: 18 }),
     h("div", { display: "flex", flex: 1, height: 1, backgroundColor: RULE_SOFT }),
   );
 }
@@ -223,7 +223,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       const body = list.length ? rows : [emptyBlock("Пар нет", "свободный день — можно выспаться")];
       const tree = page([
         masthead(group.title),
-        hero(weekdayName(date), dateSubline(date, today, accent), accent),
+        hero(weekdayName(date), dateSubline(date, today, accent)),
         parityBand(weekInfo),
         col({ width: "100%", marginTop: 22 }, ...body),
         footer(active.length ? `${active.length} ${pluralPairs(active.length)}${span ? ` · ${span}` : ""}` : "", clock(now)),
@@ -242,7 +242,8 @@ export async function createRenderer(): Promise<Renderer | null> {
         const list = filterSubgroup(byDate.get(date) ?? [], subgroup);
         const scheduled = list.filter((o) => o.status === "scheduled").length;
         const isToday = date === today;
-        const mark = WEEKDAY_MARK[i + 1] ?? MUTED;
+        // One accent only: the weekday mark is ink, and turns accent for today.
+        const mark = isToday ? accent : INK;
         const rows = list.length
           ? list.map((o) => {
               const moved = o.status === "moved";
@@ -253,15 +254,18 @@ export async function createRenderer(): Promise<Renderer | null> {
                 col(
                   { flex: 1, minWidth: 0 },
                   text(o.subject, { fontSize: 27, fontWeight: 600, color: INK, lineHeight: 1.2, letterSpacing: -0.4, textDecoration: moved ? "line-through" : "none" }),
-                  row({ flexWrap: "wrap", alignItems: "center", marginTop: 5 }, typeMark(o.type, 21, INK2), text(extra.join(" · "), { fontSize: 21, fontWeight: 400, color: MUTED })),
+                  row({ flexWrap: "wrap", alignItems: "center", marginTop: 6 }, typeMark(o.type, 23, MUTED), text(extra.join(" · "), { fontSize: 23, fontWeight: 500, color: INK2 })),
                 ),
               );
             })
           : [row({ width: "100%", padding: "12px 0 8px 0", borderTop: `1px solid ${RULE_SOFT}` }, text("пар нет", { fontSize: 24, fontWeight: 400, color: MUTED, marginLeft: 112 }))];
         sections.push(
           col(
-            { width: "100%", position: "relative", marginTop: 22, paddingBottom: 6, borderTop: `3px solid ${INK}`, backgroundColor: isToday ? accent + "14" : "transparent" },
+            // The ink rule is a child, not a border, so the today tint and the
+            // margin bar start and end on exactly the same line.
+            { width: "100%", position: "relative", marginTop: 22, paddingBottom: 12, backgroundColor: isToday ? accent + "14" : "transparent" },
             isToday ? marginBar(accent) : null,
+            rule(INK, 3),
             row(
               { width: "100%", alignItems: "center", justifyContent: "space-between", padding: "16px 0 12px 0" },
               row(
@@ -271,7 +275,7 @@ export async function createRenderer(): Promise<Renderer | null> {
                 text(fmtDayMonth(date), { fontSize: 24, fontWeight: 400, color: MUTED, marginLeft: 36, lineHeight: 1 }),
                 isToday ? tag("сегодня", accent, true, { marginLeft: 20, marginTop: 0 }) : null,
               ),
-              scheduled ? label(`${scheduled} ${pluralPairs(scheduled)}`, { fontSize: 17 }) : null,
+              scheduled ? label(`${scheduled} ${pluralPairs(scheduled)}`) : null,
             ),
             ...rows,
           ),
@@ -280,7 +284,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       const weekNo = weekInfo.week != null ? text(String(weekInfo.week).padStart(2, "0"), { fontSize: 108, fontWeight: 800, letterSpacing: -4.5, lineHeight: 0.95, color: accent }) : undefined;
       const tree = page([
         masthead(group.title),
-        hero("Неделя", [text(`${fmtDayMonth(monday)} — ${fmtDayMonth(sunday)}`, { fontSize: 34, fontWeight: 500, color: INK, letterSpacing: -0.5 })], accent, weekNo),
+        hero("Неделя", [text(`${fmtDayMonth(monday)} – ${fmtDayMonth(sunday)}`, { fontSize: 34, fontWeight: 500, color: INK, letterSpacing: -0.5 })], weekNo),
         parityBand(weekInfo),
         col({ width: "100%", marginTop: 8 }, ...sections),
         footer(`${group.title}${subgroup ? ` · ${subgroup} подгруппа` : ""}`, "tt.chuvsu.ru"),
@@ -303,7 +307,7 @@ export async function createRenderer(): Promise<Renderer | null> {
         return row(
           { width: "100%", position: "relative", padding: "22px 0 24px 0", borderTop: `1px solid ${RULE}` },
           ongoing ? marginBar(accent) : null,
-          col({ width: TIME_COL, flexShrink: 0 }, timeColumn(s.start, s.end, s.slot), ongoing ? tag("сейчас", accent, true, { marginTop: 14, alignSelf: "flex-start" }) : null),
+          timeColumn(s.start, s.end, s.slot, { nowAccent: ongoing ? accent : undefined }),
           col(
             { flex: 1, minWidth: 0 },
             ...s.rows.map((r, i) => {
@@ -316,8 +320,10 @@ export async function createRenderer(): Promise<Renderer | null> {
                   ...r.groups.map((g) =>
                     h(
                       "div",
-                      { display: "flex", border: `2px solid ${r.mine ? accent : RULE}`, backgroundColor: r.mine ? accent : "transparent", padding: "4px 10px 3px 10px", marginRight: 8, marginBottom: 8 },
-                      text(g, { fontSize: 18, fontWeight: 700, letterSpacing: 1, color: r.mine ? PAPER : MUTED, lineHeight: 1.1 }),
+                      // Group chips are the primary navigation of this poster:
+                      // 24px, and the outlined ones get an ink-grey stroke.
+                      { display: "flex", border: `2px solid ${r.mine ? accent : MUTED}`, backgroundColor: r.mine ? accent : "transparent", padding: "5px 12px 4px 12px", marginRight: 8, marginBottom: 8 },
+                      text(g, { fontSize: 24, fontWeight: 700, letterSpacing: 0.8, color: r.mine ? PAPER : INK2, lineHeight: 1.15 }),
                     ),
                   ),
                 ),
@@ -331,7 +337,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       const body = blocks.length ? blocks : [emptyBlock("Пар нет", "у потока сегодня свободный день")];
       const tree = page([
         masthead(`Поток 20${intake}`),
-        hero(weekdayName(date), dateSubline(date, today, accent), accent),
+        hero(weekdayName(date), dateSubline(date, today, accent)),
         parityBand(weekInfo),
         col({ width: "100%", marginTop: 22 }, ...body),
         footer(rows.some((r) => r.mine) ? "выделена твоя группа" : "", clock(now)),

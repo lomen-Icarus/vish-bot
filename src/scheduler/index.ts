@@ -44,6 +44,8 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       try {
         const sent = await opts.notifier.tickReminders();
         if (sent) logger.info({ sent }, "reminders sent");
+        const backlog = await opts.notifier.flushQuietBacklog();
+        if (backlog) logger.info({ backlog }, "quiet-hours change backlog delivered");
       } catch (err) {
         logger.error({ err }, "reminder tick failed");
       }

@@ -8,7 +8,7 @@ import type { LogicalGroup } from "./groups.js";
 import type { Occurrence } from "./model.js";
 import type { ChangeEvent } from "./diff.js";
 import { filterSubgroup } from "./format.js";
-import { buildIcs } from "./ics.js";
+import { buildIcs, icsUid } from "./ics.js";
 import { addDays, todayMsk, type LocalDate } from "../time.js";
 
 /** Semester end (plus session tail) capped at 150 days ahead. */
@@ -27,10 +27,10 @@ export interface GroupCalendar {
 }
 
 /** Full calendar of a group from today to the end of the semester. */
-export function groupCalendar(service: ScheduleService, group: LogicalGroup, opts: { subgroup: number | null; alarmMinutes: number | null; now?: Date; refreshInterval?: string; today?: LocalDate }): GroupCalendar {
+export function groupCalendar(service: ScheduleService, group: LogicalGroup, opts: { subgroup: number | null; alarmMinutes: number | null; now?: Date; refreshInterval?: string; stableSequence?: boolean; today?: LocalDate }): GroupCalendar {
   const { from, to } = calendarWindow(service, opts.today);
   const lessons = filterSubgroup(service.materialize(group, from, to), opts.subgroup);
-  const ics = buildIcs({ name: group.title, lessons, alarmMinutes: opts.alarmMinutes, now: opts.now, refreshInterval: opts.refreshInterval });
+  const ics = buildIcs({ name: group.title, lessons, alarmMinutes: opts.alarmMinutes, now: opts.now, refreshInterval: opts.refreshInterval, stableSequence: opts.stableSequence });
   return { ics, count: lessons.filter((o) => o.status === "scheduled").length, from, to };
 }
 
@@ -40,25 +40,34 @@ export function groupCalendar(service: ScheduleService, group: LogicalGroup, opt
  * fixes exactly those events in a calendar that already has the full export.
  */
 export function changesCalendar(group: LogicalGroup, events: ChangeEvent[], opts: { subgroup: number | null; alarmMinutes: number | null; now?: Date }): { ics: string; live: number; cancelled: number } {
-  const live: Occurrence[] = [];
-  const cancelled: Occurrence[] = [];
+  // Events arrive oldest first. A lesson can change several times (room A → B → C),
+  // and a position can even be cancelled and restored, so the newest event for a
+  // position is the one that must end up in the file.
+  const byUid = new Map<string, { o: Occurrence; cancelled: boolean }>();
+  const put = (o: Occurrence | undefined, cancelled: boolean) => {
+    if (!o) return;
+    byUid.set(icsUid(o), { o, cancelled });
+  };
   for (const e of events) {
     switch (e.kind) {
       case "added":
-        if (e.after) live.push(e.after);
+        put(e.after, false);
         break;
       case "removed":
-        if (e.before) cancelled.push(e.before);
+        put(e.before, true);
         break;
       case "changed":
-        if (e.after) (e.after.status === "moved" ? cancelled : live).push(e.after);
+        put(e.after, e.after?.status === "moved");
         break;
       case "moved":
-        if (e.before) cancelled.push(e.before);
-        if (e.after) live.push(e.after);
+        put(e.before, true);
+        put(e.after, false);
         break;
     }
   }
+  const live: Occurrence[] = [];
+  const cancelled: Occurrence[] = [];
+  for (const { o, cancelled: isCancelled } of byUid.values()) (isCancelled ? cancelled : live).push(o);
   const liveF = filterSubgroup(live, opts.subgroup);
   const cancelledF = filterSubgroup(cancelled, opts.subgroup);
   const ics = buildIcs({ name: group.title, lessons: liveF, cancelled: cancelledF, alarmMinutes: opts.alarmMinutes, now: opts.now });

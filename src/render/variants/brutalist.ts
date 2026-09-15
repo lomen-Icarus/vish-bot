@@ -77,12 +77,41 @@ function relDate(date: LocalDate, today: LocalDate): string {
   return date === today ? "сегодня" : date === addDays(today, 1) ? "завтра" : date === addDays(today, -1) ? "вчера" : "";
 }
 
+/** Rough advance width of uppercase Inter 800 (satori gives no measuring API). Deliberately over-estimates. */
+function approxWidth(s: string, size: number, letterSpacing = 0): number {
+  return s.length * (size * 0.62 + letterSpacing);
+}
+
+/** Inner content width of the header block (page minus padding, shadow, border and block padding). */
+const HEADER_INNER = W - 2 * PAD - SHADOW - 2 * BORDER - 60;
+
+/**
+ * Pick font sizes for the header date line + group chip so a long group title
+ * ("ВИШ-11-23 (РЗИАЭС)") next to a long date range cannot overflow the block.
+ * Every step stays above the 22 px legibility floor.
+ */
+function headerRowSizes(dateLine: string, rel: string | undefined, groupTitle: string): { date: number; chip: number } {
+  const relW = rel ? approxWidth(up(rel), 24, 2) + 28 + 16 : 0;
+  for (const [date, chip] of [
+    [38, 32],
+    [34, 30],
+    [32, 28],
+    [30, 26],
+    [28, 24],
+  ] as const) {
+    const chipW = approxWidth(up(groupTitle), chip, chip >= 30 ? 1 : 2) + (chip >= 30 ? 40 : 28) + 16;
+    if (approxWidth(up(dateLine), date) + relW + chipW <= HEADER_INNER) return { date, chip };
+  }
+  return { date: 28, chip: 24 };
+}
+
 /**
  * Header block (parity colour) + black parity strip.
  * Row 1: title + week number block (fills the right side); row 2: date line + rel chip + group chip.
  */
 function header(opts: { title: string; dateLine: string; rel?: string; groupTitle: string; info: WeekInfo }): El {
   const p = parityOf(opts.info);
+  const size = headerRowSizes(opts.dateLine, opts.rel, opts.groupTitle);
   const title = up(opts.title);
   const titleSize = title.length >= 10 ? 80 : 100;
   const strip = p.label
@@ -113,10 +142,10 @@ function header(opts: { title: string; dateLine: string; rel?: string; groupTitl
       h(
         "div",
         { display: "flex", flexDirection: "row", alignItems: "center", width: "100%", marginTop: 24, paddingTop: 20, borderTop: `${BORDER}px solid ${INK}` },
-        text(up(opts.dateLine), { fontSize: 38, fontWeight: 800, color: INK, letterSpacing: 0, lineHeight: 1, flexShrink: 0 }),
+        text(up(opts.dateLine), { fontSize: size.date, fontWeight: 800, color: INK, letterSpacing: 0, lineHeight: 1, flexShrink: 0 }),
         opts.rel ? inkChip(opts.rel, p.color, 24, 16) : null,
-        h("div", { display: "flex", flex: 1 }),
-        inkChip(opts.groupTitle, p.color, 32, 16),
+        h("div", { display: "flex", flex: 1, minWidth: 16 }),
+        inkChip(opts.groupTitle, p.color, size.chip, 16),
       ),
     ),
     strip,

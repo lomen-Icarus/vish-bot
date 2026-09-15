@@ -2,7 +2,7 @@ import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { esc } from "../../schedule/format.js";
-import { TOPIC_LABELS, TOPICS } from "../keyboards.js";
+import { isMenuText, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
 import type { User } from "../../db/repo.js";
 import { logger } from "../../logger.js";
@@ -101,20 +101,22 @@ async function showBoard(ctx: BotContext): Promise<void> {
 
 adminOnly.command("announcements", showBoard);
 
-adminOnly.callbackQuery(/^ann:del:(\d+)$/, async (ctx) => {
-  const id = Number(ctx.match[1]);
+// "ann:del" sits on the board and re-renders it; "ann:rm" sits under a broadcast
+// report and must leave that report alone.
+adminOnly.callbackQuery(/^ann:(del|rm):(\d+)$/, async (ctx) => {
+  const onBoard = ctx.match[1] === "del";
+  const id = Number(ctx.match[2]);
   const ok = ctx.deps.repo.deleteAnnouncement(id);
   await ctx.answerCallbackQuery({ text: ok ? `Объявление #${id} убрано с доски` : "Уже убрано" });
   try {
-    const { text, kb } = boardText(ctx);
-    await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
-  } catch {
-    /* message may be the broadcast report, not the board */
-    try {
+    if (onBoard) {
+      const { text, kb } = boardText(ctx);
+      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
+    } else {
       await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text("✅ Убрано с доски", "noop") });
-    } catch {
-      /* ignore */
     }
+  } catch {
+    /* the message may be gone or unchanged */
   }
 });
 
@@ -213,6 +215,10 @@ function resolveTarget(ctx: BotContext, action: string): { users: User[]; label:
 adminOnly.on("message", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || pending.kind !== "broadcast") return next();
+  if (isMenuText(ctx.msg.text)) {
+    clearPending(ctx.deps, ctx.user.id);
+    return next();
+  }
   const text = (ctx.msg.text ?? ctx.msg.caption ?? "").trim();
   setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: ctx.chat.id, messageId: ctx.msg.message_id, text }, 15 * 60_000);
   await ctx.reply("Кому отправить?", { reply_markup: targetKeyboard() });
@@ -281,7 +287,7 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go|topic:\w+|c\d)$/, async (ctx)
   if (board && pending.text) {
     const id = ctx.deps.repo.addAnnouncement(pending.text.slice(0, 2000), ctx.user.id, BOARD_HOURS);
     boardNote = `\nНа доске объявлений ${BOARD_HOURS} ч как #${id}.`;
-    kb = new InlineKeyboard().text("🗑 Убрать с доски", `ann:del:${id}`);
+    kb = new InlineKeyboard().text("🗑 Убрать с доски", `ann:rm:${id}`);
   }
   await ctx.reply(`Рассылка ${label} завершена: доставлено ${ok}, не доставлено ${failed}.${boardNote}`, { reply_markup: kb });
 });

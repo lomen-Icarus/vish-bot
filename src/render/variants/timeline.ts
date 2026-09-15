@@ -6,11 +6,10 @@
  * The single accent depends on week parity: amber for odd, ice for even, and
  * it also paints a stripe along the whole left page edge.
  */
-import type { LogicalGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
 import { filterSubgroup } from "../../schedule/format.js";
-import { addDays, fmtDayMonth, fmtHHMM, weekdayName, weekdayOf, type LocalDate, type WallClock } from "../../time.js";
+import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallClock } from "../../time.js";
 import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El, type Style } from "../core.js";
 import type { DayRenderInput, Renderer, StreamRenderInput, StreamRenderRow, WeekRenderInput } from "../image.js";
 
@@ -19,19 +18,19 @@ const BG_TOP = "#15181b";
 const BG_BOTTOM = "#0e1012";
 const FG = "#f2f3f4";
 const SOFT = "#c9ccd1";
+/** Lightest grey still used for text: ~5.8:1 on the ground. */
 const MUTED = "#8d9298";
-const DIM = "#5d6268";
 const RULE = "#24282c";
 const RAIL = "#33383d";
 const AMBER = "#f5b300";
 const ICE = "#8ad4ff";
 const NEUTRAL = "#b9bec4";
+const INK = "#111315";
 
 const STRIPE = 12;
-const INNER = W - STRIPE - PAD * 2;
 
-/** Muted pastel per weekday (1 = Monday) for the week poster headings. */
-const WEEKDAY_TINT = ["", "#b7c8e8", "#b3d6bf", "#e8d3a2", "#e4b0bd", "#c9b8e6", "#a7d6cf", "#b0b6bd"];
+/** Nothing on the poster is allowed below this size. */
+const MIN_TYPE = 22;
 
 interface Accent {
   color: string;
@@ -53,10 +52,6 @@ function typeTint(type: string): string {
   return "#bfb3d9";
 }
 
-function weekLabel(info: WeekInfo): string {
-  return info.week != null ? `${info.week}-я неделя` : "";
-}
-
 function relDay(date: LocalDate, today: LocalDate): string {
   return date === today ? "сегодня" : date === addDays(today, 1) ? "завтра" : date === addDays(today, -1) ? "вчера" : "";
 }
@@ -69,14 +64,14 @@ const col = (style: Style, ...children: unknown[]): El => h("div", { display: "f
 function capsule(label: string, color: string, filled = false): El {
   return h(
     "div",
-    { display: "flex", padding: "4px 12px", borderRadius: 999, border: `1px solid ${color}${filled ? "" : "99"}`, backgroundColor: filled ? color : "transparent", marginRight: 12, marginTop: 6 },
-    text(label.toUpperCase(), { fontSize: 17, fontWeight: 600, letterSpacing: 1.5, color: filled ? "#111315" : color, lineHeight: 1.2 }),
+    { display: "flex", padding: "4px 14px", borderRadius: 999, border: `1px solid ${color}${filled ? "" : "99"}`, backgroundColor: filled ? color : "transparent", marginRight: 14, marginTop: 6 },
+    text(label.toUpperCase(), { fontSize: MIN_TYPE, fontWeight: 600, letterSpacing: 1.2, color: filled ? INK : color, lineHeight: 1.2 }),
   );
 }
 
 /** Soft filled badge for statuses (перенос, замена, дистанционно, сейчас). */
 function badge(label: string, color: string): El {
-  return h("div", { display: "flex", padding: "5px 12px", borderRadius: 6, backgroundColor: color + "22", marginRight: 10, marginTop: 6 }, text(label, { fontSize: 18, fontWeight: 600, color, lineHeight: 1.2 }));
+  return h("div", { display: "flex", padding: "5px 14px", borderRadius: 6, backgroundColor: color + "22", marginRight: 10, marginTop: 8 }, text(label, { fontSize: MIN_TYPE, fontWeight: 600, color, lineHeight: 1.25 }));
 }
 
 /** Rail dot: hollow by default, filled (with halo) when active. */
@@ -100,8 +95,8 @@ function railLine(x: number, top: number, bottom: number): El {
 /** Horizontal "now" marker crossing the rail. */
 function nowMarker(accent: string, timeWidth: number, railWidth: number, minutes: number): El {
   return row(
-    { width: "100%", alignItems: "center", padding: "6px 0" },
-    row({ width: timeWidth, justifyContent: "flex-end", paddingRight: 18 }, text(fmtHHMM(minutes), { fontSize: 20, fontWeight: 700, color: accent, letterSpacing: 1 })),
+    { width: "100%", alignItems: "center", padding: "8px 0" },
+    row({ width: timeWidth, justifyContent: "flex-end", paddingRight: 18 }, text(fmtHHMM(minutes), { fontSize: 26, fontWeight: 700, color: accent, letterSpacing: 0.5, lineHeight: 1.1 })),
     row({ width: railWidth, justifyContent: "center" }, h("div", { display: "flex", width: 12, height: 12, borderRadius: 999, backgroundColor: accent, boxShadow: `0 0 14px ${accent}` })),
     h("div", { display: "flex", flex: 1, height: 2, backgroundImage: `linear-gradient(90deg, ${accent} 0%, ${accent}00 100%)` }),
   );
@@ -110,14 +105,16 @@ function nowMarker(accent: string, timeWidth: number, railWidth: number, minutes
 /** Glowing parity pill with the week number below. */
 function parityBlock(info: WeekInfo, accent: Accent): El | null {
   if (!accent.label) return null;
+  const weekStyle: Style = { fontSize: 24, fontWeight: 600, letterSpacing: 2, color: accent.color, lineHeight: 1.1 };
   return col(
     { alignItems: "flex-end" },
     h(
       "div",
       { display: "flex", padding: "12px 26px", borderRadius: 999, backgroundColor: accent.color, boxShadow: `0 0 44px ${accent.color}99` },
-      text(accent.label, { fontSize: 28, fontWeight: 800, letterSpacing: 2, color: "#111315", lineHeight: 1.1 }),
+      text(accent.label, { fontSize: 28, fontWeight: 800, letterSpacing: 2, color: INK, lineHeight: 1.1 }),
     ),
-    weekLabel(info) ? text(weekLabel(info).toUpperCase(), { fontSize: 20, fontWeight: 600, letterSpacing: 2, color: accent.color, marginTop: 14 }) : null,
+    // Two spans with an explicit gap: tracked-out type welds "3-Я НЕДЕЛЯ" into one word.
+    info.week != null ? row({ alignItems: "baseline", marginTop: 14 }, text(`${info.week}-Я`, weekStyle), text("НЕДЕЛЯ", { ...weekStyle, marginLeft: 14 })) : null,
   );
 }
 
@@ -136,8 +133,8 @@ function header(title: string, subtitle: string, info: WeekInfo, accent: Accent)
 function footer(left: string, right: string): El {
   return row(
     { width: "100%", justifyContent: "space-between", alignItems: "center", marginTop: 30, paddingTop: 22, borderTop: `1px solid ${RULE}` },
-    text(left, { fontSize: 22, fontWeight: 600, color: SOFT }),
-    text(right, { fontSize: 21, fontWeight: 500, color: DIM, letterSpacing: 0.5 }),
+    text(left, { fontSize: MIN_TYPE, fontWeight: 600, color: SOFT }),
+    text(right, { fontSize: MIN_TYPE, fontWeight: 500, color: MUTED, letterSpacing: 0.5 }),
   );
 }
 
@@ -149,19 +146,47 @@ function page(accent: string, children: unknown[]): El {
   );
 }
 
-function emptyState(title: string, sub: string): El {
-  return col({ width: "100%", alignItems: "flex-start", padding: "70px 0 60px 0" }, text(title, { fontSize: 64, fontWeight: 800, color: FG, letterSpacing: -2 }), text(sub, { fontSize: 26, fontWeight: 500, color: MUTED, marginTop: 14 }));
+/** Empty state that keeps the rail: the timeline is the theme's identity. */
+function emptyRail(timeW: number, railW: number, railX: number, title: string, sub: string): El {
+  return h(
+    "div",
+    { display: "flex", flexDirection: "column", width: "100%", position: "relative", marginTop: 40, borderTop: `1px solid ${RULE}` },
+    railLine(railX, 34, 34),
+    row(
+      { width: "100%", padding: "60px 0 64px 0" },
+      col({ width: timeW, alignItems: "flex-end", paddingRight: 18 }, text("—", { fontSize: 52, fontWeight: 400, color: RAIL, lineHeight: 1 })),
+      row({ width: railW, justifyContent: "center", alignItems: "flex-start", paddingTop: 16 }, dot(NEUTRAL, false, 16)),
+      col(
+        { flex: 1, minWidth: 0, paddingLeft: 16, paddingRight: 12 },
+        text(title, { fontSize: 56, fontWeight: 800, color: FG, letterSpacing: -2, lineHeight: 1.05 }),
+        text(sub, { fontSize: 26, fontWeight: 500, color: MUTED, marginTop: 14, lineHeight: 1.3 }),
+      ),
+    ),
+  );
 }
 
 // ---------- day ----------
-const DAY_TIME_W = 180;
+const DAY_TIME_W = 190;
 const DAY_RAIL_W = 44;
 const DAY_RAIL_X = DAY_TIME_W + DAY_RAIL_W / 2;
 
-function dayLesson(o: Occurrence, accent: string, ongoing: boolean, tint: boolean): El {
+/** Start time large and thin, end time hung below with a range dash. */
+function timeStack(start: number | null, end: number | null, width: number, big: number, accent: string | null): El {
+  return col(
+    { width, alignItems: "flex-end", paddingRight: 18 },
+    text(start != null ? fmtHHMM(start) : "—", { fontSize: big, fontWeight: 400, color: accent ?? FG, lineHeight: 1, letterSpacing: -1 }),
+    end != null ? text(`–${fmtHHMM(end)}`, { fontSize: 26, fontWeight: 400, color: MUTED, marginTop: 10, lineHeight: 1 }) : null,
+  );
+}
+
+function metaSpans(parts: string[], color: string): El[] {
+  return parts.map((m, i) => text(i ? `·  ${m}` : m, { fontSize: 23, fontWeight: 500, color, marginTop: 6, paddingRight: 14, lineHeight: 1.3 }));
+}
+
+function dayLesson(o: Occurrence, accent: string, ongoing: boolean): El {
   const moved = o.status === "moved";
-  const hasTime = o.start != null && o.end != null;
   const meta: string[] = [];
+  if (o.slot != null) meta.push(`${o.slot} пара`);
   if (o.isDistance) meta.push("дистанционно");
   else if (o.room) meta.push(`ауд. ${o.room}`);
   if (o.teacher) meta.push(o.teacher);
@@ -174,23 +199,14 @@ function dayLesson(o: Occurrence, accent: string, ongoing: boolean, tint: boolea
   if (ongoing) badges.push(badge("сейчас", accent));
 
   return row(
-    { width: "100%", padding: "26px 0", borderBottom: `1px solid ${RULE}`, opacity: moved ? 0.5 : 1, backgroundColor: tint ? accent + "12" : "transparent", borderRadius: tint ? 14 : 0 },
-    col(
-      { width: DAY_TIME_W, alignItems: "flex-end", paddingRight: 18 },
-      text(hasTime ? fmtHHMM(o.start!) : "—", { fontSize: 56, fontWeight: 400, color: ongoing ? accent : FG, lineHeight: 1, letterSpacing: -1 }),
-      hasTime ? text(fmtHHMM(o.end!), { fontSize: 24, fontWeight: 400, color: MUTED, marginTop: 8, lineHeight: 1 }) : null,
-      o.slot != null ? text(`${o.slot} пара`, { fontSize: 19, fontWeight: 500, color: DIM, marginTop: 10, lineHeight: 1 }) : null,
-    ),
-    row({ width: DAY_RAIL_W, justifyContent: "center", alignItems: "flex-start", paddingTop: ongoing ? 13 : 20 }, dot(accent, ongoing)),
+    { width: "100%", padding: "26px 0", borderBottom: `1px solid ${RULE}`, opacity: moved ? 0.5 : 1 },
+    timeStack(o.start, o.end, DAY_TIME_W, 56, ongoing ? accent : null),
+    row({ width: DAY_RAIL_W, justifyContent: "center", alignItems: "flex-start", paddingTop: ongoing ? 11 : 18 }, dot(accent, ongoing)),
     col(
       { flex: 1, minWidth: 0, paddingLeft: 16, paddingRight: 12 },
       text(o.subject, { fontSize: 34, fontWeight: 700, color: FG, lineHeight: 1.18, letterSpacing: -0.5, textDecoration: moved ? "line-through" : "none", marginTop: 6 }),
-      row(
-        { flexWrap: "wrap", alignItems: "center", marginTop: 8 },
-        capsule(lessonTypeLabel(o.type), typeTint(o.type)),
-        ...meta.map((m, i) => text(m, { fontSize: 23, fontWeight: 500, color: SOFT, marginTop: 6, marginRight: i < meta.length - 1 ? 0 : 0, lineHeight: 1.3, paddingRight: 14 })),
-      ),
-      badges.length ? row({ flexWrap: "wrap", marginTop: 6 }, ...badges) : null,
+      row({ flexWrap: "wrap", alignItems: "center", marginTop: 8 }, capsule(lessonTypeLabel(o.type), typeTint(o.type)), ...metaSpans(meta, SOFT)),
+      badges.length ? row({ flexWrap: "wrap", marginTop: 4 }, ...badges) : null,
     ),
   );
 }
@@ -198,14 +214,14 @@ function dayLesson(o: Occurrence, accent: string, ongoing: boolean, tint: boolea
 function gapRow(minutes: number): El {
   const label = minutes >= 60 ? `окно ${Math.floor(minutes / 60)} ч${minutes % 60 ? ` ${minutes % 60} мин` : ""}` : `перерыв ${minutes} мин`;
   return row(
-    { width: "100%", alignItems: "center", padding: "12px 0" },
+    { width: "100%", alignItems: "center", padding: "14px 0" },
     h("div", { display: "flex", width: DAY_TIME_W + DAY_RAIL_W }),
-    text(label, { fontSize: 19, fontWeight: 500, color: DIM, paddingLeft: 16, letterSpacing: 0.5 }),
+    text(label, { fontSize: MIN_TYPE, fontWeight: 500, color: MUTED, paddingLeft: 16, letterSpacing: 0.5 }),
   );
 }
 
 // ---------- week ----------
-const WK_TIME_W = 104;
+const WK_TIME_W = 110;
 const WK_RAIL_W = 36;
 const WK_RAIL_X = WK_TIME_W + WK_RAIL_W / 2;
 
@@ -219,37 +235,41 @@ function weekLesson(o: Occurrence, accent: string, last: boolean): El {
     col(
       { flex: 1, minWidth: 0, paddingLeft: 12 },
       text(o.subject, { fontSize: 26, fontWeight: 700, color: FG, lineHeight: 1.18, letterSpacing: -0.3, textDecoration: moved ? "line-through" : "none" }),
-      text(meta, { fontSize: 20, fontWeight: 500, color: MUTED, marginTop: 5, lineHeight: 1.3 }),
+      text(meta, { fontSize: MIN_TYPE, fontWeight: 500, color: MUTED, marginTop: 5, lineHeight: 1.3 }),
     ),
   );
 }
 
 function weekSection(date: LocalDate, list: Occurrence[], accent: string, isToday: boolean): El {
-  const wd = weekdayOf(date);
-  const tint = WEEKDAY_TINT[wd] ?? SOFT;
   const scheduled = list.filter((o) => o.status === "scheduled").length;
   const rows = list.map((o, i) => weekLesson(o, accent, i === list.length - 1));
   const head = row(
     { width: "100%", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
     row(
       { alignItems: "center", flex: 1, minWidth: 0 },
-      text(weekdayName(date), { fontSize: 34, fontWeight: 800, color: isToday ? accent : tint, letterSpacing: -0.8, lineHeight: 1.1 }),
-      text(fmtDayMonth(date), { fontSize: 22, fontWeight: 500, color: MUTED, marginLeft: 22, lineHeight: 1.1 }),
-      isToday ? h("div", { display: "flex", padding: "4px 12px", borderRadius: 999, backgroundColor: accent, marginLeft: 18 }, text("СЕГОДНЯ", { fontSize: 15, fontWeight: 800, letterSpacing: 1.5, color: "#111315", lineHeight: 1.2 })) : null,
+      // Monochrome by default: only today's heading is allowed the accent.
+      text(weekdayName(date), { fontSize: 34, fontWeight: 800, color: isToday ? accent : FG, letterSpacing: -0.8, lineHeight: 1.1 }),
+      text(fmtDayMonth(date), { fontSize: MIN_TYPE, fontWeight: 500, color: MUTED, marginLeft: 20, lineHeight: 1.1 }),
+      isToday ? h("div", { display: "flex", padding: "5px 14px", borderRadius: 999, backgroundColor: accent, marginLeft: 18 }, text("СЕГОДНЯ", { fontSize: MIN_TYPE, fontWeight: 800, letterSpacing: 1.2, color: INK, lineHeight: 1.2 })) : null,
     ),
-    text(scheduled ? `${scheduled} ${pluralPairs(scheduled)}` : "", { fontSize: 20, fontWeight: 500, color: DIM }),
+    text(scheduled ? `${scheduled} ${pluralPairs(scheduled)}` : "", { fontSize: MIN_TYPE, fontWeight: 500, color: MUTED }),
   );
   return col(
-    { width: isToday ? INNER + 40 : "100%", marginLeft: isToday ? -20 : 0, marginTop: 18, padding: isToday ? "22px 20px 8px 20px" : "22px 0 8px 0", borderTop: `1px solid ${RULE}`, backgroundColor: isToday ? accent + "12" : "transparent", borderRadius: isToday ? 18 : 0 },
+    { width: "100%", marginTop: 18, padding: "22px 0 8px 0", borderTop: isToday ? `2px solid ${accent}` : `1px solid ${RULE}` },
     head,
     list.length
       ? h("div", { display: "flex", flexDirection: "column", width: "100%", position: "relative" }, railLine(WK_RAIL_X, 22, 22), ...rows)
-      : row({ width: "100%", padding: "8px 0 12px 0" }, text("пар нет", { fontSize: 22, fontWeight: 500, color: DIM })),
+      : row(
+          { width: "100%", alignItems: "center", padding: "10px 0 14px 0" },
+          h("div", { display: "flex", width: WK_TIME_W }),
+          row({ width: WK_RAIL_W, justifyContent: "center" }, dot(RAIL, false, 12)),
+          text("пар нет", { fontSize: MIN_TYPE, fontWeight: 500, color: MUTED, paddingLeft: 12 }),
+        ),
   );
 }
 
 // ---------- stream ----------
-const ST_TIME_W = 160;
+const ST_TIME_W = 170;
 const ST_RAIL_W = 44;
 const ST_RAIL_X = ST_TIME_W + ST_RAIL_W / 2;
 
@@ -267,41 +287,39 @@ function groupChips(groups: string[], mine: boolean, accent: string): El {
     ...groups.map((g) =>
       h(
         "div",
-        { display: "flex", padding: "4px 12px", borderRadius: 6, backgroundColor: mine ? accent : "transparent", border: `1px solid ${mine ? accent : RAIL}`, marginRight: 8, marginBottom: 6, boxShadow: mine ? `0 0 16px ${accent}66` : "none" },
-        text(g, { fontSize: 19, fontWeight: 700, color: mine ? "#111315" : MUTED, letterSpacing: 0.5, lineHeight: 1.2 }),
+        { display: "flex", padding: "4px 13px", borderRadius: 6, backgroundColor: mine ? accent : "transparent", border: `1px solid ${mine ? accent : RAIL}`, marginRight: 8, marginBottom: 6, boxShadow: mine ? `0 0 16px ${accent}66` : "none" },
+        text(g, { fontSize: 24, fontWeight: 700, color: mine ? INK : SOFT, letterSpacing: 0.5, lineHeight: 1.2 }),
       ),
     ),
   );
 }
 
+/**
+ * One slot = one hour, but every lesson inside it gets its own rail dot (filled
+ * only for the viewer's group) and its own tick in the time gutter, so a slot
+ * with five groups still reads as five points on the rail.
+ */
 function streamSlot(s: Slot, accent: string, ongoing: boolean): El {
-  const anyMine = s.rows.some((r) => r.mine);
-  return row(
-    { width: "100%", padding: "24px 0", borderBottom: `1px solid ${RULE}`, backgroundColor: ongoing ? accent + "12" : "transparent", borderRadius: ongoing ? 14 : 0 },
-    col(
-      { width: ST_TIME_W, alignItems: "flex-end", paddingRight: 18 },
-      text(s.start != null ? fmtHHMM(s.start) : "—", { fontSize: 52, fontWeight: 400, color: ongoing ? accent : FG, lineHeight: 1, letterSpacing: -1 }),
-      s.end != null ? text(fmtHHMM(s.end), { fontSize: 22, fontWeight: 400, color: MUTED, marginTop: 8, lineHeight: 1 }) : null,
-      s.slot != null ? text(`${s.slot} пара`, { fontSize: 18, fontWeight: 500, color: DIM, marginTop: 10, lineHeight: 1 }) : null,
-    ),
-    row({ width: ST_RAIL_W, justifyContent: "center", alignItems: "flex-start", paddingTop: ongoing ? 11 : 18 }, dot(accent, ongoing, 16, anyMine)),
-    col(
-      { flex: 1, minWidth: 0, paddingLeft: 16, paddingRight: 12 },
-      ...s.rows.map((r, i) => {
-        const moved = r.status === "moved";
-        const meta = [r.isDistance ? "дистанционно" : r.room ? `ауд. ${r.room}` : "", r.subgroup ? `${r.subgroup} подгруппа` : ""].filter(Boolean);
-        return col(
-          { width: "100%", marginTop: i === 0 ? 4 : 18, paddingTop: i === 0 ? 0 : 16, borderTop: i === 0 ? "none" : `1px solid ${RULE}`, opacity: moved ? 0.5 : 1 },
+  return col(
+    { width: "100%", padding: "24px 0", borderBottom: `1px solid ${RULE}` },
+    ...s.rows.map((r, i) => {
+      const moved = r.status === "moved";
+      const meta = [r.isDistance ? "дистанционно" : r.room ? `ауд. ${r.room}` : "", r.subgroup ? `${r.subgroup} подгруппа` : ""].filter(Boolean);
+      const first = i === 0;
+      return row(
+        { width: "100%", marginTop: first ? 0 : 20, opacity: moved ? 0.5 : 1 },
+        first
+          ? timeStack(s.start, s.end, ST_TIME_W, 52, ongoing ? accent : null)
+          : col({ width: ST_TIME_W, alignItems: "flex-end", paddingRight: 18 }, h("div", { display: "flex", width: 36, height: 2, backgroundColor: RULE, marginTop: 19 })),
+        row({ width: ST_RAIL_W, justifyContent: "center", alignItems: "flex-start", paddingTop: ongoing && r.mine ? 6 : 13 }, dot(accent, ongoing && r.mine, 14, r.mine)),
+        col(
+          { flex: 1, minWidth: 0, paddingLeft: 16, paddingRight: 12, paddingTop: first ? 0 : 2 },
           groupChips(r.groups, r.mine, accent),
           text(r.subject, { fontSize: r.mine ? 30 : 26, fontWeight: 700, color: r.mine ? FG : SOFT, lineHeight: 1.18, letterSpacing: -0.4, marginTop: 4, textDecoration: moved ? "line-through" : "none" }),
-          row(
-            { flexWrap: "wrap", alignItems: "center", marginTop: 4 },
-            capsule(lessonTypeLabel(r.type), typeTint(r.type)),
-            ...meta.map((m) => text(m, { fontSize: 21, fontWeight: 500, color: r.mine ? SOFT : MUTED, marginTop: 6, paddingRight: 14, lineHeight: 1.3 })),
-          ),
-        );
-      }),
-    ),
+          row({ flexWrap: "wrap", alignItems: "center", marginTop: 4 }, capsule(lessonTypeLabel(r.type), typeTint(r.type)), ...metaSpans(meta, r.mine ? SOFT : MUTED)),
+        ),
+      );
+    }),
   );
 }
 
@@ -318,16 +336,25 @@ export async function createRenderer(): Promise<Renderer | null> {
       const items: unknown[] = [];
       let prevEnd: number | null = null;
       let markerPlaced = false;
-      const marker = () => nowMarker(accent.color, DAY_TIME_W, DAY_RAIL_W, now!.minutes);
+      const marker = (): El => nowMarker(accent.color, DAY_TIME_W, DAY_RAIL_W, (now as WallClock).minutes);
       for (const o of lessons) {
         const ongoing = isToday && o.start != null && o.end != null && now!.minutes >= o.start && now!.minutes < o.end && o.status === "scheduled";
-        if (isToday && !markerPlaced && o.start != null && now!.minutes < o.start) {
+        const gap = prevEnd != null && o.start != null && o.start - prevEnd >= 20 ? o.start - prevEnd : 0;
+        const markerHere = isToday && !markerPlaced && o.start != null && now!.minutes < o.start;
+        // The rail must stay monotonic: if "now" falls inside a break, the break
+        // row is emitted first and the marker splits it, not the other way round.
+        const markerAfterGap = markerHere && gap > 0 && now!.minutes >= prevEnd!;
+        if (markerHere && !markerAfterGap) {
           items.push(marker());
           markerPlaced = true;
         }
-        if (prevEnd != null && o.start != null && o.start - prevEnd >= 20) items.push(gapRow(o.start - prevEnd));
+        if (gap > 0) items.push(gapRow(gap));
+        if (markerAfterGap) {
+          items.push(marker());
+          markerPlaced = true;
+        }
         if (ongoing) markerPlaced = true;
-        items.push(dayLesson(o, accent.color, ongoing, ongoing));
+        items.push(dayLesson(o, accent.color, ongoing));
         if (o.status === "scheduled" && o.end != null) prevEnd = o.end;
       }
       if (isToday && !markerPlaced && lessons.length) items.push(marker());
@@ -338,7 +365,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       const subtitle = [group.title, fmtDayMonth(date), relDay(date, today)].filter(Boolean).join("  ·  ");
       const body = lessons.length
         ? h("div", { display: "flex", flexDirection: "column", width: "100%", position: "relative", marginTop: 40, borderTop: `1px solid ${RULE}` }, railLine(DAY_RAIL_X, 30, 24), ...items)
-        : emptyState("Пар нет", "свободный день, можно выспаться");
+        : emptyRail(DAY_TIME_W, DAY_RAIL_W, DAY_RAIL_X, "Пар нет", "свободный день, можно выспаться");
       const tree = page(accent.color, [
         header(weekdayName(date), subtitle, weekInfo, accent),
         body,
@@ -388,7 +415,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       const subtitle = [`Поток 20${intake}`, fmtDayMonth(date), relDay(date, today)].filter(Boolean).join("  ·  ");
       const body = slots.length
         ? h("div", { display: "flex", flexDirection: "column", width: "100%", position: "relative", marginTop: 40, borderTop: `1px solid ${RULE}` }, railLine(ST_RAIL_X, 30, 24), ...items)
-        : emptyState("У потока пар нет", "ни у одной группы потока занятий не найдено");
+        : emptyRail(ST_TIME_W, ST_RAIL_W, ST_RAIL_X, "У потока пар нет", "ни у одной группы потока занятий не найдено");
       const tree = page(accent.color, [
         header(weekdayName(date), subtitle, weekInfo, accent),
         body,

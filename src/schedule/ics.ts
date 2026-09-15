@@ -26,6 +26,13 @@ export interface IcsOptions {
   now?: Date;
   /** Suggested refresh interval for subscribed calendars (ISO 8601 duration). */
   refreshInterval?: string;
+  /**
+   * Subscription feeds are full snapshots that the calendar re-reads, so every
+   * event keeps SEQUENCE 0 and nothing looks "modified" on each refresh.
+   * One-off files keep the generation counter, which is what makes a re-import
+   * win over the events already in the calendar.
+   */
+  stableSequence?: boolean;
 }
 
 function pad(n: number): string {
@@ -97,7 +104,7 @@ function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: nu
 export function buildIcs(opts: IcsOptions): string {
   const now = opts.now ?? new Date();
   const stamp = utcStamp(now.getTime());
-  const sequence = icsSequence(now);
+  const sequence = opts.stableSequence ? 0 : icsSequence(now);
   const lines: string[] = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//vish-bot//Расписание ВИШ ЧувГУ//RU", "CALSCALE:GREGORIAN", "METHOD:PUBLISH", `X-WR-CALNAME:${escapeText(opts.name)}`, "X-WR-TIMEZONE:Europe/Moscow"];
   if (opts.refreshInterval) lines.push(`REFRESH-INTERVAL;VALUE=DURATION:${opts.refreshInterval}`, `X-PUBLISHED-TTL:${opts.refreshInterval}`);
   const seen = new Set<string>();

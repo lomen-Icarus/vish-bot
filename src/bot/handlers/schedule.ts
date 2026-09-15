@@ -3,7 +3,7 @@ import type { BotContext } from "../context.js";
 import { BTN, groupPicker, onboardingKeyboard } from "../keyboards.js";
 import { groupRequiredText, needGroup, sendDay, sendWeek } from "../views.js";
 import { addDays, fmtDDMM, isLocalDate, mondayOf, parseRuDate, todayMsk } from "../../time.js";
-import { esc, formatChangeEvent } from "../../schedule/format.js";
+import { clampHtml, esc, formatChangeEvent } from "../../schedule/format.js";
 import type { ChangeEvent } from "../../schedule/diff.js";
 import { findGroup } from "../../schedule/groups.js";
 
@@ -98,6 +98,14 @@ scheduleHandlers.callbackQuery(/^pk:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
   if (!group) return void (await ctx.reply("Группа не найдена, список обновился."));
   await sendDay(ctx, group, todayMsk(), { peek: true });
+});
+// "pdn:" opens a group in a NEW message (from the stream screen or search results);
+// "pd:" navigates inside an existing day view and edits it in place.
+scheduleHandlers.callbackQuery(/^pdn:(.+):(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
+  const group = ctx.deps.service.group(ctx.match[1]!);
+  await ctx.answerCallbackQuery();
+  if (!group) return void (await ctx.reply("Группа не найдена, список обновился."));
+  await sendDay(ctx, group, ctx.match[2]!, { peek: true });
 });
 scheduleHandlers.callbackQuery(/^pd:(.+):(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
   const group = ctx.deps.service.group(ctx.match[1]!);
@@ -240,7 +248,7 @@ async function showChanges(ctx: BotContext): Promise<void> {
   const { text, hasEvents } = changesText(ctx);
   const kb = new InlineKeyboard();
   if (hasEvents && ctx.user.groupKey) kb.text("📆 Обновить в календаре", `cics:${ctx.user.groupKey}`);
-  await ctx.reply(text.length > 4000 ? text.slice(0, 3990) + "…" : text, { parse_mode: "HTML", reply_markup: hasEvents ? kb : undefined });
+  await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: hasEvents ? kb : undefined });
 }
 scheduleHandlers.command("changes", showChanges);
 scheduleHandlers.hears(BTN.changes, showChanges);
