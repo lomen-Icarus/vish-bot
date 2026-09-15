@@ -58,7 +58,8 @@ function pseudoGroup(t: TeacherRef, fullName: string | null): LogicalGroup {
 async function askName(ctx: BotContext): Promise<void> {
   if (!ctx.deps.teachers && !ctx.deps.webinars) return void (await ctx.reply(UNAVAILABLE));
   setPending(ctx.deps, ctx.user.id, { kind: "teacher" }, 3 * 60_000);
-  await ctx.reply("Напиши фамилию преподавателя, можно с именем или инициалами в любом порядке: <code>Иванова</code>, <code>Дарья Иванова</code>, <code>Иванова Д.А.</code> Отмена: /cancel", { parse_mode: "HTML" });
+  const limited = !ctx.deps.teachers ? "\n\nПока без учётки портала бот знает преподавателей только по дистанционным парам: очные портал показывает лишь авторизованным." : "";
+  await ctx.reply(`Напиши фамилию преподавателя, можно с именем или инициалами в любом порядке: <code>Иванова</code>, <code>Дарья Иванова</code>, <code>Иванова Д.А.</code> Отмена: /cancel${limited}`, { parse_mode: "HTML" });
 }
 
 teacherHandlers.command("teachers", askName);
