@@ -85,6 +85,11 @@ export function createHttpServer(deps: HttpDeps): Server {
   // The bot only offers subscription links while the server is actually listening,
   // so a busy port degrades to "file only" instead of handing out dead links.
   server.on("error", (err) => logger.error({ err: String(err), port: deps.port }, "http server error (calendar subscriptions are off)"));
-  server.listen(deps.port, deps.host ?? "0.0.0.0", () => logger.info({ port: deps.port }, "http server listening (calendar feeds, /health)"));
+  try {
+    server.listen(deps.port, deps.host ?? "0.0.0.0", () => logger.info({ port: deps.port }, "http server listening (calendar feeds, /health)"));
+  } catch (err) {
+    // An out-of-range port throws right here; the bot must still start.
+    logger.error({ err: String(err), port: deps.port }, "http server could not listen (calendar subscriptions are off)");
+  }
   return server;
 }

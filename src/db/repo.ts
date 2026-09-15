@@ -616,6 +616,26 @@ export class Repo {
     this.db.prepare("DELETE FROM webinars WHERE date < ?").run(cutoff);
   }
 
+  /**
+   * Treat every change of a group as already delivered to this user. Called
+   * when someone picks that group, so they do not receive a pile of changes
+   * that happened before the group was theirs.
+   */
+  markGroupEventsSeen(userId: number, groupKey: string, today: LocalDate): void {
+    const rows = this.activeEvents(groupKey, today, 200);
+    if (!rows.length) return;
+    const stmt = this.db.prepare("INSERT OR IGNORE INTO reminders_sent (user_id, kind, ref, sent_at) VALUES (?, 'event', ?, ?)");
+    const ts = nowIso();
+    this.db.transaction(() => {
+      for (const r of rows) stmt.run(userId, String(r.id), ts);
+    })();
+  }
+
+  pruneChangeEvents(olderThanDays = 30): void {
+    const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString();
+    this.db.prepare("DELETE FROM change_events WHERE created_at < ? AND notified = 1").run(cutoff);
+  }
+
   pruneReminders(olderThanDays = 14): void {
     const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString();
     this.db.prepare("DELETE FROM reminders_sent WHERE sent_at < ?").run(cutoff);

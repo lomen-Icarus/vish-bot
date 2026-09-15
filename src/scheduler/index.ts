@@ -51,8 +51,9 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       }
     }),
     new Cron("17 4 * * *", { timezone: TZ, name: "housekeeping" }, () => {
-      opts.repo.pruneReminders(14);
+      opts.repo.pruneReminders(30);
       opts.repo.pruneWebinars(60);
+      opts.repo.pruneChangeEvents(30);
       logger.info("housekeeping done");
     }),
   ];

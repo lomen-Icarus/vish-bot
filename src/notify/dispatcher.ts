@@ -147,7 +147,14 @@ export class Notifier {
     let sent = 0;
     for (const user of this.repo.listUsers({ onlyActive: true })) {
       if (!user.groupKey || !user.notifyChanges) continue;
+      // Only users with quiet hours can have a backlog, and only right after
+      // the window ends: otherwise this would scan every user every minute.
+      if (!user.quietFrom || !user.quietTo) continue;
       if (this.inQuietHours(user, now)) continue;
+      const to = parseHHMM(user.quietTo);
+      if (to == null) continue;
+      const sinceEnd = (now.minutes - to + 1440) % 1440;
+      if (sinceEnd > 120) continue;
       const group = this.service.group(user.groupKey);
       if (!group) continue;
       // Only events the normal pass has already gone through: anything newer is
