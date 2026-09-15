@@ -20,10 +20,30 @@ export interface AskOptions {
   model: string;
 }
 
+/** Кого назвали инструменты по ходу ответа: бот вешает это кнопками под текстом. */
+export interface AskMentions {
+  /** Преподаватели из справочника портала. */
+  teachers: Array<{ id: number; name: string }>;
+  /** Преподаватели, известные только по странице вебинаров. */
+  webinarTeachers: string[];
+  /** Ключи групп, чьё расписание смотрели. */
+  groupKeys: string[];
+}
+
 export interface AskResult {
   text: string;
   inputTokens: number;
   outputTokens: number;
+  mentions: AskMentions;
+}
+
+function emptyMentions(): AskMentions {
+  return { teachers: [], webinarTeachers: [], groupKeys: [] };
+}
+
+function remember<T>(list: T[], item: T, same: (a: T, b: T) => boolean, limit = 6): void {
+  if (list.length >= limit || list.some((x) => same(x, item))) return;
+  list.push(item);
 }
 
 const SYSTEM = `Ты — помощник по расписанию Высшей инженерной школы (ВИШ) ЧувГУ внутри Telegram-бота.
@@ -34,6 +54,7 @@ const SYSTEM = `Ты — помощник по расписанию Высшей
 Как отвечать:
 - Студенты называют предметы разговорно: «математика»/«матан» = «Математический анализ», «Алгебра и геометрия» тоже математика; «физра» = «Физическая культура и спорт»; «инфа» = «Информатика»; «прога» = «Программирование»/«Основы программирования»; «англ» = «Иностранный язык»; «история» = «История России»; «ОРГ» = «Основы российской государственности». Если точного предмета нет — ищи по смыслу инструментом find_subject и предлагай ближайшие совпадения.
 - Если спрашивают про другую группу (например «у 14-26») — используй get_schedule для неё; названия групп вида «14-26» = «ВИШ-14-26».
+- Опечатки — это нормально. Если фамилия или название написаны с ошибкой, всё равно ищи: инструменты сами подбирают похожие. Если нашлись похожие люди — не отвечай «не найден», а предложи варианты: «Возможно, ты про Троишестову Д. С. или Троицкую А. В.?» Кнопки с этими именами бот добавит под ответом сам, поэтому просто назови их и попроси выбрать.
 - Вопросы про преподавателя («кто такая Иванова», «что ведёт Петров», «когда у Сидорова пары», «кто ведёт физику») — это вопросы о расписании. Используй find_teacher: он ищет по фамилии или имени в любом порядке и возвращает предметы, группы и ближайшие пары. Отвечай тем, что есть в расписании: какие предметы ведёт, у каких групп, когда ближайшие пары. Биографию, должность и контакты бот не знает — так и скажи, если спросят.
 - В расписании групп портал НЕ указывает преподавателя. Преподаватели известны по онлайн-парам (страница вебинаров) и, если у бота есть учётка портала, по справочнику преподавателей. Отвечая про человека, опирайся только на то, что вернул find_teacher, и честно говори, если данных нет. Не угадывай.
 - Расписание своей группы на две недели уже дано в сообщении; для других дат и групп используй инструменты. Не выдумывай пары и людей.
@@ -104,7 +125,7 @@ export class AskService {
     return found.length === 1 ? found[0]! : found.length > 1 ? (found.find((g) => g.key === fallback.key) ?? found[0]!) : null;
   }
 
-  private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined) {
+  private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined, mentions: AskMentions) {
     const service = this.service;
     const teachers = this.teachers;
     const webinars = this.webinars;
@@ -122,6 +143,7 @@ export class AskService {
       run: async (input) => {
         const g = resolve(input.group);
         if (!g) return `Группа «${input.group}» не найдена. Известные группы: ${service.groups().map((x) => x.title).join(", ")}`;
+        remember(mentions.groupKeys, g.key, (a, b) => a === b);
         if (!isLocalDate(input.from) || !isLocalDate(input.to)) return "Даты нужны в формате YYYY-MM-DD";
         const to = addDays(input.from, 28) < input.to ? addDays(input.from, 28) : input.to;
         const list = service.materialize(g, input.from, to);
@@ -139,6 +161,7 @@ export class AskService {
       run: async (input) => {
         const g = resolve(input.group ?? "");
         if (!g) return `Группа «${input.group}» не найдена.`;
+        remember(mentions.groupKeys, g.key, (a, b) => a === b);
         const list = service.materialize(g, today, addDays(today, 56));
         const q = normalize(input.query);
         const stems = q.split(" ").filter((w) => w.length >= 3).map((w) => w.slice(0, Math.max(3, Math.min(w.length - 1, 5))));
@@ -170,7 +193,10 @@ export class AskService {
         const out: string[] = [];
         // Webinar rows name the teacher of every online lesson and are readable without an account.
         const fromWebinars = webinars?.search(input.query, 3) ?? [];
-        for (const t of fromWebinars) out.push(describeWebinarTeacher(t, webinars!, today));
+        for (const t of fromWebinars) {
+          out.push(describeWebinarTeacher(t, webinars!, today));
+          remember(mentions.webinarTeachers, t.name, (a, b) => a.toLowerCase() === b.toLowerCase());
+        }
         if (!teachers) {
           out.push(
             fromWebinars.length
@@ -179,12 +205,19 @@ export class AskService {
           );
           return out.join("\n\n");
         }
-        const found = await teachers.search(input.query, 5);
+        const scored = await teachers.searchScored(input.query, 5);
+        const found = scored.map((x) => x.ref);
+        for (const t of found) remember(mentions.teachers, { id: t.id, name: t.name }, (a, b) => a.id === b.id);
         if (!found.length) {
-          out.push(`В справочнике преподавателей ЧувГУ «${input.query}» не найден. Возможно, фамилия написана иначе.`);
+          out.push(`В справочнике преподавателей ЧувГУ «${input.query}» не найден — даже с поправкой на опечатки. Попроси написать фамилию иначе или прислать инициалы.`);
           return out.join("\n\n");
         }
-        if (found.length > 1) out.push(`Похожие преподаватели: ${found.map((t) => t.name).join("; ")}. Показываю первого.`);
+        // Совпало только с опечатками — не выдавай это за точный ответ.
+        if (scored[0]!.fuzzy) {
+          out.push(`Точного совпадения с «${input.query}» нет, но похоже на: ${found.map((t) => t.name).join("; ")}. Предложи выбрать из них, кнопки бот добавит сам. Ниже — расписание первого из списка, на случай если это он.`);
+        } else if (found.length > 1) {
+          out.push(`Похожие преподаватели: ${found.map((t) => t.name).join("; ")}. Показываю первого, остальные можно предложить кнопками.`);
+        }
         const t = found[0]!;
         try {
           const { lessons, fullName } = await teachers.lessons(t, today, addDays(today, 14));
@@ -216,13 +249,14 @@ export class AskService {
     const own = input.group ? filterSubgroup(this.service.materialize(input.group, from, addDays(from, 13)), input.subgroup) : [];
     const wi = this.service.weekInfo(today);
     const context = input.group ? fmtLessons(own, today) : "";
+    const mentions = emptyMentions();
     const runner = this.client.beta.messages.toolRunner({
       model: this.opts.model,
       max_tokens: 1200,
       max_iterations: 6,
       system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
       output_config: { effort: "medium" },
-      tools: this.tools(input.group, input.subgroup, input.botHelp),
+      tools: this.tools(input.group, input.subgroup, input.botHelp, mentions),
       messages: [
         {
           role: "user",
@@ -237,7 +271,7 @@ export class AskService {
       outputTokens += message.usage.output_tokens;
       if (message.stop_reason === "refusal") {
         logger.warn({ category: message.stop_details?.category }, "ask: model refused");
-        return { text: "Я отвечаю только на вопросы о расписании 🙂", inputTokens, outputTokens };
+        return { text: "Я отвечаю только на вопросы о расписании 🙂", inputTokens, outputTokens, mentions };
       }
     }
     const final = await runner.done();
@@ -246,6 +280,6 @@ export class AskService {
       .map((b) => b.text)
       .join("\n")
       .trim();
-    return { text: text || "Не нашёл ответа в расписании.", inputTokens, outputTokens };
+    return { text: text || "Не нашёл ответа в расписании.", inputTokens, outputTokens, mentions };
   }
 }

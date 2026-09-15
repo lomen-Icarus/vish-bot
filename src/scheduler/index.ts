@@ -54,6 +54,8 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       opts.repo.pruneReminders(30);
       opts.repo.pruneWebinars(60);
       opts.repo.pruneChangeEvents(30);
+      // Журнал «сыска» — это аудит: держим полгода, потом чистим.
+      opts.repo.prunePoiskLog(180);
       logger.info("housekeeping done");
     }),
   ];

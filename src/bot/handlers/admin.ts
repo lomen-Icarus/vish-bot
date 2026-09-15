@@ -4,6 +4,8 @@ import { clearPending, setPending, takePending } from "../context.js";
 import { esc } from "../../schedule/format.js";
 import { isMenuText, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
+import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
+import { todayMsk } from "../../time.js";
 import type { User } from "../../db/repo.js";
 import { logger } from "../../logger.js";
 import { sleep } from "../../time.js";
@@ -26,6 +28,7 @@ function adminMenu(): InlineKeyboard {
     .text("📌 Доска объявлений", "adm:board")
     .text("👥 Группы", "adm:groups")
     .row()
+    .text("🤖 Лимиты ИИ", "adm:ai")
     .text("📰 Источники", "adm:sources");
 }
 
@@ -61,6 +64,16 @@ function webinarStats(ctx: BotContext): string {
   return `${s.rows} пар за ${s.days} дн. (по ${s.until ?? "—"}), преподавателей ${s.teachers}`;
 }
 
+/** Состояние глобального поиска студентов для /health. */
+function poiskState(ctx: BotContext): string {
+  if (!ctx.deps.config.POISK) return "выключен (POISK=FALSE)";
+  const dir = ctx.deps.students;
+  if (!dir) return "включён, но справочник не создан";
+  const s = dir.stats();
+  const used = ctx.deps.repo.poiskStats(todayMsk());
+  return `${s.count} чел. из ${esc(s.file)}${s.error ? ` · ошибка: ${esc(s.error)}` : ""} · сегодня ${used.searches} поисков от ${used.users} чел.`;
+}
+
 function healthText(ctx: BotContext): string {
   const deps = ctx.deps;
   const p = deps.repo.lastPollRun();
@@ -82,11 +95,113 @@ function healthText(ctx: BotContext): string {
     `Преподаватели: ${teacherState(ctx, teacherCount)}${teacherErr ? ` · <code>${esc(teacherErr).slice(0, 200)}</code>` : ""}`,
     `Вебинары (преподаватели дистанта): ${webinarStats(ctx)}`,
     `Доска объявлений: ${deps.repo.activeAnnouncements().length} активных`,
+    `Лимиты ИИ: ${aiLimits(deps.repo, deps.config, todayMsk()).perUser}/чел, ${aiLimits(deps.repo, deps.config, todayMsk()).global} общих · потрачено сегодня ${deps.repo.aiUsageGlobal(todayMsk())}`,
+    `Inline-режим: ${deps.inline ? "включён" : "ВЫКЛЮЧЕН — включи в @BotFather: /setinline, затем /setinlinefeedback"}`,
+    `Сыск (поиск студентов): ${poiskState(ctx)}`,
     `Баннер портала: ${deps.repo.getMeta("banner") ? esc(deps.repo.getMeta("banner")!.slice(0, 120)) : "нет"}`,
   ]
     .filter(Boolean)
     .join("\n");
 }
+
+// ---- AI daily limits ----
+/** Экран лимитов ИИ: что стоит сейчас, сколько потрачено и чем это поменять. */
+function aiLimitsScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
+  const day = todayMsk();
+  const l = aiLimits(ctx.deps.repo, ctx.deps.config, day);
+  const usedGlobal = ctx.deps.repo.aiUsageGlobal(day);
+  const kb = new InlineKeyboard()
+    .text("➖ на человека", "ail:user:down")
+    .text(`👤 ${l.perUser}`, "ail:show")
+    .text("➕ на человека", "ail:user:up")
+    .row()
+    .text("➖ общий", "ail:global:down")
+    .text(`🌍 ${l.global}`, "ail:show")
+    .text("➕ общий", "ail:global:up")
+    .row()
+    .text(`🚀 Сегодня +${BONUS_USER_STEP} каждому`, "ail:boost:user")
+    .text(`🚀 Сегодня +${BONUS_GLOBAL_STEP} общих`, "ail:boost:global")
+    .row()
+    .text("♻️ Как в .env", "ail:reset")
+    .text("🔄 Обновить", "ail:show");
+  const text = [
+    "<b>🤖 Лимиты ИИ</b>",
+    ctx.deps.ask ? `Модель: <code>${esc(ctx.deps.config.AI_MODEL)}</code>` : "ИИ выключен: не задан ANTHROPIC_API_KEY.",
+    "",
+    `На человека в сутки: <b>${l.perUser}</b>${l.bonusUser ? ` (${l.baseUser} + ${l.bonusUser} на сегодня)` : ""}${l.userOverridden ? ` · в .env ${l.envUser}` : ""}`,
+    `Всем вместе в сутки: <b>${l.global}</b>${l.bonusGlobal ? ` (${l.baseGlobal} + ${l.bonusGlobal} на сегодня)` : ""}${l.globalOverridden ? ` · в .env ${l.envGlobal}` : ""}`,
+    `Сегодня потрачено: <b>${usedGlobal}</b> из ${l.global}.`,
+    "",
+    "Кнопки меняют лимит навсегда (переживает перезапуск), «🚀 Сегодня» — разовая добавка только на этот день, она сама исчезнет завтра.",
+    "Админы спрашивают без лимита. Команда: <code>/ailimit user 25</code>, <code>/ailimit global 1000</code>, <code>/ailimit boost 200</code>, <code>/ailimit reset</code>.",
+  ].join("\n");
+  return { text, kb };
+}
+
+async function showAiLimits(ctx: BotContext, edit = false): Promise<void> {
+  const { text, kb } = aiLimitsScreen(ctx);
+  if (edit) {
+    try {
+      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
+      return;
+    } catch (err) {
+      if (String(err).includes("message is not modified")) return;
+    }
+  }
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
+}
+
+adminOnly.callbackQuery(/^ail:(user|global):(up|down)$/, async (ctx) => {
+  const kind = ctx.match[1] as "user" | "global";
+  const dir = ctx.match[2] === "up" ? 1 : -1;
+  const day = todayMsk();
+  const l = aiLimits(ctx.deps.repo, ctx.deps.config, day);
+  const steps = kind === "user" ? USER_STEPS : GLOBAL_STEPS;
+  const next = stepValue(steps, kind === "user" ? l.baseUser : l.baseGlobal, dir as 1 | -1);
+  setAiLimit(ctx.deps.repo, kind, next);
+  await ctx.answerCallbackQuery({ text: `${kind === "user" ? "На человека" : "Общий"}: ${next}` });
+  await showAiLimits(ctx, true);
+});
+
+adminOnly.callbackQuery(/^ail:boost:(user|global)$/, async (ctx) => {
+  const kind = ctx.match[1] as "user" | "global";
+  const day = todayMsk();
+  const value = addAiBonus(ctx.deps.repo, kind, day, kind === "user" ? BONUS_USER_STEP : BONUS_GLOBAL_STEP);
+  await ctx.answerCallbackQuery({ text: `Сегодня +${value} ${kind === "user" ? "каждому" : "общих"}` });
+  await showAiLimits(ctx, true);
+});
+
+adminOnly.callbackQuery("ail:reset", async (ctx) => {
+  setAiLimit(ctx.deps.repo, "user", null);
+  setAiLimit(ctx.deps.repo, "global", null);
+  clearAiBonus(ctx.deps.repo, todayMsk());
+  await ctx.answerCallbackQuery({ text: "Вернул значения из .env" });
+  await showAiLimits(ctx, true);
+});
+
+adminOnly.callbackQuery("ail:show", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showAiLimits(ctx, true);
+});
+
+adminOnly.command("ailimit", async (ctx) => {
+  const [what, value] = (ctx.match ?? "").trim().split(/\s+/);
+  const day = todayMsk();
+  if (!what) return showAiLimits(ctx);
+  const n = Number(value);
+  if (what === "reset") {
+    setAiLimit(ctx.deps.repo, "user", null);
+    setAiLimit(ctx.deps.repo, "global", null);
+    clearAiBonus(ctx.deps.repo, day);
+  } else if ((what === "user" || what === "global") && Number.isFinite(n) && n >= 0) {
+    setAiLimit(ctx.deps.repo, what, n);
+  } else if (what === "boost" && Number.isFinite(n)) {
+    addAiBonus(ctx.deps.repo, "global", day, n);
+  } else {
+    return void (await ctx.reply("Так: <code>/ailimit user 25</code>, <code>/ailimit global 1000</code>, <code>/ailimit boost 200</code> (добавка только на сегодня), <code>/ailimit reset</code>.", { parse_mode: "HTML" }));
+  }
+  await showAiLimits(ctx);
+});
 
 // ---- announcements board ----
 function boardText(ctx: BotContext): { text: string; kb: InlineKeyboard } {
@@ -143,6 +258,10 @@ adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx) => {
     case "board":
       await ctx.answerCallbackQuery();
       await showBoard(ctx);
+      return;
+    case "ai":
+      await ctx.answerCallbackQuery();
+      await showAiLimits(ctx);
       return;
     case "groups": {
       await ctx.answerCallbackQuery();

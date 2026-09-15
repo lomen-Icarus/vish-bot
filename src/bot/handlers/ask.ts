@@ -5,6 +5,9 @@ import { clearPending, setPending, takePending } from "../context.js";
 import { featuresText, needGroup } from "../views.js";
 import { clampHtml, esc } from "../../schedule/format.js";
 import { todayMsk } from "../../time.js";
+import { aiAllowance, aiLimits } from "../../ai/limits.js";
+import type { AskMentions } from "../../ai/ask.js";
+import { webinarKey } from "./teachers.js";
 import { logger } from "../../logger.js";
 
 export const askHandlers = new Composer<BotContext>();
@@ -20,8 +23,8 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   const ask = ctx.deps.ask;
   if (!ask) return "disabled";
   const day = todayMsk();
-  if (ctx.deps.repo.aiUsage(ctx.user.id, day) >= ctx.deps.config.AI_DAILY_LIMIT_PER_USER) return "limit-user";
-  if (ctx.deps.repo.aiUsageGlobal(day) >= ctx.deps.config.AI_DAILY_LIMIT_GLOBAL) return "limit-global";
+  const { verdict } = aiAllowance(ctx.deps.repo, ctx.deps.config, ctx.user.id, ctx.isAdmin, day);
+  if (verdict !== "ok") return verdict;
   await ctx.replyWithChatAction("typing");
   try {
     const res = await ask.answer({ question, group: needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps) });
@@ -29,6 +32,7 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
     const logId = ctx.deps.repo.logAi(ctx.user.id, question, res.text);
     // Copy the caller's rows: mutating their keyboard would move buttons between messages.
     const kb = new InlineKeyboard([...(opts.extraButtons?.inline_keyboard ?? []).map((row) => [...row])]);
+    appendMentions(ctx, kb, res.mentions);
     kb.row().text("👎 Ответ неверный", `aiw:${logId}`);
     const text = clampHtml(res.text);
     await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => ctx.reply(text.replace(/<[^>]+>/g, ""), { reply_markup: kb }));
@@ -39,11 +43,38 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   }
 }
 
+/**
+ * Кнопки на то, что ИИ нашёл: людей и группы. Человек ошибся в фамилии — модель
+ * предлагает похожих словами, а нажать их можно здесь.
+ */
+function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentions): void {
+  const taken = new Set(kb.inline_keyboard.flat().map((b) => ("callback_data" in b ? b.callback_data : "")));
+  const today = todayMsk();
+  const items: Array<[string, string]> = [];
+  const add = (label: string, data: string): void => {
+    if (taken.has(data) || items.length >= 6) return;
+    taken.add(data);
+    items.push([label.slice(0, 40), data]);
+  };
+  for (const t of mentions.teachers) add(`👨‍🏫 ${t.name}`, `t:${t.id}`);
+  for (const name of mentions.webinarTeachers) add(`👨‍🏫 ${name}`, webinarKey(name));
+  for (const key of mentions.groupKeys) {
+    const g = ctx.deps.service.group(key);
+    if (g && g.key !== ctx.user.groupKey) add(`📅 ${g.title}`, `pdn:${g.key}:${today}`);
+  }
+  // Only touch the keyboard when there is something to add: an empty row would
+  // travel to Telegram as a broken markup.
+  items.forEach(([label, data], i) => {
+    if (i % 2 === 0) kb.row();
+    kb.text(label, data);
+  });
+}
+
 async function answer(ctx: BotContext, question: string): Promise<void> {
   const outcome = await askAi(ctx, question);
   if (outcome === "answered") return;
   if (outcome === "disabled") return void (await ctx.reply("Вопросы своими словами пока выключены."));
-  if (outcome === "limit-user") return void (await ctx.reply(`На сегодня твой лимит вопросов исчерпан (${ctx.deps.config.AI_DAILY_LIMIT_PER_USER} в день). Кнопки работают без лимита 🙂`));
+  if (outcome === "limit-user") return void (await ctx.reply(`На сегодня твой лимит вопросов исчерпан (${aiLimits(ctx.deps.repo, ctx.deps.config, todayMsk()).perUser} в день). Кнопки работают без лимита 🙂`));
   if (outcome === "limit-global") return void (await ctx.reply("Сегодня бот уже много отвечал, общий дневной бюджет вопросов закончился. Завтра продолжим."));
   await ctx.reply("Не получилось ответить, попробуй ещё раз или воспользуйся кнопками.");
 }
