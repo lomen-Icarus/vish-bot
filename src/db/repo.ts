@@ -643,7 +643,8 @@ export class Repo {
         "DELETE FROM watch_groups WHERE user_id = ?",
         "DELETE FROM reminders_sent WHERE user_id = ?",
         "DELETE FROM notifications_log WHERE user_id = ?",
-        "DELETE FROM ai_usage WHERE user_id = ?",
+        // ai_usage stays: it is spend accounting and also backs the global daily
+        // budget, so a wipe must not hand anyone a fresh quota.
         "DELETE FROM ai_log WHERE user_id = ?",
         "DELETE FROM news_complaints WHERE user_id = ?",
         "DELETE FROM users WHERE id = ?",

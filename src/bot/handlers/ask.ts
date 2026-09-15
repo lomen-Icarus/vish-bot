@@ -9,7 +9,7 @@ import { logger } from "../../logger.js";
 
 export const askHandlers = new Composer<BotContext>();
 
-export type AskOutcome = "answered" | "disabled" | "limit" | "failed";
+export type AskOutcome = "answered" | "disabled" | "limit-user" | "limit-global" | "failed";
 
 /**
  * Ask the model and deliver the answer. Shared by /ask and the search button,
@@ -20,14 +20,15 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   const ask = ctx.deps.ask;
   if (!ask) return "disabled";
   const day = todayMsk();
-  if (ctx.deps.repo.aiUsage(ctx.user.id, day) >= ctx.deps.config.AI_DAILY_LIMIT_PER_USER) return "limit";
-  if (ctx.deps.repo.aiUsageGlobal(day) >= ctx.deps.config.AI_DAILY_LIMIT_GLOBAL) return "limit";
+  if (ctx.deps.repo.aiUsage(ctx.user.id, day) >= ctx.deps.config.AI_DAILY_LIMIT_PER_USER) return "limit-user";
+  if (ctx.deps.repo.aiUsageGlobal(day) >= ctx.deps.config.AI_DAILY_LIMIT_GLOBAL) return "limit-global";
   await ctx.replyWithChatAction("typing");
   try {
     const res = await ask.answer({ question, group: needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps) });
     ctx.deps.repo.bumpAiUsage(ctx.user.id, day, res.inputTokens, res.outputTokens);
     const logId = ctx.deps.repo.logAi(ctx.user.id, question, res.text);
-    const kb = opts.extraButtons ?? new InlineKeyboard();
+    // Copy the caller's rows: mutating their keyboard would move buttons between messages.
+    const kb = new InlineKeyboard([...(opts.extraButtons?.inline_keyboard ?? []).map((row) => [...row])]);
     kb.row().text("👎 Ответ неверный", `aiw:${logId}`);
     const text = clampHtml(res.text);
     await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => ctx.reply(text.replace(/<[^>]+>/g, ""), { reply_markup: kb }));
@@ -42,7 +43,8 @@ async function answer(ctx: BotContext, question: string): Promise<void> {
   const outcome = await askAi(ctx, question);
   if (outcome === "answered") return;
   if (outcome === "disabled") return void (await ctx.reply("Вопросы своими словами пока выключены."));
-  if (outcome === "limit") return void (await ctx.reply(`На сегодня лимит вопросов исчерпан (${ctx.deps.config.AI_DAILY_LIMIT_PER_USER} в день). Кнопки работают без лимита 🙂`));
+  if (outcome === "limit-user") return void (await ctx.reply(`На сегодня твой лимит вопросов исчерпан (${ctx.deps.config.AI_DAILY_LIMIT_PER_USER} в день). Кнопки работают без лимита 🙂`));
+  if (outcome === "limit-global") return void (await ctx.reply("Сегодня бот уже много отвечал, общий дневной бюджет вопросов закончился. Завтра продолжим."));
   await ctx.reply("Не получилось ответить, попробуй ещё раз или воспользуйся кнопками.");
 }
 

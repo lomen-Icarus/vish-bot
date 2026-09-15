@@ -181,6 +181,25 @@ describe("forget me", () => {
   });
 });
 
+describe("search", () => {
+  it("does not send a whole question to the portal teacher search", async () => {
+    const asked: string[] = [];
+    const deps = makeDeps();
+    deps.repo.updateUser(7, { groupKey: group.key });
+    deps.teachers = {
+      search: async (q: string) => {
+        asked.push(q);
+        return [];
+      },
+      lastError: () => null,
+    } as unknown as Deps["teachers"];
+    await run(textUpdate("/search как включить напоминания за 5 минут"), deps);
+    expect(asked).toEqual([]);
+    await run(textUpdate("/search Троишестова"), deps);
+    expect(asked).toEqual(["Троишестова"]);
+  });
+});
+
 describe("first run", () => {
   it("stores the chosen format and shows the schedule", async () => {
     const deps = makeDeps();
