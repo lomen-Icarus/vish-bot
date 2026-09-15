@@ -88,7 +88,10 @@ scheduleHandlers.callbackQuery("noop", (ctx) => ctx.answerCallbackQuery());
 async function showOtherGroups(ctx: BotContext): Promise<void> {
   const groups = ctx.deps.service.groups();
   if (!groups.length) return void (await ctx.reply("Список групп ещё не загружен с портала, попробуй через минуту."));
-  await ctx.reply("Чьё расписание показать? Своя группа при этом не меняется.", { reply_markup: groupPicker(groups, { prefix: "pk", selected: ctx.user.groupKey }) });
+  const kb = groupPicker(groups, { prefix: "pk", selected: ctx.user.groupKey });
+  // При POISK=FALSE строки просто нет — раздела не существует.
+  if (ctx.deps.config.POISK && ctx.deps.students) kb.row().text("🕵️ Где студент? Глобал поиск", "poisk:menu");
+  await ctx.reply("Чьё расписание показать? Своя группа при этом не меняется.", { reply_markup: kb });
 }
 scheduleHandlers.hears(BTN.otherGroups, showOtherGroups);
 scheduleHandlers.command("groups", showOtherGroups);

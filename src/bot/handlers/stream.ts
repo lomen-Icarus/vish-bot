@@ -57,7 +57,7 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
   const wantImage = !!renderer && (opts.forceImage || photoMsg || ctx.user.format === "image" || (ctx.user.format === "both" && !opts.edit));
   if (opts.keyboard) {
     // A reply keyboard and an inline keyboard cannot share one message: send the mode keyboard first.
-    await ctx.reply("Поток открыт. Вернуться: «◀️ В меню».", { reply_markup: streamKeyboard() });
+    await ctx.reply("Поток открыт. Вернуться: «◀️ В меню».", { reply_markup: streamKeyboard({ poisk: ctx.deps.config.POISK && !!ctx.deps.students }) });
   }
   if (wantImage && renderer) {
     try {

@@ -15,6 +15,7 @@ import { WebinarService } from "./portal/webinars.js";
 import { NewsScanner } from "./news/scanner.js";
 import type { Deps } from "./bot/context.js";
 import { createHttpServer } from "./http/server.js";
+import { StudentDirectory } from "./students/directory.js";
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -45,14 +46,22 @@ async function main(): Promise<void> {
   const webinars = new WebinarService(portal, repo, config.FACULTY_ID);
   const ask = config.ANTHROPIC_API_KEY ? new AskService(config.ANTHROPIC_API_KEY, service, { model: config.AI_MODEL }, teachers, webinars) : null;
 
-  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, news: null, http: null, pending: new Map(), startedAt: new Date() };
+  // «Сыск»: файл со студентами лежит только на хостинге и в репозиторий не попадает.
+  const students = config.POISK ? new StudentDirectory(config.POISK_DB) : null;
+  if (students) logger.info({ count: students.stats().count, file: config.POISK_DB }, "global student search enabled");
+  else logger.info("global student search disabled (POISK=FALSE)");
+
+  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
   const bot = createBot(deps);
   await bot.init();
   deps.news = config.ANTHROPIC_API_KEY
     ? new NewsScanner(config.ANTHROPIC_API_KEY, repo, bot.api, { lookbackHours: config.NEWS_LOOKBACK_HOURS, maxPerTopic: config.NEWS_MAX_PER_TOPIC, vkToken: config.VK_SERVICE_TOKEN, model: config.AI_MODEL })
     : null;
   if (!deps.news) logger.info("news scanner disabled: ANTHROPIC_API_KEY not set");
-  logger.info({ username: bot.botInfo.username }, "bot authorised");
+  deps.inline = bot.botInfo.supports_inline_queries === true;
+  deps.botUsername = bot.botInfo.username ?? null;
+  if (!deps.inline) logger.warn("inline mode is OFF: open @BotFather → /setinline for this bot, otherwise «@бот 12-23» does nothing in group chats");
+  logger.info({ username: bot.botInfo.username, inline: deps.inline }, "bot authorised");
   await registerCommands(bot, deps);
 
   const notifier = new Notifier(bot.api, repo, service, renderer, config.ADMIN_IDS, webinars);

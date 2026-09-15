@@ -5,6 +5,7 @@ import { BTN, groupLabel, isMenuText, mainKeyboard } from "../keyboards.js";
 import { featuresText, helpText, needGroup } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import { askAi } from "./ask.js";
+import { aiLimits } from "../../ai/limits.js";
 import { webinarKey } from "./teachers.js";
 import { esc } from "../../schedule/format.js";
 import { dayView } from "../views.js";
@@ -54,7 +55,7 @@ miscHandlers.hears(BTN.suggest, startSuggest);
 // ---- forget me: wipe everything the bot stored about this person ----
 async function askWipe(ctx: BotContext): Promise<void> {
   await ctx.reply(
-    "Удалить всё, что бот о тебе знает?\n\nСотрутся группа и подгруппа, все настройки уведомлений, слежение за другими группами, ссылка на календарь и история напоминаний. После этого <code>/start</code> начнётся с нуля, как у нового человека.",
+    "Удалить всё, что бот о тебе знает?\n\nСотрутся группа и подгруппа, все настройки уведомлений, слежение за другими группами, ссылка на календарь и история напоминаний. После этого <code>/start</code> начнётся с нуля, как у нового человека.\n\nОстанется только служебный учёт: сколько вопросов к ИИ ты задал сегодня и журнал поиска людей, если ты им пользовался. Он нужен, чтобы через бота нельзя было выкачать базу, и чистится сам.",
     { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🧹 Да, забудь меня", "wipe:yes").row().text("Отмена", "wipe:no") },
   );
 }
@@ -244,7 +245,7 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
     if (!hits.parts.length && (outcome === "limit-user" || outcome === "limit-global")) {
       await ctx.reply(
         outcome === "limit-user"
-          ? `На сегодня твой лимит вопросов к ИИ исчерпан (${deps.config.AI_DAILY_LIMIT_PER_USER} в день). Кнопки и расписание работают без лимита.`
+          ? `На сегодня твой лимит вопросов к ИИ исчерпан (${aiLimits(deps.repo, deps.config, todayMsk()).perUser} в день). Кнопки и расписание работают без лимита.`
           : "Сегодня бот уже много отвечал, общий дневной бюджет вопросов закончился. Кнопки и расписание работают без лимита.",
       );
       return;
