@@ -9,6 +9,7 @@ import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate
 import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
 import { WEBINAR_URL } from "../bot/keyboards.js";
+import type { WebinarService } from "../portal/webinars.js";
 
 export interface SendOptions {
   photo?: Buffer;
@@ -24,6 +25,7 @@ export class Notifier {
     private readonly service: ScheduleService,
     private readonly renderer: Renderer | null,
     private readonly adminIds: number[] = [],
+    private readonly webinars: WebinarService | null = null,
   ) {}
 
   async send(user: User, html: string, opts: SendOptions): Promise<boolean> {
@@ -185,7 +187,10 @@ export class Notifier {
           if (now.minutes >= due && now.minutes < o.start! && !this.repo.reminderSent(user.id, "distance", ref)) {
             this.repo.markReminderSent(user.id, "distance", ref);
             const left = o.start! - now.minutes;
-            const text = `💻 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} дистант — <b>${escapeHtml(o.subject)}</b> (${o.type}) · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}\nВебинар: ${WEBINAR_URL}`;
+            // The webinar page names the teacher and the topic of the session; add them when known.
+            const w = this.webinars?.forLesson(o, [group.title, ...group.portalNames]) ?? null;
+            const extra = [w?.teacher ? escapeHtml(w.teacher) : "", w?.title ? `📝 ${escapeHtml(w.title.length > 120 ? w.title.slice(0, 117).trimEnd() + "…" : w.title)}` : ""].filter(Boolean);
+            const text = `💻 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} дистант — <b>${escapeHtml(o.subject)}</b> (${o.type}) · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\nВебинар: ${WEBINAR_URL}`;
             if (await this.send(user, text, { kind: "remind-distance", replyMarkup: new InlineKeyboard().url("💻 Открыть вебинар", WEBINAR_URL) })) sent++;
           }
         }

@@ -12,6 +12,7 @@ import { findGroup, type LogicalGroup } from "../schedule/groups.js";
 import { filterSubgroup } from "../schedule/format.js";
 import { lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import type { TeacherService } from "../portal/teachers.js";
+import type { WebinarService, WebinarTeacher } from "../portal/webinars.js";
 import { addDays, fmtHHMM, isLocalDate, mondayOf, todayMsk, weekdayName, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 
@@ -34,7 +35,7 @@ const SYSTEM = `Ты — помощник по расписанию Высшей
 - Студенты называют предметы разговорно: «математика»/«матан» = «Математический анализ», «Алгебра и геометрия» тоже математика; «физра» = «Физическая культура и спорт»; «инфа» = «Информатика»; «прога» = «Программирование»/«Основы программирования»; «англ» = «Иностранный язык»; «история» = «История России»; «ОРГ» = «Основы российской государственности». Если точного предмета нет — ищи по смыслу инструментом find_subject и предлагай ближайшие совпадения.
 - Если спрашивают про другую группу (например «у 14-26») — используй get_schedule для неё; названия групп вида «14-26» = «ВИШ-14-26».
 - Вопросы про преподавателя («кто такая Иванова», «что ведёт Петров», «когда у Сидорова пары», «кто ведёт физику») — это вопросы о расписании. Используй find_teacher: он ищет по фамилии или имени в любом порядке и возвращает предметы, группы и ближайшие пары. Отвечай тем, что есть в расписании: какие предметы ведёт, у каких групп, когда ближайшие пары. Биографию, должность и контакты бот не знает — так и скажи, если спросят.
-- Кто ведёт предмет у своей группы — видно в поле «преп.» в расписании ниже; если поля нет, честно скажи, что портал не указал преподавателя.
+- В расписании групп портал НЕ указывает преподавателя. Преподаватели известны по онлайн-парам (страница вебинаров) и, если у бота есть учётка портала, по справочнику преподавателей. Отвечая про человека, опирайся только на то, что вернул find_teacher, и честно говори, если данных нет. Не угадывай.
 - Расписание своей группы на две недели уже дано в сообщении; для других дат и групп используй инструменты. Не выдумывай пары и людей.
 - Отвечай кратко, по-русски, на «ты». Формат Telegram HTML: только теги <b>, <i>, <code>. Без Markdown, без списков через «*».
 - Даты пиши как «пн 14.09», время как 11:40–13:00.`;
@@ -69,6 +70,18 @@ function fmtLessons(list: Occurrence[], today: LocalDate): string {
   return lines.join("\n").trim() || "пар нет";
 }
 
+/** What the webinar page knows about a teacher, as plain text for the model. */
+function describeWebinarTeacher(t: WebinarTeacher, webinars: WebinarService, today: LocalDate): string {
+  const title = [t.position, t.degree].filter(Boolean).join(", ");
+  const next = webinars.upcoming(t, 6).map((l) => `  ${l.date} ${weekdayName(l.date)}${l.slot ? ` | ${l.slot} пара` : ""} | ${l.subject} (${lessonTypeLabel(l.type)}) | дистанционно | группы: ${l.groups.join(", ")}${l.title ? ` | тема: ${l.title}` : ""}`);
+  return [
+    `${t.name}${title ? ` (${title})` : ""} — по данным страницы вебинаров ВИШ:`,
+    `ведёт: ${t.subjects.join("; ")}`,
+    `группы: ${t.groups.join(", ")}`,
+    next.length ? `ближайшие онлайн-пары (сегодня ${today}):\n${next.join("\n")}` : "ближайших онлайн-пар нет",
+  ].join("\n");
+}
+
 export class AskService {
   private readonly client: Anthropic;
 
@@ -77,6 +90,7 @@ export class AskService {
     private readonly service: ScheduleService,
     private readonly opts: AskOptions,
     private readonly teachers: TeacherService | null = null,
+    private readonly webinars: WebinarService | null = null,
   ) {
     this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 90_000 });
   }
@@ -91,6 +105,7 @@ export class AskService {
   private tools(own: LogicalGroup, subgroup: number | null) {
     const service = this.service;
     const teachers = this.teachers;
+    const webinars = this.webinars;
     const today = todayMsk();
     const resolve = (q: string) => this.resolveGroup(q, own);
 
@@ -145,22 +160,21 @@ export class AskService {
 
     const findTeacher = betaZodTool({
       name: "find_teacher",
-      description: "Найти преподавателя по фамилии и/или имени (в любом порядке, можно с инициалами) и получить его пары на ближайшие 2 недели: предметы, группы, время, аудитории. Также ищет фамилию среди преподавателей в расписании своей группы.",
+      description: "Найти преподавателя по фамилии и/или имени (в любом порядке, можно с инициалами) и получить его пары на ближайшие 2 недели: предметы, группы, время, аудитории.",
       inputSchema: z.object({
         query: z.string().describe("Фамилия и/или имя: «Иванова», «Дарья Иванова», «Иванова Д.А.»"),
       }),
       run: async (input) => {
-        const q = normalize(input.query);
         const out: string[] = [];
-        // What the own group's timetable says (teacher column), works without a portal account.
-        const ownList = service.materialize(own, today, addDays(today, 56));
-        const inOwn = ownList.filter((o) => o.teacher && q.split(" ").every((w) => normalize(o.teacher!).includes(w.slice(0, Math.max(3, w.length - 1)))));
-        if (inOwn.length) {
-          const subjects = [...new Set(inOwn.map((o) => `${o.subject} (${lessonTypeLabel(o.type)})`))];
-          out.push(`В расписании ${own.title}: ${inOwn[0]!.teacher} ведёт ${subjects.join("; ")}. Ближайшие пары:\n${fmtLessons(inOwn.slice(0, 6), today)}`);
-        }
+        // Webinar rows name the teacher of every online lesson and are readable without an account.
+        const fromWebinars = webinars?.search(input.query, 3) ?? [];
+        for (const t of fromWebinars) out.push(describeWebinarTeacher(t, webinars!, today));
         if (!teachers) {
-          out.push(inOwn.length ? "Полное расписание преподавателя недоступно: у бота нет учётки портала." : `Преподаватель «${input.query}» в расписании ${own.title} не найден, а полный справочник преподавателей недоступен: у бота нет учётки портала.`);
+          out.push(
+            fromWebinars.length
+              ? "Это всё, что известно из расписания онлайн-пар: полное расписание преподавателя портал показывает только авторизованным, а у бота нет учётки."
+              : `Про «${input.query}» в расписании онлайн-пар ВИШ ничего нет, а полный справочник преподавателей портал показывает только авторизованным (у бота нет учётки портала). Скажи это честно.`,
+          );
           return out.join("\n\n");
         }
         const found = await teachers.search(input.query, 5);

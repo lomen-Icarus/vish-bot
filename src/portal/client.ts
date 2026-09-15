@@ -1,10 +1,11 @@
-import { parseGroupButtons, parseGroupName, parseGroupSchedule, parseTeacherButtons, parseTeacherInfo, parseTeacherSchedule, type ParsedScheduleDay } from "chuvsu-js/parsers";
-import type { TeacherInfo } from "chuvsu-js";
+import { parseGroupButtons, parseGroupName, parseGroupSchedule, parseTeacherButtons, parseTeacherInfo, parseTeacherSchedule, parseWebinars, type ParsedScheduleDay } from "chuvsu-js/parsers";
+import type { TeacherInfo, Webinar } from "chuvsu-js";
 import { PortalHttp, PortalHttpError, type PortalHttpOptions } from "./http.js";
 import { isLoginPage, parseAcademicYear, parseBanner, parsePeriod, parseWeekMarker, type WeekMarker } from "./pageMeta.js";
 import type { Period } from "../schedule/model.js";
 import { sha1 } from "../schedule/model.js";
 import { logger } from "../logger.js";
+import type { LocalDate } from "../time.js";
 
 export const PORTAL_BASE = "https://tt.chuvsu.ru";
 
@@ -130,6 +131,15 @@ export class PortalClient {
   async getTeacherPage(teacherId: number, period: Period): Promise<{ days: ParsedScheduleDay[]; info: TeacherInfo | null; weekMarker: WeekMarker | null }> {
     const html = await this.authPost(`${PORTAL_BASE}/index/techtt/tech/${teacherId}`, { htype: String(period) });
     return { days: parseTeacherSchedule(html), info: parseTeacherInfo(html), weekMarker: parseWeekMarker(html) };
+  }
+
+  /**
+   * Webinars of one day. Unlike teacher pages this works for guests, and each
+   * row carries the teacher, the topic and the groups of a distance lesson.
+   */
+  async getWebinars(date: LocalDate, facultyId: number): Promise<Webinar[]> {
+    const html = await this.authPost(`${PORTAL_BASE}/webinar`, { seldate: date, selfac: String(facultyId), pertt: "1" });
+    return parseWebinars(html);
   }
 
   async getFacultyGroups(facultyId: number): Promise<PortalGroup[]> {

@@ -6,6 +6,7 @@ import type { Renderer } from "../render/image.js";
 import type { AskService } from "../ai/ask.js";
 import type { TeacherService } from "../portal/teachers.js";
 import type { NewsScanner } from "../news/scanner.js";
+import type { WebinarService } from "../portal/webinars.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
@@ -28,6 +29,7 @@ export interface Deps {
   ask: AskService | null;
   teachers: TeacherService | null;
   news: NewsScanner | null;
+  webinars: WebinarService | null;
   pending: Map<number, PendingState>;
   startedAt: Date;
 }

@@ -55,6 +55,10 @@ describe("teacher search scoring", () => {
     expect(teacherMatchScore("Троишестова Д.А.", "Троишестова Д.")).toBeGreaterThan(0);
     expect(teacherMatchScore("Иванов И.И.", "Дарья Троишестова")).toBe(0);
     expect(teacherMatchScore("Иванов И.И.", "Петров")).toBe(0);
+    // An initial must never carry a match on its own: "Т." is not "Троишестова".
+    expect(teacherMatchScore("Кожина Т. Н.", "Троишестова")).toBe(0);
+    expect(teacherMatchScore("Иванова К. Ю.", "к ю")).toBe(0);
+    expect(teacherMatchScore("Троишестова Дарья Александровна", "дарья")).toBeGreaterThan(0);
     // Exact surname beats a prefix hit on another entry.
     expect(teacherMatchScore("Иванов И.И.", "иванов")).toBeGreaterThan(teacherMatchScore("Иванова А.А.", "иванов"));
   });

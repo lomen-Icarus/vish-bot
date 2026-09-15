@@ -49,6 +49,9 @@ export function teacherMatchScore(name: string, query: string): number {
   if (!q.length || !n.length) return 0;
   const surname = n[0]!;
   let score = 0;
+  // At least one query word must match a real name word: matching only initials
+  // ("Троишестова" against the "Т." of "Кожина Т. Н.") is not a match at all.
+  let substantive = false;
   const used = new Set<number>();
   for (const qw of q) {
     let best = 0;
@@ -70,7 +73,11 @@ export function teacherMatchScore(name: string, query: string): number {
     if (best === 0) return 0; // every query word must match something
     used.add(bestIdx);
     score += best;
+    // Matching an initial (a one-letter name word) never counts as substantive,
+    // even when it is exact: "к ю" must not match every "… К. Ю." in the directory.
+    if (best >= 2 && qw.length >= 2 && (n[bestIdx]?.length ?? 0) >= 2) substantive = true;
   }
+  if (!substantive) return 0;
   if (q.length === 1 && q[0]!.length >= 3 && surname.startsWith(q[0]!)) score += 2;
   return score;
 }

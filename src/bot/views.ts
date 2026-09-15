@@ -13,9 +13,20 @@ export function needGroup(ctx: BotContext): LogicalGroup | null {
   return ctx.deps.service.group(key);
 }
 
+/** Fill in the teacher and the topic of online lessons from the portal's webinar page. */
+function withWebinars(deps: Deps, group: LogicalGroup, lessons: Occurrence[]): Occurrence[] {
+  if (!deps.webinars) return lessons;
+  try {
+    return deps.webinars.enrich(lessons, [group.title, ...group.portalNames]);
+  } catch (err) {
+    logger.debug({ err: String(err) }, "webinar enrichment failed");
+    return lessons;
+  }
+}
+
 export function dayView(deps: Deps, group: LogicalGroup, date: LocalDate, subgroup: number | null): { text: string; lessons: Occurrence[] } {
   const today = todayMsk();
-  const lessons = deps.service.lessonsOn(group, date);
+  const lessons = withWebinars(deps, group, deps.service.lessonsOn(group, date));
   const text = formatDay(group, date, lessons, deps.service.weekInfo(date), today, { subgroup, now: wallClock() });
   return { text, lessons: filterSubgroup(lessons, subgroup) };
 }
@@ -23,7 +34,7 @@ export function dayView(deps: Deps, group: LogicalGroup, date: LocalDate, subgro
 export function weekView(deps: Deps, group: LogicalGroup, anyDate: LocalDate, subgroup: number | null): { text: string; monday: LocalDate; byDate: Map<LocalDate, Occurrence[]> } {
   const monday = mondayOf(anyDate);
   const sunday = addDays(monday, 6);
-  const all = deps.service.materialize(group, monday, sunday);
+  const all = withWebinars(deps, group, deps.service.materialize(group, monday, sunday));
   const byDate = new Map<LocalDate, Occurrence[]>();
   for (const o of all) {
     const list = byDate.get(o.date) ?? [];

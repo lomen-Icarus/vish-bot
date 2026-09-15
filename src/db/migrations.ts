@@ -180,4 +180,24 @@ export const MIGRATIONS: string[] = [
     deleted INTEGER NOT NULL DEFAULT 0
   );
   `,
+  `
+  CREATE TABLE webinars (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    slot INTEGER,
+    start INTEGER,
+    "end" INTEGER,
+    subject TEXT NOT NULL,
+    type TEXT NOT NULL,
+    teacher TEXT NOT NULL,
+    position TEXT,
+    degree TEXT,
+    subgroup INTEGER,
+    title TEXT,
+    groups_json TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+  );
+  CREATE INDEX webinars_date ON webinars (date);
+  CREATE INDEX webinars_teacher ON webinars (teacher);
+  `,
 ];

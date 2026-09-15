@@ -150,21 +150,26 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
     }
   }
 
-  // 3. Teachers.
-  if (deps.teachers && /\p{L}{3,}/u.test(query)) {
+  // 3. Teachers: the portal directory when the bot has an account, plus teachers of online lessons.
+  if (/\p{L}{3,}/u.test(query)) {
+    const names: string[] = [];
     try {
-      const found = await deps.teachers.search(query, 5);
-      if (found.length) {
-        parts.push(`<b>Преподаватели</b>: ${found.map((t) => esc(t.name)).join("; ")}`);
-        for (const t of found) {
-          kb.text(`👨‍🏫 ${t.name}`, `t:${t.id}`);
-          if (++buttons % 2 === 0) kb.row();
-        }
-        if (buttons % 2) kb.row();
+      for (const t of deps.teachers ? await deps.teachers.search(query, 5) : []) {
+        names.push(t.name);
+        kb.text(`👨‍🏫 ${t.name}`, `t:${t.id}`);
+        if (++buttons % 2 === 0) kb.row();
       }
     } catch (err) {
       logger.warn({ err: String(err) }, "search: teachers failed");
     }
+    for (const t of deps.webinars?.search(query, 4) ?? []) {
+      if (names.some((n) => n.toLowerCase().startsWith(t.name.split(" ")[0]!.toLowerCase()))) continue;
+      names.push(`${t.name} (дистант)`);
+      kb.text(`👨‍🏫 ${t.name}`, `wtc:${Buffer.from(t.name, "utf8").toString("base64url").slice(0, 55)}`);
+      if (++buttons % 2 === 0) kb.row();
+    }
+    if (names.length) parts.push(`<b>Преподаватели</b>: ${names.map(esc).join("; ")}`);
+    if (buttons % 2) kb.row();
   }
 
   if (!parts.length) {

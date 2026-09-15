@@ -64,7 +64,7 @@ askHandlers.callbackQuery(/^aiw:(\d+)$/, async (ctx) => {
   }
   const from = ctx.from;
   const group = needGroup(ctx);
-  const report = `❌ <b>ИИ ответил неверно</b> (${from.username ? `@${esc(from.username)}` : esc(from.first_name)}${group ? `, ${esc(group.title)}` : ""}, id <code>${from.id}</code>)\n\n<b>Вопрос:</b> ${esc(entry.question)}\n\n<b>Ответ:</b>\n${entry.answer}`;
+  const report = `👎 <b>ИИ ответил неверно</b> (${from.username ? `@${esc(from.username)}` : esc(from.first_name)}${group ? `, ${esc(group.title)}` : ""}, id <code>${from.id}</code>)\n\n<b>Вопрос:</b> ${esc(entry.question)}\n\n<b>Ответ:</b>\n${entry.answer}`;
   for (const adminId of ctx.deps.config.ADMIN_IDS) {
     try {
       await ctx.api.sendMessage(adminId, report.slice(0, 4000), { parse_mode: "HTML" });
