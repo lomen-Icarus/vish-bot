@@ -178,7 +178,7 @@ export function formatWebinarTeacher(t: { name: string; position: string | null;
   if (upcoming.length) {
     lines.push("", "<b>Ближайшие онлайн-пары</b>");
     for (const l of upcoming) {
-      const when = `${weekdayName(l.date).slice(0, 2).toLowerCase()} ${fmtDDMM(l.date)}`;
+      const when = `${weekdayShort(l.date)} ${fmtDDMM(l.date)}`;
       const time = l.start != null ? ` · <code>${fmtHHMM(l.start)}${l.end != null ? `–${fmtHHMM(l.end)}` : ""}</code>` : "";
       lines.push(`${when}${time}${l.slot ? ` · ${l.slot} пара` : ""} — <b>${esc(l.subject)}</b> (${lessonTypeLabel(l.type)})`);
       if (l.groups.length) lines.push(`     ${esc(l.groups.join(", "))}`);

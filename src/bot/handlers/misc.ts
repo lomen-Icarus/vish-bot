@@ -47,6 +47,9 @@ async function startSuggest(ctx: BotContext): Promise<void> {
   await ctx.reply("Пришли новость, достижение или объявление одним сообщением: текст, фото или документ. Я передам его медиа-ВИШ. Отмена: /cancel");
 }
 miscHandlers.command("suggest", startSuggest);
+// Existing chats still show the old keyboard until Telegram replaces it, and it
+// had this button; keep it working.
+miscHandlers.hears(BTN.suggest, startSuggest);
 miscHandlers.command("cancel", async (ctx) => {
   clearPending(ctx.deps, ctx.user.id);
   await ctx.reply("Отменено.");

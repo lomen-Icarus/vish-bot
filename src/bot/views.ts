@@ -152,6 +152,15 @@ export function groupRequiredText(): string {
   return `Сначала выбери свою группу: /group`;
 }
 
+/** "каждые 6 минут" straight from POLL_CRON_BUSY, so the text cannot drift from the setting. */
+function pollCadence(deps: Deps): string {
+  const m = /^\*\/(\d+)\s/.exec(deps.config.POLL_CRON_BUSY);
+  const n = m ? Number(m[1]) : 0;
+  if (!n) return "регулярно";
+  const word = n % 10 === 1 && n % 100 !== 11 ? "минуту" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "минуты" : "минут";
+  return `каждые ${n} ${word}`;
+}
+
 /** Calendar subscriptions need both a public address and a listening feed server. */
 function subscriptionsLive(deps: Deps): boolean {
   return !!deps.config.PUBLIC_URL && deps.http?.listening === true;
@@ -171,7 +180,7 @@ export function featuresText(deps: Deps): string {
     "Можно просто написать дату: <code>14.09</code>.",
     "",
     "<b>Уведомления</b>",
-    `${BTN.changes} — доска объявлений ВИШ и изменения в расписании твоей группы: переносы, замены аудиторий, отмены, новые пары. Портал бот проверяет каждые 6 минут.`,
+    `${BTN.changes} — доска объявлений ВИШ и изменения в расписании твоей группы: переносы, замены аудиторий, отмены, новые пары. Портал бот проверяет ${pollCadence(deps)} в учебное время и раз в полчаса в остальное.`,
     "Напоминания настраиваются по отдельности: до первой пары, перед каждой парой, за 5 минут до дистанта со ссылкой на вебинар, вечером про завтра. Есть тихие часы — то, что придёт в это время, бот отдаст утром одним сообщением.",
     "Темы рассылок: конкурсы и стипендии, объявления, события ВИШ.",
     "",
