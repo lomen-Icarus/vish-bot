@@ -30,7 +30,7 @@ function settingsText(ctx: BotContext): string {
     "",
     "<b>Что за уведомления</b>",
     "🔔 Изменения — переносы, замены аудиторий, отмены и новые пары твоей группы.",
-    "🎨 Оформление — как выглядят постеры: тёмная, журнальная, плакатная или лента.",
+    ...(ctx.deps.renderer ? ["🎨 Оформление — как выглядят постеры: тёмная, журнальная, плакатная или лента."] : []),
     "🎓 Сессия — то же самое для расписания зачётов и экзаменов.",
     `💻 Дистант — отдельное напоминание перед онлайн-парой со ссылкой на вебинар (${WEBINAR_URL.replace(/^https?:\/\//, "")}).`,
     ...TOPICS.map((t) => `🏷 ${TOPIC_LABELS[t]} — ${TOPIC_HINTS[t]}.`),
@@ -44,7 +44,7 @@ function settingsText(ctx: BotContext): string {
 async function renderSettings(ctx: BotContext, edit: boolean): Promise<void> {
   const user = ctx.deps.repo.getUser(ctx.user.id) ?? ctx.user;
   const group = user.groupKey ? ctx.deps.service.group(user.groupKey) : null;
-  const kb = settingsKeyboard(user, group, { topics: [...TOPICS], hasImages: !!ctx.deps.renderer, watchCount: ctx.deps.repo.watchGroups(user.id).length });
+  const kb = settingsKeyboard(user, group, { topics: [...TOPICS], hasImages: !!ctx.deps.renderer, watchCount: ctx.deps.repo.watchGroups(user.id).length, defaultTheme: ctx.deps.config.POSTER_THEME });
   const text = settingsText({ ...ctx, user } as BotContext);
   if (edit) {
     try {
@@ -102,7 +102,8 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
       patch.format = cycle(FORMAT_OPTIONS, user.format);
       break;
     case "theme": {
-      const next = cycle(THEMES, (user.posterTheme ?? "midnight") as (typeof THEMES)[number]);
+      const current = (user.posterTheme ?? ctx.deps.config.POSTER_THEME) as (typeof THEMES)[number];
+      const next = cycle(THEMES, THEMES.includes(current) ? current : "midnight");
       patch.posterTheme = next;
       toast = `Оформление: ${THEME_LABELS[next] ?? next}`;
       break;

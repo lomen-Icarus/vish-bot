@@ -3,7 +3,7 @@ import type { BotContext } from "../context.js";
 import type { LogicalGroup } from "../../schedule/groups.js";
 import { BTN, intakePicker, mainKeyboard, streamDayNav, streamKeyboard } from "../keyboards.js";
 import { editPhoto, isPhotoMessage, needGroup } from "../views.js";
-import { commonLessons, formatCommonLessons, formatStreamDay, formatStreamWeek, mergeStream, type StreamRow } from "../../schedule/stream.js";
+import { commonLessons, formatCommonLessons, formatStreamDay, formatStreamWeek, mergeStream, shortGroupLabel, type StreamRow } from "../../schedule/stream.js";
 import type { Occurrence } from "../../schedule/model.js";
 import { filterSubgroup } from "../../schedule/format.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../../time.js";
@@ -168,9 +168,9 @@ streamHandlers.hears(BTN.streamCommon, async (ctx) => {
 });
 
 /**
- * Poster for "общие пары": the week renderer over a pseudo group. The portal
- * gives no teacher for group pages, so that line carries the groups sitting
- * together, which is the point of this screen.
+ * Poster for "общие пары": the week renderer over a pseudo group. Week posters
+ * print the subject and the room, so the groups sitting together ride in the
+ * subject line, which every theme renders.
  */
 async function renderCommonWeek(ctx: BotContext, intake: number, monday: LocalDate, shared: StreamRow[], own: LogicalGroup | null): Promise<Buffer> {
   const byDate = new Map<LocalDate, Occurrence[]>();
@@ -183,10 +183,10 @@ async function renderCommonWeek(ctx: BotContext, intake: number, monday: LocalDa
       slot: r.slot,
       start: r.start,
       end: r.end,
-      subject: r.subject,
+      subject: others.length ? `${r.subject} · с ${others.join(", ")}` : r.subject,
       type: r.type,
       room: r.room,
-      teacher: others.length ? `вместе с ${others.join(", ")}` : null,
+      teacher: null,
       subgroup: r.subgroup,
       isDistance: r.isDistance,
       status: r.status,
@@ -194,7 +194,8 @@ async function renderCommonWeek(ctx: BotContext, intake: number, monday: LocalDa
     };
     byDate.set(r.date, [...(byDate.get(r.date) ?? []), lesson]);
   }
-  const pseudo: LogicalGroup = { key: `stream:${intake}`, title: own ? `Общие пары · ${own.title}` : `Общие пары · поток 20${intake}`, prefix: "ВИШ", number: 0, intake, course: 0, portalIds: [], portalNames: [] };
+  // A full group title with a qualifier would run off the edge of the widest theme.
+  const pseudo: LogicalGroup = { key: `stream:${intake}`, title: own ? `Общие · ${shortGroupLabel(own)}` : `Общие · поток 20${intake}`, prefix: "ВИШ", number: 0, intake, course: 0, portalIds: [], portalNames: [] };
   return ctx.deps.renderer!.renderWeek({ group: pseudo, monday, byDate, weekInfo: ctx.deps.service.weekInfo(monday), today: todayMsk(), subgroup: null, theme: ctx.user.posterTheme ?? undefined });
 }
 

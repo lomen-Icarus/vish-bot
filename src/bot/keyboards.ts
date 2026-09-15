@@ -1,7 +1,7 @@
 import { InlineKeyboard, Keyboard } from "grammy";
 import type { LogicalGroup } from "../schedule/groups.js";
 import type { User } from "../db/repo.js";
-import { THEME_LABELS } from "../render/themes.js";
+import { isTheme, THEME_LABELS } from "../render/themes.js";
 import { addDays, fmtDDMM, type LocalDate } from "../time.js";
 
 export const BTN = {
@@ -185,13 +185,17 @@ export function formatPicker(): InlineKeyboard {
   return new InlineKeyboard().text("📝 Текстом", "fmt:text").text("🖼 Картинкой", "fmt:image").row().text("📝🖼 И так, и так", "fmt:both");
 }
 
-export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: { topics: string[]; hasImages: boolean; watchCount: number }): InlineKeyboard {
+export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: { topics: string[]; hasImages: boolean; watchCount: number; defaultTheme: string }): InlineKeyboard {
   const kb = new InlineKeyboard();
   kb.text(`👥 Группа: ${group?.title ?? "не выбрана"}`, "s:group").row();
   kb.text(`🔢 Подгруппа: ${user.subgroup ? `${user.subgroup}` : "все"}`, "s:subgroup");
   if (opts.hasImages) kb.text(`🖼 Формат: ${{ text: "текст", image: "картинка", both: "оба" }[user.format]}`, "s:format");
   kb.row();
-  if (opts.hasImages && user.format !== "text") kb.text(`🎨 Оформление картинок: ${THEME_LABELS[user.posterTheme ?? "midnight"] ?? "Тёмная"}`, "s:theme").row();
+  if (opts.hasImages) {
+    // Even a "text" user gets posters from the «🖼 Картинкой» button and reminders.
+    const theme = isTheme(user.posterTheme) ? user.posterTheme : isTheme(opts.defaultTheme) ? opts.defaultTheme : "midnight";
+    kb.text(`🎨 Оформление картинок: ${THEME_LABELS[theme] ?? THEME_LABELS.midnight}`, "s:theme").row();
+  }
   kb.text(`🔔 Изменения: ${onoff(user.notifyChanges)}`, "s:changes").text(`🎓 Сессия: ${onoff(user.notifySession)}`, "s:session").row();
   kb.text(`⏰ До первой пары: ${minutesLabel(user.remindFirstMin)}`, "s:first").row();
   kb.text(`⏱ Перед каждой парой: ${minutesLabel(user.remindEachMin)}`, "s:each").row();

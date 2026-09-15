@@ -178,6 +178,28 @@ describe("quiet hours", () => {
   });
 });
 
+describe("forget me", () => {
+  it("erases the person but keeps the AI spend ledger", () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(1, "u", "U");
+    repo.touchUser(2, "o", "O");
+    repo.updateUser(1, { groupKey: group.key, remindFirstMin: 120 });
+    repo.toggleWatchGroup(1, "виш-14-24");
+    const day = "2026-09-15";
+    repo.bumpAiUsage(1, day, 100, 50);
+    repo.bumpAiUsage(2, day, 100, 50);
+    expect(repo.aiUsageGlobal(day)).toBe(2);
+
+    repo.forgetUser(1);
+    expect(repo.getUser(1)).toBeNull();
+    expect(repo.watchGroups(1)).toEqual([]);
+    // The quota is spend accounting: a wipe must not hand out a fresh budget.
+    expect(repo.aiUsage(1, day)).toBe(1);
+    expect(repo.aiUsageGlobal(day)).toBe(2);
+    expect(repo.getUser(2)?.id).toBe(2);
+  });
+});
+
 describe("announcements board", () => {
   it("stores, lists active only, deletes early", () => {
     const repo = new Repo(openDatabase(":memory:"));

@@ -192,7 +192,8 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
     };
     let found = false;
     if (own) found = scan(deps.service.materialize(own, today, addDays(today, 56)), `Предметы ${esc(own.title)}`);
-    if (!found) {
+    // Scanning every group is only worth it for a short, subject-like query.
+    if (!found && query.trim().split(/\s+/).length <= 3) {
       const all = new Map<string, Set<string>>();
       for (const g of deps.service.groups()) {
         for (const subject of subjectHits(deps.service.materialize(g, today, addDays(today, 56)), query).keys()) all.set(subject, new Set([...(all.get(subject) ?? []), g.title]));
@@ -202,7 +203,10 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
   }
 
   // 3. Teachers: the portal directory when the bot has an account, plus teachers of online lessons.
-  if (/\p{L}{3,}/u.test(query)) {
+  // Only for name-shaped input: a whole question would send every word of it to
+  // the portal search one by one.
+  const nameWords = query.trim().split(/\s+/).filter((w) => /\p{L}{3,}/u.test(w));
+  if (nameWords.length > 0 && nameWords.length <= 3) {
     const names: string[] = [];
     try {
       for (const t of deps.teachers ? await deps.teachers.search(query, 5) : []) {
@@ -237,8 +241,12 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   if (deps.ask) {
     const outcome = await askAi(ctx, query, { extraButtons: hits.buttons ? hits.kb : undefined });
     if (outcome === "answered") return;
-    if (outcome === "limit" && !hits.parts.length) {
-      await ctx.reply(`На сегодня лимит вопросов к ИИ исчерпан (${deps.config.AI_DAILY_LIMIT_PER_USER} в день). Кнопки и расписание работают без лимита.`);
+    if (!hits.parts.length && (outcome === "limit-user" || outcome === "limit-global")) {
+      await ctx.reply(
+        outcome === "limit-user"
+          ? `На сегодня твой лимит вопросов к ИИ исчерпан (${deps.config.AI_DAILY_LIMIT_PER_USER} в день). Кнопки и расписание работают без лимита.`
+          : "Сегодня бот уже много отвечал, общий дневной бюджет вопросов закончился. Кнопки и расписание работают без лимита.",
+      );
       return;
     }
   }
@@ -260,7 +268,7 @@ miscHandlers.on("message:text", async (ctx, next) => {
   }
   clearPending(ctx.deps, ctx.user.id);
   await ctx.replyWithChatAction("typing");
-  await runSearch(ctx, ctx.msg.text.trim().slice(0, 60));
+  await runSearch(ctx, ctx.msg.text.trim().slice(0, 500));
 });
 
 // ---- inline mode: @bot 12-23 завтра ----
