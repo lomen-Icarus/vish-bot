@@ -114,7 +114,7 @@ calendarHandlers.callbackQuery(/^cics:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery({ text: "Собираю изменения…" });
   const sub = subscriptionsEnabled(ctx) ? "\n\nС подпиской (в /calendar) это не нужно: там всё меняется само." : "";
   await ctx.replyWithDocument(new InputFile(Buffer.from(ics, "utf8"), icsFileName(group.title, todayMsk(), "_changes")), {
-    caption: `${group.title}: только изменения — ${live} ${plural(live, "пара", "пары", "пар")} обновить, ${cancelled} ${plural(cancelled, "отмена", "отмены", "отмен")}.\n\nОткрой файл → «Добавить». Google-календарь заменит события с теми же парами; на iPhone изменённые пары добавятся, а отменённые придут помеченными «Отменено» — их можно удалить.${sub}`,
+    caption: `${group.title}: только изменения — обновить ${live} ${plural(live, "пару", "пары", "пар")}, снять ${cancelled} ${plural(cancelled, "пару", "пары", "пар")}.\n\nОткрой файл → «Добавить». Google-календарь заменит события с теми же парами; на iPhone изменённые пары добавятся, а отменённые придут помеченными «Отменено» — их можно удалить.${sub}`,
   });
 });
 
