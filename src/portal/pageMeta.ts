@@ -48,5 +48,8 @@ export function parsePeriod(html: string): Period | null {
  */
 export function isLoginPage(html: string): boolean {
   if (!html.includes('name="wname"')) return false;
-  return html.includes('name="auth"') || html.includes('name="guest"');
+  // The webinar page carries the same inputs inside its "join" dialog; every
+  // other page with them is the sign-in page, and treating one as an empty
+  // timetable would look like every lesson had been cancelled.
+  return !html.includes('id="joindialog"');
 }

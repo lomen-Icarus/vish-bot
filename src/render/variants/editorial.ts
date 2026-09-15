@@ -161,7 +161,6 @@ function lessonRow(o: Occurrence, accent: string, ongoing: boolean): El {
   if (moved && o.movedTo) badges.push(tag(`перенесена на ${ddmm(o.movedTo.date)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, MUTED));
   if (o.movedFrom) badges.push(tag(`перенос с ${ddmm(o.movedFrom.date)}`, accent));
   if (o.substituted) badges.push(tag("замена", "#d1495b"));
-  if (o.isDistance) badges.push(tag("ДОТ", "#0f8a8a"));
 
   const meta: El[] = [typeMark(o.type, 24, moved ? MUTED : INK)];
   meta.push(text(o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", { fontSize: 24, fontWeight: 500, color: MUTED, marginRight: 22 }));

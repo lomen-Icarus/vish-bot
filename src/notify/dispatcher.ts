@@ -4,7 +4,7 @@ import type { Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
 import { clampHtml, formatChanges, formatDay, formatNotice, filterSubgroup } from "../schedule/format.js";
-import { isSessionPeriod, type Occurrence } from "../schedule/model.js";
+import { isSessionPeriod, lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
@@ -159,7 +159,8 @@ export class Notifier {
       if (!group) continue;
       // Only events the normal pass has already gone through: anything newer is
       // still on its way there, and sending it here would duplicate it.
-      const rows = this.repo.activeEvents(user.groupKey, now.date, 30).filter((r) => r.notified && r.createdAt >= since && !this.repo.reminderSent(user.id, "event", String(r.id)));
+      // The limit is applied in SQL, so it has to be wider than what one night can produce.
+      const rows = this.repo.activeEvents(user.groupKey, now.date, 200).filter((r) => r.notified && r.createdAt >= since && !this.repo.reminderSent(user.id, "event", String(r.id)));
       if (!rows.length) continue;
       const events: ChangeEvent[] = rows.map((r) => {
         const p = r.payload as { before?: Occurrence; after?: Occurrence; fields?: string[] };
@@ -231,7 +232,7 @@ export class Notifier {
             this.repo.markReminderSent(user.id, "each", ref);
             const left = o.start! - now.minutes;
             const where = o.isDistance ? "💻 дистанционно" : o.room ? `ауд. ${o.room}` : "";
-            const text = `⏱ Через ${humanMinutes(left)} — <b>${escapeHtml(o.subject)}</b> (${o.type})${where ? `, ${escapeHtml(where)}` : ""} · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}`;
+            const text = `⏱ Через ${humanMinutes(left)} — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(lessonTypeLabel(o.type))})${where ? `, ${escapeHtml(where)}` : ""} · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}`;
             const kb = o.isDistance ? new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL) : undefined;
             if (await this.send(user, text, { kind: "remind-each", replyMarkup: kb })) sent++;
           }
@@ -250,7 +251,7 @@ export class Notifier {
             // The webinar page names the teacher and the topic of the session; add them when known.
             const w = this.webinars?.forLesson(o, [group.title, ...group.portalNames]) ?? null;
             const extra = [w?.teacher ? escapeHtml(w.teacher) : "", w?.title ? `📝 ${escapeHtml(w.title.length > 120 ? w.title.slice(0, 117).trimEnd() + "…" : w.title)}` : ""].filter(Boolean);
-            const text = `💻 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} дистант — <b>${escapeHtml(o.subject)}</b> (${o.type}) · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\nВебинар: ${WEBINAR_URL}`;
+            const text = `💻 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} дистант — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(lessonTypeLabel(o.type))}) · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\nВебинар: ${WEBINAR_URL}`;
             if (await this.send(user, text, { kind: "remind-distance", replyMarkup: new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL) })) sent++;
           }
         }

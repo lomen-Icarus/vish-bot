@@ -195,7 +195,6 @@ function dayLesson(o: Occurrence, accent: string, ongoing: boolean): El {
   if (moved && o.movedTo) badges.push(badge(`перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, "#e0a3ad"));
   if (o.movedFrom) badges.push(badge(`перенос с ${o.movedFrom.date.slice(8, 10)}.${o.movedFrom.date.slice(5, 7)}`, "#d6c19a"));
   if (o.substituted) badges.push(badge("замена", "#e4b0bd"));
-  if (o.isDistance) badges.push(badge("ДОТ", "#a9bfd6"));
   if (ongoing) badges.push(badge("сейчас", accent));
 
   return row(

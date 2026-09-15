@@ -158,13 +158,21 @@ export async function createPooledRenderer(opts: PoolOptions): Promise<PooledRen
     return Object.assign(renderer, { stop: () => undefined });
   }
   const pool = new RenderPool({ theme: opts.theme, rendersPerWorker: opts.rendersPerWorker ?? 30, timeoutMs: opts.timeoutMs ?? 25_000 });
-  // Fail fast if the worker cannot start at all (missing fonts, bad theme).
-  await pool.renderDay({
-    group: { key: "probe", title: "ВИШ", prefix: "ВИШ", number: 0, intake: 0, course: 0, portalIds: [], portalNames: [] },
-    date: "2026-09-01",
-    lessons: [],
-    weekInfo: { week: 1, parity: "odd", semester: 1 },
-    today: "2026-09-01",
-  });
-  return pool;
+  try {
+    // Prove the worker can start and draw before trusting it with real posters.
+    await pool.renderDay({
+      group: { key: "probe", title: "ВИШ", prefix: "ВИШ", number: 0, intake: 0, course: 0, portalIds: [], portalNames: [] },
+      date: "2026-09-01",
+      lessons: [],
+      weekInfo: { week: 1, parity: "odd", semester: 1 },
+      today: "2026-09-01",
+    });
+    return pool;
+  } catch (err) {
+    // A host that will not let us fork still gets posters, just the leaky way.
+    logger.warn({ err: String(err) }, "render worker unavailable, drawing posters in-process (memory grows over time)");
+    pool.stop();
+    const renderer = await createThemedRenderer(opts.theme);
+    return renderer ? Object.assign(renderer, { stop: () => undefined }) : null;
+  }
 }

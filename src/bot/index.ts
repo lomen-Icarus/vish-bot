@@ -18,6 +18,19 @@ export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
   bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 30 }));
 
+  // A Telegram reply keyboard lives in the chat until a message replaces it, so
+  // after an update everyone would keep the previous menu. The first reply each
+  // chat gets carries the current one.
+  const menuRefreshed = new Set<number>();
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    const p = payload as { chat_id?: number | string; reply_markup?: unknown };
+    if ((method === "sendMessage" || method === "sendPhoto" || method === "sendDocument") && !p.reply_markup && typeof p.chat_id === "number" && p.chat_id > 0 && !menuRefreshed.has(p.chat_id)) {
+      menuRefreshed.add(p.chat_id);
+      return prev(method, { ...payload, reply_markup: mainKeyboard() } as typeof payload, signal);
+    }
+    return prev(method, payload, signal);
+  });
+
   bot.use(session({ initial: () => ({}) }));
 
   // Attach deps and the user record to every update.
