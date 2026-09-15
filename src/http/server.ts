@@ -27,15 +27,18 @@ export function createHttpServer(deps: HttpDeps): Server {
   const cache = new Map<string, { at: number; body: string }>();
 
   const feed = (token: string): { status: number; body: string; type: string } => {
-    const hit = cache.get(token);
-    if (hit && Date.now() - hit.at < FEED_CACHE_MS) return { status: 200, body: hit.body, type: "text/calendar; charset=utf-8" };
     const user = deps.repo.userByCalToken(token);
     if (!user || user.blocked) return { status: 404, body: "not found", type: "text/plain; charset=utf-8" };
     const group = user.groupKey ? deps.service.group(user.groupKey) : null;
     if (!group) return { status: 404, body: "group not chosen", type: "text/plain; charset=utf-8" };
+    // Cache key changes whenever the user's settings or the portal data change, so a fresh feed is never stale.
+    const key = [token, group.key, user.subgroup ?? "", user.calAlarmMin ?? "", deps.repo.lastPollRun()?.finishedAt ?? ""].join("|");
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < FEED_CACHE_MS) return { status: 200, body: hit.body, type: "text/calendar; charset=utf-8" };
     const { ics } = groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H" });
+    for (const k of cache.keys()) if (k.startsWith(`${token}|`)) cache.delete(k);
     if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
-    cache.set(token, { at: Date.now(), body: ics });
+    cache.set(key, { at: Date.now(), body: ics });
     return { status: 200, body: ics, type: "text/calendar; charset=utf-8" };
   };
 
