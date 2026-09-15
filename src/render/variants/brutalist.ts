@@ -279,6 +279,8 @@ export async function createRenderer(): Promise<Renderer | null> {
     },
 
     async renderWeek(input: WeekRenderInput) {
+      // Total lessons of the week, so the footer says as much as the day poster does.
+      const weekTotal = [...input.byDate.values()].flat().filter((o) => o.status === "scheduled" && (!input.subgroup || o.subgroup == null || o.subgroup === input.subgroup)).length;
       const { group, monday, byDate, weekInfo, today, subgroup } = input;
       const p = parityOf(weekInfo);
       const sections: unknown[] = [];
@@ -335,7 +337,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       const tree = page([
         header({ title: "Неделя", dateLine: `${fmtDayMonth(monday)} – ${fmtDayMonth(addDays(monday, 6))}`, groupTitle: group.title, info: weekInfo }),
         h("div", { display: "flex", flexDirection: "column", width: "100%", marginTop: 4 }, ...sections),
-        footer("", "tt.chuvsu.ru"),
+        footer(weekTotal ? `${weekTotal} ${pluralPairs(weekTotal).toUpperCase()} ЗА НЕДЕЛЮ` : "", "tt.chuvsu.ru"),
       ]);
       return toPng(tree);
     },

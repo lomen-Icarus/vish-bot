@@ -323,10 +323,12 @@ export async function createRenderer(): Promise<Renderer | null> {
           ),
         );
       }
+      // Total lessons of the week, so the footer says as much as the day poster does.
+      const weekTotal = [...byDate.values()].flat().filter((o) => o.status === "scheduled" && (!subgroup || o.subgroup == null || o.subgroup === subgroup)).length;
       const tree = page([
         header("Неделя", `${fmtDayMonth(monday)} – ${fmtDayMonth(addDays(monday, 6))}`, group, THEME.accent, weekInfo),
         h("div", { display: "flex", flexDirection: "column", width: "100%", marginTop: 10 }, ...sections),
-        footer("", "tt.chuvsu.ru"),
+        footer(weekTotal ? `${weekTotal} ${pluralPairs(weekTotal)} за неделю` : "", "tt.chuvsu.ru"),
       ]);
       return toPng(tree);
     },
