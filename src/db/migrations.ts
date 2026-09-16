@@ -209,4 +209,18 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE users ADD COLUMN poster_theme TEXT;
   `,
+  `
+  CREATE TABLE poisk_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    query TEXT NOT NULL,
+    student TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX poisk_log_user_day ON poisk_log (user_id, day);
+  `,
+  `
+  UPDATE users SET topics = '["announcements"]' WHERE topics IS NULL OR trim(topics) = '' OR trim(topics) = '[]';
+  `,
 ];

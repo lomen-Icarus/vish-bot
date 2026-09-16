@@ -13,6 +13,7 @@ import type { Occurrence } from "../schedule/model.js";
 import type { LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 import type { ParsedScheduleDay } from "chuvsu-js/parsers";
+import { nameMatch, nameMatchScore, normName, type NameMatch } from "../text/match.js";
 
 export interface TeacherRef {
   id: number;
@@ -28,63 +29,22 @@ interface CachedPage {
   fullName: string | null;
 }
 
+/** Normalised words of a query, used for the portal's own search box. */
 function norm(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/ё/g, "е")
-    .replace(/[.,;:()"'«»]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normName(s);
 }
 
 /**
- * Score how well a directory entry ("Иванова И.И." / "Иванова Ирина Ивановна")
- * matches a typed query ("иванова", "Ирина Иванова", "иванова и", "иван").
- * Words may come in any order; a one-letter name word is an initial and
- * matches any query word starting with it. 0 = no match, higher = better.
+ * Score how well a directory entry matches a typed query, typos included.
+ * Kept as a named export: the webinar directory scores its teachers the same way.
  */
 export function teacherMatchScore(name: string, query: string): number {
-  const q = norm(query).split(" ").filter((w) => w.length >= 1);
-  const n = norm(name).split(" ").filter(Boolean);
-  if (!q.length || !n.length) return 0;
-  const surname = n[0]!;
-  let score = 0;
-  // At least one query word must match a real name word: matching only initials
-  // ("Троишестова" against the "Т." of "Кожина Т. Н.") is not a match at all.
-  let substantive = false;
-  const used = new Set<number>();
-  for (const qw of q) {
-    let best = 0;
-    let bestIdx = -1;
-    n.forEach((nw, i) => {
-      if (used.has(i)) return;
-      let s = 0;
-      if (nw === qw) s = i === 0 ? 6 : 4;
-      else if (nw.length === 1 && qw.startsWith(nw)) s = 1; // initial
-      else if (qw.length === 1 && nw.startsWith(qw)) s = 1; // typed initial
-      else if (nw.startsWith(qw) && qw.length >= 2) s = i === 0 ? 5 : 3;
-      else if (qw.startsWith(nw) && nw.length >= 3) s = 2; // typed a longer form ("иванова" vs "иванов")
-      else if (qw.length >= 4 && nw.includes(qw)) s = 1;
-      if (s > best) {
-        best = s;
-        bestIdx = i;
-      }
-    });
-    if (best === 0) {
-      // An extra word the entry does not have ("преподаватель Иванова") costs a
-      // point instead of killing the match outright.
-      score -= 1;
-      continue;
-    }
-    used.add(bestIdx);
-    score += best;
-    // Matching an initial (a one-letter name word) never counts as substantive,
-    // even when it is exact: "к ю" must not match every "… К. Ю." in the directory.
-    if (best >= 2 && qw.length >= 2 && (n[bestIdx]?.length ?? 0) >= 2) substantive = true;
-  }
-  if (!substantive || score <= 0) return 0;
-  if (q.length === 1 && q[0]!.length >= 3 && surname.startsWith(q[0]!)) score += 2;
-  return score;
+  return nameMatchScore(name, query);
+}
+
+/** Same, but says whether the match needed typo tolerance. */
+export function teacherMatch(name: string, query: string): NameMatch {
+  return nameMatch(name, query);
 }
 
 export class TeacherService {
@@ -128,16 +88,27 @@ export class TeacherService {
     return this.directoryPromise;
   }
 
-  /** Fuzzy search over the directory (any word order, initials), then the portal's own search. */
+  /** Fuzzy search over the directory (any word order, initials, typos), then the portal's own search. */
   async search(query: string, limit = 8): Promise<TeacherRef[]> {
+    return (await this.searchScored(query, limit)).map((x) => x.ref);
+  }
+
+  /**
+   * Same as `search`, but keeps the score and whether the match needed typo
+   * tolerance, so the caller can offer "может быть, ты имел в виду…" instead of
+   * opening someone else's timetable.
+   */
+  async searchScored(query: string, limit = 8): Promise<Array<{ ref: TeacherRef; score: number; fuzzy: boolean }>> {
     const q = query.trim();
     if (q.length < 2) return [];
     const dir = await this.directory();
     const scored = dir
-      .map((t) => ({ t, s: teacherMatchScore(t.name, q) }))
-      .filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s || a.t.name.localeCompare(b.t.name, "ru"));
-    if (scored.length) return scored.slice(0, limit).map((x) => x.t);
+      .map((t) => ({ ref: t, ...nameMatch(t.name, q) }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => Number(a.fuzzy) - Number(b.fuzzy) || b.score - a.score || a.ref.name.localeCompare(b.ref.name, "ru"));
+    // Точные попадания — ответ. Если совпало только с опечаткой, всё равно
+    // спросим портал: там может найтись тот, кого в суточном кеше ещё нет.
+    if (scored.some((x) => !x.fuzzy)) return scored.slice(0, limit);
     // The portal search box understands a surname. People type it first
     // ("Троишестова Дарья"), so try that word first and only then the others,
     // longest first, until the portal returns something.
@@ -151,16 +122,16 @@ export class TeacherService {
         const merged = [...dir];
         for (const f of found) if (!merged.some((t) => t.id === f.id)) merged.push(f);
         this.repo.setMeta("teachers:list", JSON.stringify(merged));
-        const rescored = found.map((t) => ({ t, s: teacherMatchScore(t.name, q) })).sort((a, b) => b.s - a.s);
-        const hits = rescored.filter((x) => x.s > 0);
-        return (hits.length ? hits : rescored).slice(0, limit).map((x) => x.t);
+        const rescored = found.map((t) => ({ ref: t, ...nameMatch(t.name, q) })).sort((a, b) => b.score - a.score);
+        const hits = rescored.filter((x) => x.score > 0);
+        return (hits.length ? hits : rescored.map((x) => ({ ...x, score: 1, fuzzy: true }))).slice(0, limit);
       } catch (err) {
         this.repo.setMeta("teachers:lastError", String(err).slice(0, 300));
         logger.warn({ err: String(err), word }, "portal teacher search failed");
-        return [];
+        return scored.slice(0, limit);
       }
     }
-    return [];
+    return scored.slice(0, limit);
   }
 
   async byId(id: number): Promise<TeacherRef | null> {

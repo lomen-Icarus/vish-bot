@@ -14,7 +14,7 @@
 import type { Webinar } from "chuvsu-js";
 import type { PortalClient } from "./client.js";
 import type { Repo, WebinarRow } from "../db/repo.js";
-import { teacherMatchScore } from "./teachers.js";
+import { teacherMatch } from "./teachers.js";
 import { addDays, todayMsk, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 
@@ -215,12 +215,17 @@ export class WebinarService {
 
   /** Fuzzy teacher lookup over the webinar history (same scoring as the portal directory). */
   search(query: string, limit = 5): WebinarTeacher[] {
+    return this.searchScored(query, limit).map((x) => x.teacher);
+  }
+
+  /** То же, но видно, какие совпадения нашлись только с опечаткой. */
+  searchScored(query: string, limit = 5): Array<{ teacher: WebinarTeacher; score: number; fuzzy: boolean }> {
     return this.teachers()
-      .map((t) => ({ t, s: teacherMatchScore(t.name, query) }))
-      .filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s || a.t.name.localeCompare(b.t.name, "ru"))
-      .slice(0, limit)
-      .map((x) => x.t);
+      .map((t) => ({ teacher: t, ...teacherMatch(t.name, query) }))
+      .filter((x) => x.score > 0)
+      // Exact matches first; typo-tolerant ones only fill the rest of the list.
+      .sort((a, b) => Number(a.fuzzy) - Number(b.fuzzy) || b.score - a.score || a.teacher.name.localeCompare(b.teacher.name, "ru"))
+      .slice(0, limit);
   }
 
   /** Upcoming online lessons of a teacher (today and later). */

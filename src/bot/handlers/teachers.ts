@@ -81,21 +81,27 @@ teacherHandlers.on("message:text", async (ctx, next) => {
   const teachers = ctx.deps.teachers;
   const query = ctx.msg.text;
   await ctx.replyWithChatAction("typing");
-  const found = teachers ? await teachers.search(query) : [];
+  const scored = teachers ? await teachers.searchScored(query) : [];
+  const found = scored.map((x) => x.ref);
   // Teachers of online lessons are readable without a portal account; keep them as a fallback.
-  const fromWebinars = (ctx.deps.webinars?.search(query, 5) ?? []).filter((w) => !found.some((t) => samePerson(t.name, w.name)));
+  const webinarHits = (ctx.deps.webinars?.searchScored(query, 5) ?? []).filter((w) => !found.some((t) => samePerson(t.name, w.teacher.name)));
+  const fromWebinars = webinarHits.map((w) => w.teacher);
   if (!found.length && !fromWebinars.length) {
     const err = teachers?.lastError();
     const hint = err && ctx.isAdmin ? `\n\n<i>Админу: последняя ошибка портала — ${esc(err)}</i>` : "";
     const noAccount = !teachers ? "\n\nСейчас бот знает только преподавателей дистанционных пар: полный справочник портал отдаёт лишь авторизованным." : "";
-    return void (await ctx.reply(`Никого не нашёл по «${esc(query)}». Попробуй одну фамилию без имени или первые буквы фамилии; имя и фамилию можно в любом порядке.${noAccount}${hint}`, { parse_mode: "HTML" }));
+    return void (await ctx.reply(`Никого не нашёл по «${esc(query)}» — даже с поправкой на опечатки. Попробуй одну фамилию без имени или первые буквы фамилии; имя и фамилию можно в любом порядке.${noAccount}${hint}`, { parse_mode: "HTML" }));
   }
-  if (found.length === 1 && !fromWebinars.length) return showTeacherDay(ctx, found[0]!, todayMsk());
-  if (!found.length && fromWebinars.length === 1) return showWebinarTeacher(ctx, fromWebinars[0]!);
+  // Совпало только с опечатками — не открываем чужое расписание молча, а спрашиваем.
+  // Без учётки портала scored пуст, поэтому судим и по преподавателям дистанта.
+  const guess = [...scored, ...webinarHits].every((x) => x.fuzzy);
+  if (!guess && found.length === 1 && !fromWebinars.length) return showTeacherDay(ctx, found[0]!, todayMsk());
+  if (!guess && !found.length && fromWebinars.length === 1) return showWebinarTeacher(ctx, fromWebinars[0]!);
   const kb = new InlineKeyboard();
   for (const t of found) kb.text(t.name, `t:${t.id}`).row();
   for (const t of fromWebinars) kb.text(`${t.name} (дистант)`, webinarKey(t.name)).row();
-  await ctx.reply("Кого показать?", { reply_markup: kb });
+  kb.text("🔎 Искать другого", "t:search");
+  await ctx.reply(guess ? `Точного совпадения с «${esc(query)}» нет. Может быть, кто-то из них?` : "Кого показать?", { parse_mode: "HTML", reply_markup: kb });
 });
 
 teacherHandlers.callbackQuery(/^wtc:(.+)$/, async (ctx) => {
@@ -131,7 +137,7 @@ async function showTeacherDay(ctx: BotContext, t: TeacherRef, date: LocalDate, e
   try {
     const { lessons, fullName } = await teachers.lessons(t, date, date);
     const text = formatDay(pseudoGroup(t, fullName), date, lessons, ctx.deps.service.weekInfo(date), todayMsk(), { now: wallClock() });
-    const kb = teacherDayNav(t.id, date, todayMsk());
+    const kb = teacherDayNav(t.id, date);
     if (edit) {
       try {
         await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });

@@ -58,6 +58,21 @@ const schema = z.object({
   AI_MODEL: z.string().default("claude-sonnet-5"),
   AI_DAILY_LIMIT_PER_USER: z.coerce.number().int().nonnegative().default(10),
   AI_DAILY_LIMIT_GLOBAL: z.coerce.number().int().nonnegative().default(300),
+  /**
+   * Глобальный поиск студентов ("сыск"): TRUE включает раздел целиком, FALSE
+   * прячет его полностью — ни кнопок, ни команд, ни колбэков.
+   */
+  POISK: z
+    .string()
+    .default("FALSE")
+    .transform((v) => ["1", "true", "yes", "on", "да"].includes(v.trim().toLowerCase())),
+  /**
+   * Файл со студентами (ФИО + группа). Лежит ТОЛЬКО на хостинге рядом с базой
+   * бота и никогда не попадает в репозиторий. CSV, JSON или SQLite.
+   */
+  POISK_DB: z.string().default("./data/students.csv"),
+  /** Сколько раз в сутки один человек может искать людей (защита от выкачивания базы). */
+  POISK_DAILY_LIMIT: z.coerce.number().int().nonnegative().catch(30),
   PORTAL_TLS_INSECURE: z
     .string()
     .default("0")

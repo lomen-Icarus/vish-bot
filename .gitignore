@@ -10,3 +10,8 @@ out/
 .runtime/
 .scratch/
 .tmp/
+# Реестр студентов для «сыска» — только на сервере, никогда в git
+students.csv
+students.json
+students.sqlite
+*.students.*
