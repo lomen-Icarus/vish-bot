@@ -25,6 +25,7 @@ export const BTN = {
   streamTomorrow: "Поток: завтра",
   streamWeek: "Поток: неделя",
   streamCommon: "🤝 Общие пары",
+  whereStudent: "🕵️ Где студент",
   backToMenu: "◀️ В меню",
 } as const;
 
@@ -57,19 +58,11 @@ export function mainKeyboard(): Keyboard {
     .persistent();
 }
 
-export function streamKeyboard(): Keyboard {
-  return new Keyboard()
-    .text(BTN.streamYesterday)
-    .text(BTN.streamToday)
-    .text(BTN.streamTomorrow)
-    .row()
-    .text(BTN.streamWeek)
-    .text(BTN.streamCommon)
-    .row()
-    .text(BTN.settings)
-    .text(BTN.backToMenu)
-    .resized()
-    .persistent();
+/** `poisk` добавляет кнопку глобального поиска студента (POISK=TRUE). */
+export function streamKeyboard(opts: { poisk?: boolean } = {}): Keyboard {
+  const kb = new Keyboard().text(BTN.streamYesterday).text(BTN.streamToday).text(BTN.streamTomorrow).row().text(BTN.streamWeek).text(BTN.streamCommon).row();
+  if (opts.poisk) kb.text(BTN.whereStudent).row();
+  return kb.text(BTN.settings).text(BTN.backToMenu).resized().persistent();
 }
 
 export function intakePicker(intakes: number[], selected: number): InlineKeyboard {
@@ -141,10 +134,12 @@ export function weekNav(monday: LocalDate, opts: { image: boolean; peekKey?: str
   return kb;
 }
 
-export function teacherDayNav(teacherId: number, date: LocalDate, today: LocalDate): InlineKeyboard {
-  const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `td:${teacherId}:${addDays(date, -1)}`);
-  if (date !== today) kb.text("сегодня", `td:${teacherId}:${today}`);
-  kb.text(`${fmtDDMM(addDays(date, 1))} ▶️`, `td:${teacherId}:${addDays(date, 1)}`).row();
+/** Как и в расписании группы, без кнопки «сегодня»: её читают как текущую дату. */
+export function teacherDayNav(teacherId: number, date: LocalDate): InlineKeyboard {
+  const kb = new InlineKeyboard()
+    .text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `td:${teacherId}:${addDays(date, -1)}`)
+    .text(`${fmtDDMM(addDays(date, 1))} ▶️`, `td:${teacherId}:${addDays(date, 1)}`)
+    .row();
   kb.text("🗓 Неделя", `tw:${teacherId}:${date}`).text("🔎 Другой", "t:search");
   return kb;
 }

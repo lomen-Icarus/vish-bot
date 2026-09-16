@@ -11,6 +11,7 @@ import { streamHandlers } from "./handlers/stream.js";
 import { newsHandlers } from "./handlers/news.js";
 import { calendarHandlers } from "./handlers/calendar.js";
 import { sourceHandlers } from "./handlers/sources.js";
+import { poiskHandlers } from "./handlers/poisk.js";
 import { logger } from "../logger.js";
 import { mainKeyboard } from "./keyboards.js";
 
@@ -55,7 +56,12 @@ export function createBot(deps: Deps): Bot<BotContext> {
   // Private chats only for the interactive UI; groups can still use inline mode.
   bot.on("message", async (ctx, next) => {
     if (ctx.chat.type !== "private") {
-      if (ctx.msg.text?.startsWith("/")) await ctx.reply("Я работаю в личных сообщениях. Напиши мне напрямую или используй inline: @" + (bot.botInfo?.username ?? "bot") + " 12-23");
+      if (ctx.msg.text?.startsWith("/")) {
+        const uname = bot.botInfo?.username ?? "bot";
+        // Про inline пишем только когда он реально включён в BotFather.
+        const hint = deps.inline ? `\n\nВ этом чате работает inline: набери <code>@${uname} 12-23 завтра</code> и выбери подсказку — расписание вставится сообщением.` : "";
+        await ctx.reply(`Я работаю в личных сообщениях: напиши мне напрямую @${uname}.${hint}`, { parse_mode: "HTML" });
+      }
       return;
     }
     await next();
@@ -66,6 +72,9 @@ export function createBot(deps: Deps): Bot<BotContext> {
   bot.use(miscHandlers);
   bot.use(askHandlers);
   bot.use(teacherHandlers);
+  // Глобальный поиск студентов подключается только при POISK=TRUE: иначе в боте
+  // нет ни кнопок, ни команд, ни колбэков этого раздела.
+  if (deps.config.POISK) bot.use(poiskHandlers);
   bot.use(streamHandlers);
   bot.use(calendarHandlers);
   bot.use(settingsHandlers);
@@ -117,6 +126,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
   if (deps.ask) common.push({ command: "ask", description: "Спросить про расписание своими словами" });
   common.push({ command: "suggest", description: "Отправить новость медиа-ВИШ" });
   common.push({ command: "soon", description: "Удалить мои данные и начать заново" });
+  if (deps.config.POISK) common.push({ command: "poisk", description: "Где студент: глобальный поиск по ФИО" });
   await bot.api.setMyCommands(common);
   const admin = [
     ...common,
@@ -127,6 +137,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "news_scan", description: "Сканировать новости сейчас" },
     { command: "poll", description: "Опросить портал сейчас" },
     { command: "health", description: "Состояние бота" },
+    { command: "ailimit", description: "Лимиты вопросов к ИИ" },
   ];
   for (const id of deps.config.ADMIN_IDS) {
     try {

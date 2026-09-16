@@ -288,8 +288,10 @@ export class Repo {
     const ts = nowIso();
     this.db
       .prepare(
-        `INSERT INTO users (id, username, first_name, notify_notices, created_at, updated_at, last_seen_at)
-         VALUES (?, ?, ?, 0, ?, ?, ?)
+        // Тема «Объявления» включена сразу: туда идёт только важное — дистант,
+        // отмены, дедлайны. Конкурсы и события остаются по подписке.
+        `INSERT INTO users (id, username, first_name, notify_notices, topics, created_at, updated_at, last_seen_at)
+         VALUES (?, ?, ?, 0, '["announcements"]', ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET username = excluded.username, first_name = excluded.first_name,
            last_seen_at = excluded.last_seen_at, blocked = 0`,
       )
@@ -669,6 +671,32 @@ export class Repo {
   }
 
   // ---------- AI usage ----------
+  /**
+   * Журнал глобального поиска людей: и аудит (кто кого искал), и счётчик против
+   * выкачивания базы. Как и ai_usage, переживает /soon — иначе лимит сбрасывался
+   * бы одной командой.
+   */
+  logPoisk(userId: number, day: string, query: string, student: string | null): void {
+    this.db.prepare("INSERT INTO poisk_log (user_id, day, query, student, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, day, query.slice(0, 200), student, nowIso());
+  }
+  /** Человек выбрал из списка кандидатов: уточняем последнюю запись журнала, не тратя лимит. */
+  markPoiskChoice(userId: number, day: string, student: string): void {
+    this.db
+      .prepare("UPDATE poisk_log SET student = ? WHERE id = (SELECT id FROM poisk_log WHERE user_id = ? AND day = ? ORDER BY id DESC LIMIT 1)")
+      .run(student, userId, day);
+  }
+  poiskUsage(userId: number, day: string): number {
+    const r = this.db.prepare("SELECT COUNT(*) AS c FROM poisk_log WHERE user_id = ? AND day = ?").get(userId, day) as { c: number };
+    return r.c;
+  }
+  poiskStats(day: string): { searches: number; users: number } {
+    const r = this.db.prepare("SELECT COUNT(*) AS c, COUNT(DISTINCT user_id) AS u FROM poisk_log WHERE day = ?").get(day) as { c: number; u: number };
+    return { searches: r.c, users: r.u };
+  }
+  prunePoiskLog(olderThanDays = 180): void {
+    this.db.prepare("DELETE FROM poisk_log WHERE created_at < datetime('now', ?)").run(`-${olderThanDays} days`);
+  }
+
   aiUsage(userId: number, day: string): number {
     const r = this.db.prepare("SELECT count FROM ai_usage WHERE user_id = ? AND day = ?").get(userId, day) as { count: number } | undefined;
     return r?.count ?? 0;

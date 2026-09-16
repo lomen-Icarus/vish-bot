@@ -7,11 +7,12 @@ import type { AskService } from "../ai/ask.js";
 import type { TeacherService } from "../portal/teachers.js";
 import type { NewsScanner } from "../news/scanner.js";
 import type { WebinarService } from "../portal/webinars.js";
+import type { StudentDirectory } from "../students/directory.js";
 import type { Server } from "node:http";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
-  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher" | "search";
+  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher" | "search" | "poisk";
   /** For broadcast: captured message to forward. */
   chatId?: number;
   messageId?: number;
@@ -33,8 +34,18 @@ export interface Deps {
   teachers: TeacherService | null;
   news: NewsScanner | null;
   webinars: WebinarService | null;
+  /** Справочник студентов для «сыска»; null, когда POISK=FALSE. */
+  students: StudentDirectory | null;
   /** Calendar-feed server; subscription links are offered only while it listens. */
   http: Server | null;
+  /**
+   * Включён ли inline-режим у бота (BotFather → /setinline). Telegram сообщает
+   * это в getMe; без него подсказка «@бот 12-23» в чатах просто не появляется,
+   * поэтому обещать её нельзя.
+   */
+  inline: boolean;
+  /** @username бота: подставляется в подсказки про inline. */
+  botUsername: string | null;
   pending: Map<number, PendingState>;
   startedAt: Date;
 }
