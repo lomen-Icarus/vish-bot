@@ -679,6 +679,12 @@ export class Repo {
   logPoisk(userId: number, day: string, query: string, student: string | null): void {
     this.db.prepare("INSERT INTO poisk_log (user_id, day, query, student, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, day, query.slice(0, 200), student, nowIso());
   }
+  /** Человек выбрал из списка кандидатов: уточняем последнюю запись журнала, не тратя лимит. */
+  markPoiskChoice(userId: number, day: string, student: string): void {
+    this.db
+      .prepare("UPDATE poisk_log SET student = ? WHERE id = (SELECT id FROM poisk_log WHERE user_id = ? AND day = ? ORDER BY id DESC LIMIT 1)")
+      .run(student, userId, day);
+  }
   poiskUsage(userId: number, day: string): number {
     const r = this.db.prepare("SELECT COUNT(*) AS c FROM poisk_log WHERE user_id = ? AND day = ?").get(userId, day) as { c: number };
     return r.c;

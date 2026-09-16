@@ -192,7 +192,12 @@ export class AskService {
       run: async (input) => {
         const out: string[] = [];
         // Webinar rows name the teacher of every online lesson and are readable without an account.
-        const fromWebinars = webinars?.search(input.query, 3) ?? [];
+        const webinarHits = webinars?.searchScored(input.query, 3) ?? [];
+        const fromWebinars = webinarHits.map((x) => x.teacher);
+        // Нашлось только по опечатке — так и скажи, а не выдавай за точный ответ.
+        if (webinarHits.length && webinarHits.every((x) => x.fuzzy)) {
+          out.push(`Точного совпадения с «${input.query}» нет; ниже — похожие по написанию: ${fromWebinars.map((t) => t.name).join("; ")}. Предложи выбрать, кнопки бот добавит сам.`);
+        }
         for (const t of fromWebinars) {
           out.push(describeWebinarTeacher(t, webinars!, today));
           remember(mentions.webinarTeachers, t.name, (a, b) => a.toLowerCase() === b.toLowerCase());

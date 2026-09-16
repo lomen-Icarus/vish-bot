@@ -48,7 +48,12 @@ async function main(): Promise<void> {
 
   // «Сыск»: файл со студентами лежит только на хостинге и в репозиторий не попадает.
   const students = config.POISK ? new StudentDirectory(config.POISK_DB) : null;
-  if (students) logger.info({ count: students.stats().count, file: config.POISK_DB }, "global student search enabled");
+  if (students) {
+    const st = students.stats();
+    // POISK=TRUE с ненайденным файлом — это мёртвый раздел у всех: это ошибка, а не «info».
+    if (st.error || !st.count) logger.error({ file: config.POISK_DB, err: st.error }, "POISK=TRUE, но справочник студентов не прочитан: раздел «Где студент» работать не будет");
+    else logger.info({ count: st.count, file: config.POISK_DB }, "global student search enabled");
+  }
   else logger.info("global student search disabled (POISK=FALSE)");
 
   const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };

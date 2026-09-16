@@ -69,7 +69,9 @@ function sharedStrings(zip) {
   const entry = zip.get("xl/sharedStrings.xml");
   if (!entry) return [];
   const xml = entry().toString("utf8");
-  return [...xml.matchAll(/<si[^>]*>([\s\S]*?)<\/si>/g)].map((m) => textOf(m[1]));
+  // Пустая строка пишется как <si/>: если её пропустить, все следующие индексы
+  // съедут на единицу и таблица прочитается чужими значениями.
+  return [...xml.matchAll(/<si\b[^>]*?(?:\/>|>([\s\S]*?)<\/si>)/g)].map((m) => textOf(m[1] ?? ""));
 }
 
 function sheetPaths(zip) {
@@ -78,8 +80,9 @@ function sheetPaths(zip) {
   const byId = new Map([...rels.matchAll(/<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)].map((m) => [m[1], m[2]]));
   const out = [];
   for (const m of wb.matchAll(/<sheet[^>]*name="([^"]*)"[^>]*r:id="([^"]+)"/g)) {
-    const target = byId.get(m[2]) ?? "";
-    out.push({ name: unescapeXml(m[1]), path: target.startsWith("xl/") ? target : `xl/${target.replace(/^\/+/, "")}` });
+    // Target бывает относительным («worksheets/sheet1.xml») и абсолютным («/xl/worksheets/sheet1.xml»).
+    const target = (byId.get(m[2]) ?? "").replace(/^\/+/, "");
+    out.push({ name: unescapeXml(m[1]), path: target.startsWith("xl/") ? target : `xl/${target}` });
   }
   return out;
 }
@@ -92,13 +95,15 @@ function sheetRows(zip, path, strings) {
   const rows = [];
   for (const rowMatch of xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
     const cells = {};
+    // Атрибут r у ячейки необязателен: тогда считаем колонки по порядку.
+    let cursor = 0;
     // Пустые ячейки записаны как <c r="B7" s="17"/>: без разбора самозакрывающихся
     // тегов регулярка съедала соседние ячейки и строка теряла группу.
     for (const c of rowMatch[1].matchAll(/<c\s+([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
       const attrs = c[1];
       const inner = c[2] ?? "";
-      const col = /r="([A-Z]+)\d+"/.exec(attrs)?.[1];
-      if (!col) continue;
+      const col = /r="([A-Z]+)\d+"/.exec(attrs)?.[1] ?? columnName(cursor);
+      cursor = columnIndex(col) + 1;
       const type = /t="([^"]+)"/.exec(attrs)?.[1];
       let value = "";
       if (type === "s") {
@@ -116,10 +121,37 @@ function sheetRows(zip, path, strings) {
   return rows;
 }
 
+/** «A» → 0, «B» → 1, «AA» → 26. */
+function columnIndex(name) {
+  let n = 0;
+  for (const ch of name) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+function columnName(index) {
+  let n = index + 1;
+  let out = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    out = String.fromCharCode(65 + rem) + out;
+    n = Math.floor((n - 1) / 26);
+  }
+  return out || "A";
+}
+
 // ---------- что считаем человеком и группой ----------
-const NAME_RE = /^[А-ЯЁ][а-яё-]+(\s+[А-ЯЁ][а-яё-]+){1,3}$/u;
+// Двойные фамилии («Кузнецов-Смирнов») и выгрузки капсом тоже люди.
+const NAME_RE = /^[А-ЯЁ][А-Яа-яЁё-]*[А-Яа-яЁё](\s+[А-ЯЁ][А-Яа-яЁё-]*[А-Яа-яЁё]?){1,3}$/u;
 const GROUP_RE = /^(ОЗ)?ВИШ[\s-]*(\d{1,2})[\s-]*(\d{2})\s*(иот)?\s*(\([^)]*\))?\s*$/iu;
 const norm = (s) => s.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+
+/** «СИДОРОВ СИДОР» → «Сидоров Сидор», дефисные части тоже с заглавной. */
+function titleCase(name) {
+  if (name !== name.toUpperCase()) return name;
+  return name
+    .toLowerCase()
+    .replace(/(^|[\s-])([а-яёa-z])/gu, (_, sep, ch) => sep + ch.toUpperCase());
+}
 
 function canonicalGroup(raw) {
   const m = GROUP_RE.exec(raw);
@@ -161,16 +193,26 @@ function main() {
           cols = headerColumns(row);
           continue;
         }
-        const name = row[cols.name] ?? "";
+        const raw = row[cols.name] ?? "";
         const group = canonicalGroup(row[cols.group] ?? "");
-        if (!group || !NAME_RE.test(name)) continue;
+        if (!group || !NAME_RE.test(raw)) continue;
+        const name = titleCase(raw);
         const key = norm(name);
         const prev = students.get(key);
         if (prev) {
-          if (norm(prev.group) !== norm(group)) conflicts++;
-          continue; // первая книга в списке главнее
+          if (norm(prev.group) === norm(group)) continue; // та же запись
+          if (prev.file !== file) {
+            // Один человек в разных книгах с разными группами: верим первой.
+            conflicts++;
+            continue;
+          }
+          // Внутри одной книги это два РАЗНЫХ человека с одинаковым ФИО —
+          // оба должны попасть в справочник, иначе один просто исчезнет.
+          students.set(`${key}|${norm(group)}`, { name, group, file });
+          taken++;
+          continue;
         }
-        students.set(key, { name, group });
+        students.set(key, { name, group, file });
         taken++;
       }
       if (cols) console.log(`  ${file} → «${sheet.name}»: ${taken} записей`);

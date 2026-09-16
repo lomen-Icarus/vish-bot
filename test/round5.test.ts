@@ -8,7 +8,7 @@ import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
 import { nameMatch } from "../src/text/match.js";
 import { StudentDirectory } from "../src/students/directory.js";
-import { addAiBonus, aiAllowance, aiLimits, setAiLimit } from "../src/ai/limits.js";
+import { addAiBonus, aiAllowance, aiLimits, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../src/ai/limits.js";
 import { BTN, streamKeyboard, teacherDayNav } from "../src/bot/keyboards.js";
 import { poiskHandlers } from "../src/bot/handlers/poisk.js";
 import { scheduleHandlers } from "../src/bot/handlers/schedule.js";
@@ -194,6 +194,36 @@ describe("AI limits", () => {
   });
 });
 
+describe("AI limit steps", () => {
+  it("«+» never lowers the limit, «−» never raises it", () => {
+    // Значение из .env может быть вне лесенки — кнопка не должна его «чинить» вниз.
+    expect(stepValue(GLOBAL_STEPS, 10000, 1)).toBeGreaterThanOrEqual(10000);
+    expect(stepValue(GLOBAL_STEPS, 10000, -1)).toBeLessThan(10000);
+    expect(stepValue(USER_STEPS, 0, -1)).toBe(0);
+    expect(stepValue(USER_STEPS, 10, 1)).toBe(15);
+  });
+});
+
+describe("student directory, tricky files", () => {
+  it("reads «Фамилия;Имя;Отчество;Группа» and does not import the header as a person", () => {
+    const dir = new StudentDirectory(tempFile("students.csv", ["Фамилия;Имя;Отчество;Группа", "Троишестов;Иван;Сергеевич;ВИШ-12-23"].join("\n")));
+    expect(dir.count()).toBe(1);
+    expect(dir.search("Троишестов")[0]!.student.name).toBe("Троишестов Иван Сергеевич");
+  });
+
+  it("does not trip over commas inside a quoted header", () => {
+    const dir = new StudentDirectory(tempFile("students.csv", ['"Фамилия, имя, отчество";"Группа"', "Иванова Мария Петровна;ВИШ-12-23"].join("\n")));
+    expect(dir.count()).toBe(1);
+    expect(dir.search("Иванова")[0]!.student.groupTitle).toBe("ВИШ-12-23");
+  });
+
+  it("keeps someone else's name out of the error text", () => {
+    const dir = new StudentDirectory(tempFile("students.json", '[{"fio":"Сидорова Мария Ивановна","group":"ВИШ-12-23"},}]'));
+    expect(dir.count()).toBe(0);
+    expect(dir.stats().error ?? "").not.toMatch(/Сидорова/);
+  });
+});
+
 describe("keyboards", () => {
   it("the teacher day navigation has no «сегодня» button either", () => {
     const markup = JSON.stringify(teacherDayNav(42, today));
@@ -243,6 +273,32 @@ describe("global student search", () => {
     await run(textUpdate("/poisk"), deps);
     const out = texts(await run(textUpdate("Кузнецов Пётр"), deps));
     expect(out).toMatch(/заочная группа/i);
+  });
+
+  it("does not open a schedule silently when only a typo matched", async () => {
+    const deps = makeDeps({ poisk: true, students: new StudentDirectory(tempFile("students.csv", CSV)) });
+    await run(textUpdate("/poisk"), deps);
+    const calls = await run(textUpdate("Троишестав"), deps);
+    const out = texts(calls);
+    // Предлагаем кнопками, а не показываем «где он сейчас» как факт.
+    expect(out).toMatch(/Точного совпадения/);
+    expect(JSON.stringify(calls)).toContain("pop:");
+    expect(out).not.toMatch(/📍/);
+  });
+
+  it("asks which group when the registry line matches two different ones", async () => {
+    const deps = makeDeps({ poisk: true, students: new StudentDirectory(tempFile("students.csv", ["ФИО;Группа", "Сорокин Иван Петрович;ВИШ-11-23"].join("\n"))) });
+    const twins: LogicalGroup[] = [
+      { key: "виш-11-23 (эиэа)", title: "ВИШ-11-23 (ЭиЭА)", prefix: "ВИШ", number: 11, intake: 23, course: 4, portalIds: [1], portalNames: ["ВИШ-11-23 (ЭиЭА)"] },
+      { key: "виш-11-23 (рзиаэс)", title: "ВИШ-11-23 (РЗиАЭС)", prefix: "ВИШ", number: 11, intake: 23, course: 4, portalIds: [2], portalNames: ["ВИШ-11-23(РЗиАЭС)"] },
+    ];
+    deps.service = { ...makeService(), groups: () => twins, group: (k: string) => twins.find((g) => g.key === k) ?? null } as unknown as ScheduleService;
+    await run(textUpdate("/poisk"), deps);
+    const calls = await run(textUpdate("Сорокин"), deps);
+    const out = texts(calls);
+    expect(out).toMatch(/несколько разных групп/);
+    expect(JSON.stringify(calls)).toContain("posg:");
+    expect(out).not.toMatch(/📍/);
   });
 
   it("holds the daily limit", async () => {

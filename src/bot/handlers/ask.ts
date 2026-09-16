@@ -15,6 +15,14 @@ export const askHandlers = new Composer<BotContext>();
 export type AskOutcome = "answered" | "disabled" | "limit-user" | "limit-global" | "failed";
 
 /**
+ * Вопросы, на которые модель отвечает прямо сейчас. Списание в базу происходит
+ * только после ответа, а апдейты обрабатываются параллельно, поэтому без этого
+ * счётчика два одновременных вопроса видели бы один и тот же остаток лимита.
+ */
+const inFlightByUser = new Map<number, number>();
+let inFlightGlobal = 0;
+
+/**
  * Ask the model and deliver the answer. Shared by /ask and the search button,
  * so both obey the same daily limits and both carry the "wrong answer" button.
  * `extraButtons` are appended under the answer, e.g. links the local search found.
@@ -23,15 +31,18 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   const ask = ctx.deps.ask;
   if (!ask) return "disabled";
   const day = todayMsk();
-  const { verdict } = aiAllowance(ctx.deps.repo, ctx.deps.config, ctx.user.id, ctx.isAdmin, day);
+  const { verdict } = aiAllowance(ctx.deps.repo, ctx.deps.config, ctx.user.id, ctx.isAdmin, day, { user: inFlightByUser.get(ctx.user.id) ?? 0, global: inFlightGlobal });
   if (verdict !== "ok") return verdict;
   await ctx.replyWithChatAction("typing");
+  inFlightByUser.set(ctx.user.id, (inFlightByUser.get(ctx.user.id) ?? 0) + 1);
+  inFlightGlobal++;
   try {
     const res = await ask.answer({ question, group: needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps) });
     ctx.deps.repo.bumpAiUsage(ctx.user.id, day, res.inputTokens, res.outputTokens);
     const logId = ctx.deps.repo.logAi(ctx.user.id, question, res.text);
     // Copy the caller's rows: mutating their keyboard would move buttons between messages.
-    const kb = new InlineKeyboard([...(opts.extraButtons?.inline_keyboard ?? []).map((row) => [...row])]);
+    // Пустые ряды Telegram не принимает, а localSearch их иногда оставляет.
+    const kb = new InlineKeyboard((opts.extraButtons?.inline_keyboard ?? []).filter((row) => row.length).map((row) => [...row]));
     appendMentions(ctx, kb, res.mentions);
     kb.row().text("👎 Ответ неверный", `aiw:${logId}`);
     const text = clampHtml(res.text);
@@ -40,6 +51,11 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   } catch (err) {
     logger.error({ err }, "ask failed");
     return "failed";
+  } finally {
+    const left = (inFlightByUser.get(ctx.user.id) ?? 1) - 1;
+    if (left > 0) inFlightByUser.set(ctx.user.id, left);
+    else inFlightByUser.delete(ctx.user.id);
+    inFlightGlobal = Math.max(0, inFlightGlobal - 1);
   }
 }
 
@@ -51,13 +67,26 @@ function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentio
   const taken = new Set(kb.inline_keyboard.flat().map((b) => ("callback_data" in b ? b.callback_data : "")));
   const today = todayMsk();
   const items: Array<[string, string]> = [];
-  const add = (label: string, data: string): void => {
+  // Один человек приходит и из справочника (t:<id>), и со страницы вебинаров
+  // (wtc:<hash>) — по callback_data это разные кнопки, поэтому помним и имена.
+  const names = new Set<string>();
+  // «Иванова И.И.» и «Иванова Ирина Ивановна» — один человек: фамилия + инициалы.
+  const key = (s: string): string => {
+    const parts = s.toLowerCase().replace(/ё/g, "е").split(/[.\s]+/).filter(Boolean);
+    return `${parts[0] ?? ""}|${parts.slice(1).map((w) => w[0]).join("")}`;
+  };
+  const add = (label: string, data: string, name?: string): void => {
     if (taken.has(data) || items.length >= 6) return;
+    if (name) {
+      const k = key(name);
+      if (names.has(k)) return;
+      names.add(k);
+    }
     taken.add(data);
     items.push([label.slice(0, 40), data]);
   };
-  for (const t of mentions.teachers) add(`👨‍🏫 ${t.name}`, `t:${t.id}`);
-  for (const name of mentions.webinarTeachers) add(`👨‍🏫 ${name}`, webinarKey(name));
+  for (const t of mentions.teachers) add(`👨‍🏫 ${t.name}`, `t:${t.id}`, t.name);
+  for (const name of mentions.webinarTeachers) add(`👨‍🏫 ${name}`, webinarKey(name), name);
   for (const key of mentions.groupKeys) {
     const g = ctx.deps.service.group(key);
     if (g && g.key !== ctx.user.groupKey) add(`📅 ${g.title}`, `pdn:${g.key}:${today}`);
@@ -108,7 +137,7 @@ askHandlers.callbackQuery(/^aiw:(\d+)$/, async (ctx) => {
   }
   const from = ctx.from;
   const group = needGroup(ctx);
-  const report = `👎 <b>ИИ ответил неверно</b> (${from.username ? `@${esc(from.username)}` : esc(from.first_name)}${group ? `, ${esc(group.title)}` : ""}, id <code>${from.id}</code>)\n\n<b>Вопрос:</b> ${esc(entry.question)}\n\n<b>Ответ:</b>\n${entry.answer}`;
+  const report = `👎 <b>ИИ ответил неверно</b> (${from.username ? `@${esc(from.username)}` : esc(from.first_name)}${group ? `, ${esc(group.title)}` : ""}, id <code>${from.id}</code>)\n\n<b>Вопрос:</b> ${esc(entry.question)}\n\n<b>Ответ:</b>\n${esc(entry.answer)}`;
   for (const adminId of ctx.deps.config.ADMIN_IDS) {
     try {
       await ctx.api.sendMessage(adminId, clampHtml(report), { parse_mode: "HTML" });
