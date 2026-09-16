@@ -82,19 +82,25 @@ export function clearAiBonus(repo: Repo, day: string): void {
   repo.setMeta(bonusGlobalKey(day), "");
 }
 
-/** Следующее/предыдущее значение из лесенки. */
+/**
+ * Следующее/предыдущее значение из лесенки. Текущее значение может быть и вне
+ * лесенки (его задали в .env или командой), поэтому «➕» никогда не уменьшает,
+ * а «➖» никогда не увеличивает.
+ */
 export function stepValue(steps: number[], current: number, dir: 1 | -1): number {
-  if (dir === 1) return steps.find((s) => s > current) ?? steps[steps.length - 1]!;
-  return [...steps].reverse().find((s) => s < current) ?? steps[0]!;
+  if (dir === 1) return steps.find((s) => s > current) ?? Math.max(current, steps[steps.length - 1]!);
+  return [...steps].reverse().find((s) => s < current) ?? Math.min(current, steps[0]!);
 }
 
 export type AiVerdict = "ok" | "limit-user" | "limit-global";
 
 /** Можно ли задать вопрос прямо сейчас. Админы — без лимита. */
-export function aiAllowance(repo: Repo, config: Config, userId: number, isAdmin: boolean, day: string): { verdict: AiVerdict; limits: AiLimits } {
+export function aiAllowance(repo: Repo, config: Config, userId: number, isAdmin: boolean, day: string, inFlight: { user?: number; global?: number } = {}): { verdict: AiVerdict; limits: AiLimits } {
   const limits = aiLimits(repo, config, day);
   if (isAdmin) return { verdict: "ok", limits };
-  if (repo.aiUsage(userId, day) >= limits.perUser) return { verdict: "limit-user", limits };
-  if (repo.aiUsageGlobal(day) >= limits.global) return { verdict: "limit-global", limits };
+  // Вопросы, на которые бот прямо сейчас отвечает, ещё не попали в базу:
+  // без их учёта пара одновременных вопросов проходила бы мимо лимита.
+  if (repo.aiUsage(userId, day) + (inFlight.user ?? 0) >= limits.perUser) return { verdict: "limit-user", limits };
+  if (repo.aiUsageGlobal(day) + (inFlight.global ?? 0) >= limits.global) return { verdict: "limit-global", limits };
   return { verdict: "ok", limits };
 }

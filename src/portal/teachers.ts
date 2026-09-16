@@ -106,7 +106,9 @@ export class TeacherService {
       .map((t) => ({ ref: t, ...nameMatch(t.name, q) }))
       .filter((x) => x.score > 0)
       .sort((a, b) => Number(a.fuzzy) - Number(b.fuzzy) || b.score - a.score || a.ref.name.localeCompare(b.ref.name, "ru"));
-    if (scored.length) return scored.slice(0, limit);
+    // Точные попадания — ответ. Если совпало только с опечаткой, всё равно
+    // спросим портал: там может найтись тот, кого в суточном кеше ещё нет.
+    if (scored.some((x) => !x.fuzzy)) return scored.slice(0, limit);
     // The portal search box understands a surname. People type it first
     // ("Троишестова Дарья"), so try that word first and only then the others,
     // longest first, until the portal returns something.
@@ -126,10 +128,10 @@ export class TeacherService {
       } catch (err) {
         this.repo.setMeta("teachers:lastError", String(err).slice(0, 300));
         logger.warn({ err: String(err), word }, "portal teacher search failed");
-        return [];
+        return scored.slice(0, limit);
       }
     }
-    return [];
+    return scored.slice(0, limit);
   }
 
   async byId(id: number): Promise<TeacherRef | null> {

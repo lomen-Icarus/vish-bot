@@ -56,7 +56,12 @@ export function typoBudget(len: number): number {
 
 export interface NameMatch {
   score: number;
-  /** True when the match needed typo tolerance: good enough to offer, not to assume. */
+  /**
+   * True, когда хоть одно слово совпало только с натяжкой (опечатка или более
+   * длинная форма). Такое совпадение можно предложить кнопкой, но нельзя молча
+   * принять за нужного человека: «Салодилин Егор» не должен открывать
+   * расписание Солодилина только потому, что имя совпало буква в букву.
+   */
   fuzzy: boolean;
 }
 
@@ -76,7 +81,6 @@ export function nameMatch(name: string, query: string): NameMatch {
   // ("Троишестова" against the "Т." of "Кожина Т. Н.") is not a match at all.
   let substantive = false;
   let fuzzy = false;
-  let exactHits = 0;
   const used = new Set<number>();
   for (const qw of q) {
     let best = 0;
@@ -90,7 +94,12 @@ export function nameMatch(name: string, query: string): NameMatch {
       else if (nw.length === 1 && qw.startsWith(nw)) s = 1; // initial
       else if (qw.length === 1 && nw.startsWith(qw)) s = 1; // typed initial
       else if (nw.startsWith(qw) && qw.length >= 2) s = i === 0 ? 5 : 3;
-      else if (qw.startsWith(nw) && nw.length >= 3) s = 2; // typed a longer form ("иванова" vs "иванов")
+      else if (qw.startsWith(nw) && nw.length >= 3) {
+        // Набрали более длинную форму: «иванова» против «иванов». Это догадка —
+        // «Кимаев» точно так же начинается с «Ким», а это разные люди.
+        s = 2;
+        f = true;
+      }
       else if (qw.length >= 4 && nw.includes(qw)) s = 1;
       else if (qw.length >= 4 && nw.length >= 4) {
         // Typos: "троишестава" → "троишестова", "иванав" → "иванов".
@@ -117,14 +126,11 @@ export function nameMatch(name: string, query: string): NameMatch {
     if (bestFuzzy) fuzzy = true;
     // Matching an initial (a one-letter name word) never counts as substantive,
     // even when it is exact: "к ю" must not match every "… К. Ю." in the directory.
-    if (best >= 2 && qw.length >= 2 && (n[bestIdx]?.length ?? 0) >= 2) {
-      substantive = true;
-      if (!bestFuzzy) exactHits++;
-    }
+    if (best >= 2 && qw.length >= 2 && (n[bestIdx]?.length ?? 0) >= 2) substantive = true;
   }
   if (!substantive || score <= 0) return { score: 0, fuzzy: false };
   if (q.length === 1 && q[0]!.length >= 3 && surname.startsWith(q[0]!)) score += 2;
-  return { score, fuzzy: fuzzy && exactHits === 0 };
+  return { score, fuzzy };
 }
 
 /** Convenience wrapper: just the score. */

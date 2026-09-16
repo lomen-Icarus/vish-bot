@@ -133,7 +133,7 @@ function aiLimitsScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     `Сегодня потрачено: <b>${usedGlobal}</b> из ${l.global}.`,
     "",
     "Кнопки меняют лимит навсегда (переживает перезапуск), «🚀 Сегодня» — разовая добавка только на этот день, она сама исчезнет завтра.",
-    "Админы спрашивают без лимита. Команда: <code>/ailimit user 25</code>, <code>/ailimit global 1000</code>, <code>/ailimit boost 200</code>, <code>/ailimit reset</code>.",
+    "Админы спрашивают без лимита. Команда: <code>/ailimit user 25</code>, <code>/ailimit global 1000</code>, <code>/ailimit boost 200</code> (общий на сегодня), <code>/ailimit boost user 5</code>, <code>/ailimit reset</code>.",
   ].join("\n");
   return { text, kb };
 }
@@ -185,7 +185,8 @@ adminOnly.callbackQuery("ail:show", async (ctx) => {
 });
 
 adminOnly.command("ailimit", async (ctx) => {
-  const [what, value] = (ctx.match ?? "").trim().split(/\s+/);
+  const [what, second, third] = (ctx.match ?? "").trim().split(/\s+/);
+  const value = what === "boost" && (second === "user" || second === "global") ? third : second;
   const day = todayMsk();
   if (!what) return showAiLimits(ctx);
   const n = Number(value);
@@ -196,9 +197,10 @@ adminOnly.command("ailimit", async (ctx) => {
   } else if ((what === "user" || what === "global") && Number.isFinite(n) && n >= 0) {
     setAiLimit(ctx.deps.repo, what, n);
   } else if (what === "boost" && Number.isFinite(n)) {
-    addAiBonus(ctx.deps.repo, "global", day, n);
+    // «boost user 5» — каждому, «boost 200» и «boost global 200» — в общий бюджет.
+    addAiBonus(ctx.deps.repo, second === "user" ? "user" : "global", day, n);
   } else {
-    return void (await ctx.reply("Так: <code>/ailimit user 25</code>, <code>/ailimit global 1000</code>, <code>/ailimit boost 200</code> (добавка только на сегодня), <code>/ailimit reset</code>.", { parse_mode: "HTML" }));
+    return void (await ctx.reply("Так: <code>/ailimit user 25</code>, <code>/ailimit global 1000</code>, <code>/ailimit boost 200</code> (в общий бюджет на сегодня), <code>/ailimit boost user 5</code> (каждому на сегодня), <code>/ailimit reset</code>.", { parse_mode: "HTML" }));
   }
   await showAiLimits(ctx);
 });

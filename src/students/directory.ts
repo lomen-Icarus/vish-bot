@@ -36,6 +36,10 @@ export interface StudentHit {
 }
 
 const NAME_KEYS = ["фио", "ф и о", "фамилия имя отчество", "студент", "name", "fio", "fullname", "full name", "student"];
+// Выгрузки часто разносят ФИО по трём колонкам.
+const SURNAME_KEYS = ["фамилия", "surname", "last name", "lastname"];
+const FIRSTNAME_KEYS = ["имя", "first name", "firstname"];
+const MIDDLENAME_KEYS = ["отчество", "middle name", "middlename", "patronymic"];
 const GROUP_KEYS = ["группа", "учебная группа", "group", "group name", "grp"];
 const SUBGROUP_KEYS = ["подгруппа", "подгр", "subgroup", "sub group", "subgrp"];
 
@@ -83,7 +87,10 @@ function splitCsvLine(line: string, delimiter: string): string[] {
 }
 
 function detectDelimiter(sample: string): string {
-  const counts = [";", "\t", ",", "|"].map((d) => [d, sample.split(d).length] as const);
+  // Запятые внутри «"Фамилия, имя, отчество"» — не разделители: считаем только
+  // то, что снаружи кавычек, иначе весь файл прочитается одной колонкой.
+  const outside = sample.replace(/"[^"]*"/g, "");
+  const counts = [";", "\t", ",", "|"].map((d) => [d, outside.split(d).length] as const);
   counts.sort((a, b) => b[1] - a[1]);
   return counts[0]![1] > 1 ? counts[0]![0] : ";";
 }
@@ -99,17 +106,28 @@ interface RawRow {
   subgroup: number | null;
 }
 
+/** «Группа» без единой цифры — это заголовок или мусор, а не учебная группа. */
+function looksLikeGroup(value: string): boolean {
+  return /\d/.test(value);
+}
+
 function parseCsv(text: string): RawRow[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0 && !l.trimStart().startsWith("#"));
+  // BOM от Excel иначе прилипает к первому заголовку, и колонки не находятся.
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim().length > 0 && !l.trimStart().startsWith("#"));
   if (!lines.length) return [];
   const delimiter = detectDelimiter(lines[0]!);
   const first = splitCsvLine(lines[0]!, delimiter);
   let nameIdx = pickColumn(first, NAME_KEYS);
+  const surnameIdx = pickColumn(first, SURNAME_KEYS);
+  const firstNameIdx = pickColumn(first, FIRSTNAME_KEYS);
+  const middleNameIdx = pickColumn(first, MIDDLENAME_KEYS);
   let groupIdx = pickColumn(first, GROUP_KEYS);
   let subIdx = pickColumn(first, SUBGROUP_KEYS);
+  const composed = nameIdx < 0 && surnameIdx >= 0 && firstNameIdx >= 0;
   let body = lines.slice(1);
-  if (nameIdx < 0 || groupIdx < 0) {
-    // Заголовка нет: считаем, что это ФИО;Группа;Подгруппа.
+  if ((nameIdx < 0 && !composed) || groupIdx < 0) {
+    // Заголовок не опознан: считаем, что это ФИО;Группа;Подгруппа. Саму строку
+    // заголовка спасает проверка looksLikeGroup — в «Группа» нет цифр.
     nameIdx = 0;
     groupIdx = 1;
     subIdx = 2;
@@ -118,16 +136,25 @@ function parseCsv(text: string): RawRow[] {
   const rows: RawRow[] = [];
   for (const line of body) {
     const cells = splitCsvLine(line, delimiter);
-    const name = (cells[nameIdx] ?? "").trim();
+    const name = composed
+      ? [cells[surnameIdx], cells[firstNameIdx], middleNameIdx >= 0 ? cells[middleNameIdx] : ""].filter((x) => x && x.trim()).join(" ").trim()
+      : (cells[nameIdx] ?? "").trim();
     const group = (cells[groupIdx] ?? "").trim();
-    if (!name || !group) continue;
+    if (!name || !group || !looksLikeGroup(group)) continue;
     rows.push({ name, group, subgroup: subIdx >= 0 ? toSubgroup(cells[subIdx]) : null });
   }
   return rows;
 }
 
 function parseJson(text: string): RawRow[] {
-  const data = JSON.parse(text) as unknown;
+  // Сообщение JSON.parse содержит кусок разбираемого файла (то есть чужие ФИО),
+  // а этот текст уходит в лог и в /health. Подменяем его нейтральным.
+  let data: unknown;
+  try {
+    data = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("файл не является корректным JSON");
+  }
   const list = Array.isArray(data) ? data : Array.isArray((data as { students?: unknown }).students) ? ((data as { students: unknown[] }).students) : [];
   const rows: RawRow[] = [];
   for (const item of list) {
@@ -154,7 +181,8 @@ function parseSqlite(file: string): RawRow[] {
       if (!nameCol || !groupCol) continue;
       const subCol = cols[pickColumn(cols, SUBGROUP_KEYS)];
       // Читаем только три столбца: остальное содержимое базы бот не видит.
-      const q = `SELECT "${nameCol}" AS n, "${groupCol}" AS g${subCol ? `, "${subCol}" AS s` : ""} FROM "${table.replace(/"/g, '""')}"`;
+      const quote = (x: string): string => `"${x.replace(/"/g, '""')}"`;
+      const q = `SELECT ${quote(nameCol)} AS n, ${quote(groupCol)} AS g${subCol ? `, ${quote(subCol)} AS s` : ""} FROM ${quote(table)}`;
       const rows = db.prepare(q).all() as Array<{ n: unknown; g: unknown; s?: unknown }>;
       const out: RawRow[] = [];
       for (const r of rows) {
@@ -204,15 +232,29 @@ export class StudentDirectory {
       this.error = `файл ${this.file} не найден`;
       this.students = [];
       this.byId = new Map();
+      this.mtimeMs = -1;
+      this.size = -1;
       return;
     }
+    let st;
     try {
-      const st = statSync(file);
+      st = statSync(file);
+    } catch {
+      this.error = `файл ${this.file} не читается`;
+      return;
+    }
+    // Запоминаем файл сразу: иначе после неудачи reloadIfChanged() снова видит
+    // «файл изменился» и перечитывает его на каждый поиск, засоряя лог.
+    this.mtimeMs = st.mtimeMs;
+    this.size = st.size;
+    try {
       const ext = path.extname(file).toLowerCase();
       const raw = ext === ".sqlite" || ext === ".db" || ext === ".sqlite3" ? parseSqlite(file) : ext === ".json" ? parseJson(readFileSync(file, "utf8")) : parseCsv(readFileSync(file, "utf8"));
       const list: StudentRecord[] = [];
       const seen = new Set<string>();
       for (const r of raw) {
+        // Строка без цифр в группе — это заголовок или мусор, а не студент.
+        if (!looksLikeGroup(r.group)) continue;
         const id = keyOf(r.name, r.group);
         if (seen.has(id)) continue;
         seen.add(id);
@@ -220,15 +262,17 @@ export class StudentDirectory {
       }
       this.students = list;
       this.byId = new Map(list.map((s) => [s.id, s]));
-      this.mtimeMs = st.mtimeMs;
-      this.size = st.size;
       this.loadedAt = new Date();
       this.error = list.length ? null : "файл прочитан, но ни одной записи «ФИО + группа» в нём не нашлось";
       // Никаких имён в логах: только количество.
       logger.info({ count: list.length, file: this.file }, "student directory loaded");
     } catch (err) {
-      this.error = String(err).slice(0, 200);
-      logger.warn({ err: String(err), file: this.file }, "student directory load failed");
+      // В тексте ошибки парсера может оказаться кусок файла, то есть чужие ФИО:
+      // наружу отдаём только тип ошибки.
+      // Свои понятные сообщения оставляем, чужие (от парсеров) — нет.
+      const safe = err instanceof Error && err.message.startsWith("файл") ? err.message : "не удалось разобрать файл";
+      this.error = safe;
+      logger.warn({ err: safe, file: this.file }, "student directory load failed");
     }
   }
 
