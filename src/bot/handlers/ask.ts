@@ -87,6 +87,7 @@ function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentio
   };
   for (const t of mentions.teachers) add(`👨‍🏫 ${t.name}`, `t:${t.id}`, t.name);
   for (const name of mentions.webinarTeachers) add(`👨‍🏫 ${name}`, webinarKey(name), name);
+  for (const st of mentions.students) add(`🕵️ ${st.name} · ${st.groupTitle}`, `pop:${st.id}`, st.name);
   for (const key of mentions.groupKeys) {
     const g = ctx.deps.service.group(key);
     if (g && g.key !== ctx.user.groupKey) add(`📅 ${g.title}`, `pdn:${g.key}:${today}`);

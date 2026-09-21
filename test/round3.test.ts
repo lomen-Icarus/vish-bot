@@ -11,6 +11,7 @@ import type { LogicalGroup } from "../src/schedule/groups.js";
 import type { Occurrence } from "../src/schedule/model.js";
 import type { ChangeEvent } from "../src/schedule/diff.js";
 import type { WallClock } from "../src/time.js";
+import { addDays, todayMsk } from "../src/time.js";
 import type { Server } from "node:http";
 
 const group: LogicalGroup = { key: "виш-12-23", title: "ВИШ-12-23", prefix: "ВИШ", number: 12, intake: 23, course: 4, portalIds: [8524], portalNames: ["ВИШ-12-23"] };
@@ -96,8 +97,10 @@ describe("distance reminders and notification buttons", () => {
     expect(await n.dispatchChangeEvents()).toBe(2);
     const own = sent.find((s) => s.chatId === 1)!;
     const watcher = sent.find((s) => s.chatId === 4)!;
-    expect(buttons(own.markup)).toEqual(["📆 Обновить в календаре"]);
-    expect(buttons(watcher.markup)).toEqual(["👁 Не следить за группой"]);
+    // Файл изменений предлагаем всем, кому пришло уведомление; следящему за
+    // чужой группой — ещё и способ отписаться.
+    expect(buttons(own.markup)).toEqual(["📆 Файл изменений в календарь"]);
+    expect(buttons(watcher.markup)).toEqual(["📆 Файл изменений в календарь", "👁 Не следить за группой"]);
     expect(repo.clearWatchGroups(4)).toBe(1);
     expect(repo.watchGroups(4)).toEqual([]);
   });
@@ -286,8 +289,11 @@ describe("calendar feeds", () => {
     const token = repo.ensureCalToken(7);
     expect(repo.ensureCalToken(7)).toBe(token);
     expect(repo.userByCalToken(token)?.id).toBe(7);
-    const service = makeService({ "2026-09-16": [lesson("2026-09-16", 4, 13 * 60 + 30, "Промышленный менеджмент")] });
-    const direct = groupCalendar(service, group, { subgroup: null, alarmMinutes: 30, today: "2026-09-15" });
+    // Лента отдаёт пары от сегодняшнего дня и дальше, поэтому дата должна быть
+    // относительной: с фиксированной тест «протухал» на следующий же день.
+    const soon = addDays(todayMsk(), 1);
+    const service = makeService({ [soon]: [lesson(soon, 4, 13 * 60 + 30, "Промышленный менеджмент")] });
+    const direct = groupCalendar(service, group, { subgroup: null, alarmMinutes: 30, today: todayMsk() });
     expect(direct.count).toBe(1);
     server = createHttpServer({ repo, service, port: 0, host: "127.0.0.1" });
     await new Promise<void>((resolve) => server!.once("listening", resolve));

@@ -146,7 +146,8 @@ function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number
       "div",
       { display: "flex", flexDirection: "column", width: 150, alignItems: "flex-start" },
       text(time[0]!, { fontSize: 36, fontWeight: 700, color: THEME.fg, lineHeight: 1 }),
-      text(time[1]!, { fontSize: 24, fontWeight: 500, color: THEME.muted, marginTop: 8 }),
+      // Конец пары крупно и светло: «когда освобожусь» — такой же частый вопрос, как «когда начало».
+      text(time[1] ? `до ${time[1]}` : "", { fontSize: 27, fontWeight: 600, color: THEME.fg, marginTop: 8 }),
       o.slot != null ? text(`${o.slot} пара`, { fontSize: 20, fontWeight: 500, color: THEME.dim, marginTop: 10 }) : null,
     ),
     h("div", { display: "flex", width: 8, borderRadius: 8, backgroundColor: color, marginRight: 26, alignSelf: "stretch" }),
@@ -304,7 +305,12 @@ export async function createRenderer(): Promise<Renderer | null> {
               h(
                 "div",
                 { display: "flex", flexDirection: "row", alignItems: "center", width: "100%", padding: "10px 0", borderBottom: `2px solid ${THEME.line}` },
-                text(o.start != null ? fmtHHMM(o.start) : "—", { fontSize: 26, fontWeight: 700, color: THEME.fg, width: 110 }),
+                h(
+                  "div",
+                  { display: "flex", flexDirection: "column", width: 110, flexShrink: 0 },
+                  text(o.start != null ? fmtHHMM(o.start) : "—", { fontSize: 26, fontWeight: 700, color: THEME.fg, lineHeight: 1.1 }),
+                  text(o.end != null ? fmtHHMM(o.end) : "", { fontSize: 21, fontWeight: 500, color: THEME.muted, marginTop: 4, lineHeight: 1 }),
+                ),
                 h("div", { display: "flex", width: 6, height: 34, borderRadius: 6, backgroundColor: typeColor(o.type), marginRight: 18 }),
                 h(
                   "div",

@@ -137,6 +137,20 @@ export class PortalClient {
    * Webinars of one day. Unlike teacher pages this works for guests, and each
    * row carries the teacher, the topic and the groups of a distance lesson.
    */
+  /**
+   * Фото преподавателя. Портал отдаёт его только авторизованным и по
+   * относительному адресу из карточки («/index/photo/tech/653/id/653»).
+   */
+  async getTeacherPhoto(photoUrl: string): Promise<Buffer | null> {
+    await this.ensureLogin();
+    const url = new URL(photoUrl, PORTAL_BASE).toString();
+    const res = await this.http.getBytes(url);
+    if (!res || res.bytes.length < 1024) return null;
+    // Портал вместо картинки может отдать html-страницу входа.
+    if (!/^image\//i.test(res.contentType)) return null;
+    return res.bytes;
+  }
+
   async getWebinars(date: LocalDate, facultyId: number): Promise<Webinar[]> {
     const html = await this.authPost(`${PORTAL_BASE}/webinar`, { seldate: date, selfac: String(facultyId), pertt: "1" });
     return parseWebinars(html);

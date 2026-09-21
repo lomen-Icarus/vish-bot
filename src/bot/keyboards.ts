@@ -135,22 +135,26 @@ export function weekNav(monday: LocalDate, opts: { image: boolean; peekKey?: str
 }
 
 /** Как и в расписании группы, без кнопки «сегодня»: её читают как текущую дату. */
-export function teacherDayNav(teacherId: number, date: LocalDate): InlineKeyboard {
+export function teacherDayNav(teacherId: number, date: LocalDate, opts: { following?: boolean } = {}): InlineKeyboard {
   const kb = new InlineKeyboard()
     .text(`◀️ ${fmtDDMM(addDays(date, -1))}`, `td:${teacherId}:${addDays(date, -1)}`)
     .text(`${fmtDDMM(addDays(date, 1))} ▶️`, `td:${teacherId}:${addDays(date, 1)}`)
     .row();
-  kb.text("🗓 Неделя", `tw:${teacherId}:${date}`).text("🔎 Другой", "t:search");
+  kb.text("🗓 Неделя", `tw:${teacherId}:${date}`).text("🔎 Другой", "t:search").row();
+  kb.text(opts.following ? "🔕 Не следить за преподом" : "👁 Следить за преподом", `twf:${teacherId}`);
   return kb;
 }
 
-export function teacherWeekNav(teacherId: number, monday: LocalDate): InlineKeyboard {
-  return new InlineKeyboard()
+export function teacherWeekNav(teacherId: number, monday: LocalDate, opts: { following?: boolean } = {}): InlineKeyboard {
+  const kb = new InlineKeyboard()
     .text("◀️ пред.", `tw:${teacherId}:${addDays(monday, -7)}`)
     .text("след. ▶️", `tw:${teacherId}:${addDays(monday, 7)}`)
     .row()
     .text("📅 День", `td:${teacherId}:${monday}`)
-    .text("🔎 Другой", "t:search");
+    .text("🔎 Другой", "t:search")
+    .row();
+  kb.text(opts.following ? "🔕 Не следить за преподом" : "👁 Следить за преподом", `twf:${teacherId}`);
+  return kb;
 }
 
 /** Stream day: date arrows, optional poster button, and one tiny button per group of the stream. */
@@ -180,7 +184,7 @@ export function formatPicker(): InlineKeyboard {
   return new InlineKeyboard().text("📝 Текстом", "fmt:text").text("🖼 Картинкой", "fmt:image").row().text("📝🖼 И так, и так", "fmt:both");
 }
 
-export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: { topics: string[]; hasImages: boolean; watchCount: number; defaultTheme: string }): InlineKeyboard {
+export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: { topics: string[]; hasImages: boolean; watchCount: number; defaultTheme: string; teacherCount?: number; slides?: boolean }): InlineKeyboard {
   const kb = new InlineKeyboard();
   kb.text(`👥 Группа: ${group?.title ?? "не выбрана"}`, "s:group").row();
   kb.text(`🔢 Подгруппа: ${user.subgroup ? `${user.subgroup}` : "все"}`, "s:subgroup");
@@ -192,6 +196,7 @@ export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: {
     kb.text(`🎨 Оформление картинок: ${THEME_LABELS[theme] ?? THEME_LABELS.midnight}`, "s:theme").row();
   }
   kb.text(`🔔 Изменения: ${onoff(user.notifyChanges)}`, "s:changes").text(`🎓 Сессия: ${onoff(user.notifySession)}`, "s:session").row();
+  if (opts.slides) kb.text(`📎 Слайды записанных пар: ${onoff(user.wantSlides)}`, "s:slides").row();
   kb.text(`⏰ До первой пары: ${minutesLabel(user.remindFirstMin)}`, "s:first").row();
   kb.text(`⏱ Перед каждой парой: ${minutesLabel(user.remindEachMin)}`, "s:each").row();
   kb.text(`💻 Дистант, ссылка на вебинар: ${minutesLabel(user.remindDistanceMin)}`, "s:distance").row();
@@ -200,6 +205,7 @@ export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: {
   for (const t of opts.topics) kb.text(`${user.topics.includes(t) ? "✅" : "▫️"} ${TOPIC_LABELS[t] ?? t}`, `s:topic:${t}`);
   if (opts.topics.length) kb.row();
   kb.text(`👀 Следить за другими группами${opts.watchCount ? ` (${opts.watchCount})` : ""}`, "s:watch").row();
+  if (opts.teacherCount) kb.text(`👨‍🏫 Слежу за преподавателями (${opts.teacherCount})`, "s:teachers").row();
   kb.text("✖️ Закрыть", "s:close");
   return kb;
 }

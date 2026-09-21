@@ -149,7 +149,7 @@ function timeColumn(start: number | null, end: number | null, slot: number | nul
   return col(
     { width: TIME_COL, flexShrink: 0, alignItems: "flex-start" },
     text(start != null ? fmtHHMM(start) : "—", { fontSize: 42, fontWeight: 700, color: c, lineHeight: 1, letterSpacing: -1 }),
-    text(end != null ? fmtHHMM(end) : "", { fontSize: 24, fontWeight: 400, color: MUTED, marginTop: 8, lineHeight: 1 }),
+    text(end != null ? `до ${fmtHHMM(end)}` : "", { fontSize: 27, fontWeight: 600, color: c, marginTop: 8, lineHeight: 1 }),
     slot != null ? label(`${slot} пара`, { marginTop: 14 }) : null,
     opts.nowAccent ? tag("сейчас", opts.nowAccent, true, { marginTop: 14, marginRight: 0 }) : null,
   );
@@ -251,7 +251,11 @@ export async function createRenderer(): Promise<Renderer | null> {
               const extra = [o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? `перенос с ${ddmm(o.movedFrom.date)}` : "", o.substituted ? "замена" : ""].filter(Boolean);
               return row(
                 { width: "100%", alignItems: "flex-start", padding: "12px 0", borderTop: `1px solid ${RULE_SOFT}`, opacity: moved ? 0.5 : 1 },
-                text(o.start != null ? fmtHHMM(o.start) : "—", { fontSize: 27, fontWeight: 700, color: INK, width: 112, flexShrink: 0, lineHeight: 1.2, letterSpacing: -0.5 }),
+                col(
+                  { width: 112, flexShrink: 0 },
+                  text(o.start != null ? fmtHHMM(o.start) : "—", { fontSize: 27, fontWeight: 700, color: INK, lineHeight: 1.2, letterSpacing: -0.5 }),
+                  text(o.end != null ? fmtHHMM(o.end) : "", { fontSize: 21, fontWeight: 500, color: MUTED, lineHeight: 1.1 }),
+                ),
                 col(
                   { flex: 1, minWidth: 0 },
                   text(o.subject, { fontSize: 27, fontWeight: 600, color: INK, lineHeight: 1.2, letterSpacing: -0.4, textDecoration: moved ? "line-through" : "none" }),

@@ -44,7 +44,14 @@ function settingsText(ctx: BotContext): string {
 async function renderSettings(ctx: BotContext, edit: boolean): Promise<void> {
   const user = ctx.deps.repo.getUser(ctx.user.id) ?? ctx.user;
   const group = user.groupKey ? ctx.deps.service.group(user.groupKey) : null;
-  const kb = settingsKeyboard(user, group, { topics: [...TOPICS], hasImages: !!ctx.deps.renderer, watchCount: ctx.deps.repo.watchGroups(user.id).length, defaultTheme: ctx.deps.config.POSTER_THEME });
+  const kb = settingsKeyboard(user, group, {
+    topics: [...TOPICS],
+    hasImages: !!ctx.deps.renderer,
+    watchCount: ctx.deps.repo.watchGroups(user.id).length,
+    defaultTheme: ctx.deps.config.POSTER_THEME,
+    teacherCount: ctx.deps.repo.watchedTeachers(user.id).length,
+    slides: !!ctx.deps.config.SLIDES_TOKEN,
+  });
   const text = settingsText({ ...ctx, user } as BotContext);
   if (edit) {
     try {
@@ -111,6 +118,10 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "changes":
       patch.notifyChanges = !user.notifyChanges;
       break;
+    case "slides":
+      patch.wantSlides = !user.wantSlides;
+      toast = patch.wantSlides ? "Буду присылать слайды записанных пар" : "Слайды присылать не буду";
+      break;
     case "session":
       patch.notifySession = !user.notifySession;
       toast = patch.notifySession ? "Буду присылать изменения расписания сессии" : "Сессию не отслеживаю";
@@ -153,6 +164,18 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "watch": {
       await ctx.answerCallbackQuery();
       await ctx.reply("Изменения каких ещё групп присылать? Нажми, чтобы включить или выключить.", { reply_markup: watchKeyboard(ctx) });
+      return;
+    }
+    case "teachers": {
+      await ctx.answerCallbackQuery();
+      const list = ctx.deps.repo.watchedTeachers(ctx.user.id);
+      if (!list.length) return void (await ctx.reply("Ты пока ни за кем не следишь. Открой «👨‍🏫 Преподаватели», найди человека и нажми «Следить за преподом»."));
+      const kb = new InlineKeyboard();
+      for (const t of list) kb.text(`🔕 ${t.name}`, `twf:${t.teacherId}`).row();
+      await ctx.reply(
+        `👨‍🏫 <b>Слежу за преподавателями</b>\n\nВечером пришлю их завтрашний день, и ещё раз за 2 часа до первой пары. Нажми, чтобы перестать следить.`,
+        { parse_mode: "HTML", reply_markup: kb },
+      );
       return;
     }
     default:

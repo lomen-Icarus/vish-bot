@@ -10,6 +10,24 @@ import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
 import { WEBINAR_URL } from "../bot/keyboards.js";
 import type { WebinarService } from "../portal/webinars.js";
+import type { TeacherService } from "../portal/teachers.js";
+import { logicalKeyFor, type LogicalGroup } from "../schedule/groups.js";
+import { readFileSync } from "node:fs";
+
+/** За сколько минут до первой пары преподавателя писать подписчикам. */
+const TEACHER_LEAD_MIN = 120;
+/** Во сколько присылать «завтра у него», если у человека не задан свой вечер. */
+const TEACHER_EVENING_AT = "20:00";
+
+/** Окно в пять минут: тик ежеминутный, но пропущенная минута не должна съесть уведомление. */
+function withinWindow(nowMinutes: number, dueMinutes: number, width = 5): boolean {
+  return nowMinutes >= dueMinutes && nowMinutes < dueMinutes + width;
+}
+
+/** Расписание преподавателя печатается тем же форматтером, что и группа. */
+function teacherPseudoGroup(name: string): LogicalGroup {
+  return { key: `teacher:${name}`, title: name, prefix: "", number: 0, intake: 0, course: 0, portalIds: [], portalNames: [] };
+}
 
 export interface SendOptions {
   photo?: Buffer;
@@ -26,7 +44,116 @@ export class Notifier {
     private readonly renderer: Renderer | null,
     private readonly adminIds: number[] = [],
     private readonly webinars: WebinarService | null = null,
+    private readonly teachers: TeacherService | null = null,
   ) {}
+
+  /**
+   * Слайды записанного вебинара: PDF уходит тем, у кого эта пара в расписании.
+   * Первому получателю файл загружается, остальным — по file_id, чтобы не
+   * гонять один и тот же PDF через сеть десятки раз.
+   */
+  async sendSlideDeck(deck: { deckId: number; date: string; subject: string; teacher: string | null; title: string | null; groups: string[]; slides: number; file: string }, now: WallClock = wallClock()): Promise<number> {
+    const keys = new Set(deck.groups.map((g) => logicalKeyFor(g)));
+    const users = this.repo.listUsers({ onlyActive: true }).filter((u) => u.wantSlides && u.groupKey && keys.has(u.groupKey));
+    if (!users.length) {
+      logger.info({ deckId: deck.deckId, groups: deck.groups }, "слайды никому не нужны: нет людей из этих групп");
+      this.repo.markDeckSent(deck.deckId, null, 0);
+      return 0;
+    }
+    const caption = [
+      `📎 <b>Слайды пары</b>`,
+      `${escapeHtml(deck.subject)}${deck.teacher ? ` · ${escapeHtml(deck.teacher)}` : ""}`,
+      `${deck.date}${deck.title ? ` · ${escapeHtml(deck.title.slice(0, 80))}` : ""} · ${deck.slides} ${deck.slides === 1 ? "слайд" : deck.slides < 5 ? "слайда" : "слайдов"}`,
+      "",
+      "<i>Снято ботом прямо с вебинара. Если препод показывал не всё — значит, не всё и записалось.</i>",
+    ].join("\n");
+    const name = `${deck.date}-${deck.subject.replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 50) || "slides"}.pdf`;
+    let fileId: string | null = null;
+    let sent = 0;
+    for (const user of users) {
+      try {
+        const quiet = this.inQuietHours(user, now);
+        const msg = await this.api.sendDocument(user.id, fileId ?? new InputFile(readFileSync(deck.file), name), {
+          caption,
+          parse_mode: "HTML",
+          disable_notification: quiet,
+        });
+        fileId ??= msg.document?.file_id ?? null;
+        this.repo.logNotification(user.id, "slides", true);
+        sent++;
+        await sleep(45);
+      } catch (err) {
+        const msg = err instanceof GrammyError ? err.description : String(err);
+        this.repo.logNotification(user.id, "slides", false, msg.slice(0, 200));
+        if (err instanceof GrammyError && err.error_code === 403) this.repo.updateUser(user.id, { blocked: true });
+      }
+    }
+    this.repo.markDeckSent(deck.deckId, fileId, sent);
+    logger.info({ deckId: deck.deckId, sent, of: users.length }, "слайды разосланы");
+    return sent;
+  }
+
+  /** Расписание преподавателя на день, с кешем: портал медленный, а тик — ежеминутный. */
+  private readonly teacherDayCache = new Map<string, { at: number; lessons: Occurrence[]; fullName: string | null }>();
+
+  private async teacherDay(teacherId: number, name: string, date: LocalDate): Promise<{ lessons: Occurrence[]; fullName: string | null }> {
+    const key = `${teacherId}|${date}`;
+    const hit = this.teacherDayCache.get(key);
+    if (hit && Date.now() - hit.at < 3 * 60 * 60 * 1000) return hit;
+    const empty = { lessons: [] as Occurrence[], fullName: null };
+    if (!this.teachers) return empty;
+    try {
+      const res = await this.teachers.lessons({ id: teacherId, name }, date, date);
+      const entry = { at: Date.now(), lessons: res.lessons.filter((o) => o.status === "scheduled" && o.start != null), fullName: res.fullName };
+      this.teacherDayCache.set(key, entry);
+      // Кеш живёт в памяти процесса: чистим вчерашнее, чтобы не рос вечно.
+      for (const k of [...this.teacherDayCache.keys()]) if (k.split("|")[1]! < addDays(date, -1)) this.teacherDayCache.delete(k);
+      return entry;
+    } catch (err) {
+      logger.debug({ err: String(err), teacherId }, "teacher day for watchers failed");
+      return empty;
+    }
+  }
+
+  /**
+   * Слежение за преподавателем: вечером — его завтрашний день, и ещё раз за два
+   * часа до его первой пары. Портал дёргаем один раз на преподавателя, а не на
+   * каждого подписчика.
+   */
+  async tickTeacherWatches(now: WallClock = wallClock()): Promise<number> {
+    if (!this.teachers) return 0;
+    const watched = this.repo.teacherWatchers();
+    if (!watched.length) return 0;
+    const tomorrow = addDays(now.date, 1);
+    let sent = 0;
+    for (const w of watched) {
+      const users = w.userIds.map((id) => this.repo.getUser(id)).filter((u): u is User => !!u && !u.blocked);
+      if (!users.length) continue;
+      const eveningDue = users.some((u) => withinWindow(now.minutes, parseHHMM(u.eveningAt ?? TEACHER_EVENING_AT) ?? 20 * 60));
+      const dayLessons = await this.teacherDay(w.teacherId, w.name, now.date);
+      const first = dayLessons.lessons.length ? Math.min(...dayLessons.lessons.map((o) => o.start!)) : null;
+      const morningDue = first != null && now.minutes >= first - TEACHER_LEAD_MIN && now.minutes < first;
+      if (!eveningDue && !morningDue) continue;
+      const evening = eveningDue ? await this.teacherDay(w.teacherId, w.name, tomorrow) : null;
+      for (const user of users) {
+        if (this.inQuietHours(user, now)) continue;
+        const name = dayLessons.fullName ?? evening?.fullName ?? w.name;
+        if (morningDue && !this.repo.reminderSent(user.id, "teacher-first", `${w.teacherId}:${now.date}`)) {
+          this.repo.markReminderSent(user.id, "teacher-first", `${w.teacherId}:${now.date}`);
+          const body = formatDay(teacherPseudoGroup(name), now.date, dayLessons.lessons, this.service.weekInfo(now.date), now.date, { now });
+          const left = first! - now.minutes;
+          if (await this.send(user, `👨‍🏫 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} первая пара у <b>${escapeHtml(name)}</b>\n\n${body}`, { kind: "teacher-first" })) sent++;
+        }
+        const userEvening = withinWindow(now.minutes, parseHHMM(user.eveningAt ?? TEACHER_EVENING_AT) ?? 20 * 60);
+        if (userEvening && evening && !this.repo.reminderSent(user.id, "teacher-evening", `${w.teacherId}:${tomorrow}`)) {
+          this.repo.markReminderSent(user.id, "teacher-evening", `${w.teacherId}:${tomorrow}`);
+          const body = formatDay(teacherPseudoGroup(name), tomorrow, evening.lessons, this.service.weekInfo(tomorrow), now.date, {});
+          if (await this.send(user, `👨‍🏫 <b>${escapeHtml(name)}</b> завтра:\n\n${body}`, { kind: "teacher-evening", silent: true })) sent++;
+        }
+      }
+    }
+    return sent;
+  }
 
   async send(user: User, html: string, opts: SendOptions): Promise<boolean> {
     try {
@@ -121,9 +248,11 @@ export class Notifier {
           if (id != null) this.repo.markReminderSent(user.id, "event", String(id));
         }
         const text = formatChanges(group, fresh);
-        // Own group: one tap re-imports just the changed lessons into the phone calendar.
-        // Watched group: one tap stops these notifications.
-        const kb = own ? new InlineKeyboard().text("📆 Обновить в календаре", `cics:${groupKey}`) : new InlineKeyboard().text("👁 Не следить за группой", `unwatch:${groupKey}`);
+        // Файл с изменениями предлагаем сразу в уведомлении — и по своей группе,
+        // и по той, за которой человек просто следит: одно нажатие, и в календаре
+        // телефона обновлены ровно изменившиеся пары.
+        const kb = new InlineKeyboard().text("📆 Файл изменений в календарь", `cics:${groupKey}`);
+        if (!own) kb.row().text("👁 Не следить за группой", `unwatch:${groupKey}`);
         if (await this.send(user, clampHtml(text), { kind: "changes", replyMarkup: kb })) delivered++;
       }
       this.repo.markEventsNotified(list.map((r) => r.id));
@@ -173,7 +302,7 @@ export class Notifier {
       });
       for (const r of rows) this.repo.markReminderSent(user.id, "event", String(r.id));
       if (!mine.length) continue;
-      const kb = new InlineKeyboard().text("📆 Обновить в календаре", `cics:${user.groupKey}`);
+      const kb = new InlineKeyboard().text("📆 Файл изменений в календарь", `cics:${user.groupKey}`);
       const text = `🌙 <i>Пока у тебя были тихие часы, расписание изменилось.</i>\n\n${formatChanges(group, mine)}`;
       if (await this.send(user, clampHtml(text), { kind: "changes-backlog", replyMarkup: kb })) sent++;
     }
