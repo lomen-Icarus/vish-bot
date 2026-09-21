@@ -116,7 +116,15 @@ export class ScheduleService {
   }
 
   group(key: string): LogicalGroup | null {
-    return this.groups().find((g) => g.key === key) ?? null;
+    const all = this.groups();
+    const exact = all.find((g) => g.key === key);
+    if (exact) return exact;
+    // callback_data у Telegram — 64 байта, и длинный ключ в кнопке приходится
+    // обрезать (см. groupCb в keyboards.ts). Принимаем такой обрезок, если он
+    // однозначно указывает на одну группу.
+    if (!key) return null;
+    const byPrefix = all.filter((g) => g.key.startsWith(key));
+    return byPrefix.length === 1 ? byPrefix[0]! : null;
   }
 
   async refreshGroups(): Promise<LogicalGroup[]> {

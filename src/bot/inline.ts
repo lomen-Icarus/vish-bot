@@ -12,7 +12,7 @@ import type { Deps } from "./context.js";
 import type { User } from "../db/repo.js";
 import { dayView, weekView } from "./views.js";
 import { findGroup, type LogicalGroup } from "../schedule/groups.js";
-import { filterSubgroup } from "../schedule/format.js";
+import { clampHtml, filterSubgroup } from "../schedule/format.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, mergeStream } from "../schedule/stream.js";
 import type { Occurrence } from "../schedule/model.js";
 import { addDays, fmtDDMM, mondayOf, parseDayWord, parseRuDate, todayMsk, weekdayShort, type LocalDate } from "../time.js";
@@ -106,7 +106,9 @@ export function parseInlineQuery(deps: Deps, query: string, user: User | null): 
   };
 }
 
-const cut = (s: string, n = 4000): string => (s.length <= n ? s : `${s.slice(0, n - 1).trimEnd()}…`);
+// Резать HTML посередине тега нельзя: Telegram отвергает весь ответ целиком,
+// а не одну карточку. clampHtml обрезает по строкам и закрывает теги.
+const cut = (s: string, n = 4000): string => clampHtml(s, n);
 
 /** Короткое описание для строки результата (Telegram показывает две строки). */
 function preview(text: string): string {

@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, isMenuText } from "../keyboards.js";
+import { BTN, groupCb, isMenuText } from "../keyboards.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { featuresText, needGroup } from "../views.js";
 import { clampHtml, esc } from "../../schedule/format.js";
@@ -93,7 +93,7 @@ function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentio
   for (const st of mentions.students) add(`🕵️ ${st.name} · ${st.groupTitle}`, `pop:${st.id}`, st.name, "student");
   for (const key of mentions.groupKeys) {
     const g = ctx.deps.service.group(key);
-    if (g && g.key !== ctx.user.groupKey) add(`📅 ${g.title}`, `pdn:${g.key}:${today}`);
+    if (g && g.key !== ctx.user.groupKey) add(`📅 ${g.title}`, groupCb("pdn", g.key, today));
   }
   // Only touch the keyboard when there is something to add: an empty row would
   // travel to Telegram as a broken markup.
