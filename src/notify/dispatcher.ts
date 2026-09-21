@@ -1,9 +1,9 @@
 import type { Api, RawApi } from "grammy";
 import { GrammyError, InlineKeyboard, InputFile } from "grammy";
-import type { Repo, User } from "../db/repo.js";
+import type { ChangeEventRow, Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
-import { clampHtml, formatChanges, formatDay, formatNotice, filterSubgroup, plural } from "../schedule/format.js";
+import { clampHtml, esc as escapeHtml, formatChanges, formatDay, formatNotice, filterSubgroup, plural } from "../schedule/format.js";
 import { isSessionPeriod, lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
@@ -295,17 +295,21 @@ export class Notifier {
         if (!fresh.length) continue;
         // Quiet hours only postpone: the backlog below delivers them when the quiet window ends.
         if (this.inQuietHours(user, now)) continue;
-        for (const e of fresh) {
-          const id = idByEvent.get(e);
-          if (id != null) this.repo.markReminderSent(user.id, "event", String(id));
-        }
         const text = formatChanges(group, fresh);
         // Файл с изменениями предлагаем сразу в уведомлении — и по своей группе,
         // и по той, за которой человек просто следит: одно нажатие, и в календаре
         // телефона обновлены ровно изменившиеся пары.
         const kb = new InlineKeyboard().text("📆 Файл изменений в календарь", `cics:${groupKey}`);
         if (!own) kb.row().text("👁 Не следить за группой", `unwatch:${groupKey}`);
-        if (await this.send(user, clampHtml(text), { kind: "changes", replyMarkup: kb })) delivered++;
+        // Пометку ставим только после успешной отправки: иначе одна сетевая
+        // осечка навсегда прячет изменение и от основного прохода, и от добора.
+        if (await this.send(user, clampHtml(text), { kind: "changes", replyMarkup: kb })) {
+          delivered++;
+          for (const e of fresh) {
+            const id = idByEvent.get(e);
+            if (id != null) this.repo.markReminderSent(user.id, "event", String(id));
+          }
+        }
       }
       this.repo.markEventsNotified(list.map((r) => r.id));
     }
@@ -325,41 +329,67 @@ export class Notifier {
       this.repo.setMeta("backlog:since", new Date().toISOString());
       return 0;
     }
+    // Событий за ночь немного, а пользователей может быть много: читаем группу
+    // один раз за тик и дальше раздаём из памяти.
+    const byGroup = new Map<string, ChangeEventRow[]>();
+    const rowsFor = (key: string): ChangeEventRow[] => {
+      let rows = byGroup.get(key);
+      if (!rows) {
+        rows = this.repo.activeEvents(key, now.date, 200).filter((r) => r.notified && r.createdAt >= since);
+        byGroup.set(key, rows);
+      }
+      return rows;
+    };
     let sent = 0;
     for (const user of this.repo.listUsers({ onlyActive: true })) {
-      if (!user.groupKey || !user.notifyChanges) continue;
-      // Only users with quiet hours can have a backlog, and only right after
-      // the window ends: otherwise this would scan every user every minute.
-      if (!user.quietFrom || !user.quietTo) continue;
       if (this.inQuietHours(user, now)) continue;
-      const to = parseHHMM(user.quietTo);
-      if (to == null) continue;
-      const sinceEnd = (now.minutes - to + 1440) % 1440;
-      if (sinceEnd > 120) continue;
-      const group = this.service.group(user.groupKey);
-      if (!group) continue;
-      // Only events the normal pass has already gone through: anything newer is
-      // still on its way there, and sending it here would duplicate it.
-      // The limit is applied in SQL, so it has to be wider than what one night can produce.
-      const rows = this.repo.activeEvents(user.groupKey, now.date, 200).filter((r) => r.notified && r.createdAt >= since && !this.repo.reminderSent(user.id, "event", String(r.id)));
-      if (!rows.length) continue;
-      const events: ChangeEvent[] = rows.map((r) => {
-        const p = r.payload as { before?: Occurrence; after?: Occurrence; fields?: string[] };
-        return { kind: r.kind as ChangeEvent["kind"], groupKey: r.groupKey, date: r.date, period: r.period, before: p.before, after: p.after, fields: p.fields };
-      });
-      const mine = events.filter((e) => {
-        if (isSessionPeriod(e.period) && !user.notifySession) return false;
-        const sg = e.after?.subgroup ?? e.before?.subgroup ?? null;
-        return !user.subgroup || sg == null || sg === user.subgroup;
-      });
-      for (const r of rows) this.repo.markReminderSent(user.id, "event", String(r.id));
-      if (!mine.length) continue;
-      const kb = new InlineKeyboard().text("📆 Файл изменений в календарь", `cics:${user.groupKey}`);
-      const text = `🌙 <i>Пока у тебя были тихие часы, расписание изменилось.</i>\n\n${formatChanges(group, mine)}`;
-      if (await this.send(user, clampHtml(text), { kind: "changes-backlog", replyMarkup: kb })) sent++;
+      const quiet = !!user.quietFrom && !!user.quietTo;
+      if (quiet) {
+        // Утренняя выдача: только сразу после окончания тихих часов, иначе это
+        // превратилось бы в ежеминутный обход всех подряд.
+        const to = parseHHMM(user.quietTo!);
+        if (to == null) continue;
+        if ((now.minutes - to + 1440) % 1440 > 120) continue;
+      }
+      // Изменения приходят и по своей группе, и по тем, за которыми следят:
+      // раньше добор смотрел только свою, и «ночные» чужие пропадали совсем.
+      const keys = [...(user.notifyChanges && user.groupKey ? [user.groupKey] : []), ...this.repo.watchGroups(user.id)];
+      for (const key of [...new Set(keys)]) {
+        const group = this.service.group(key);
+        if (!group) continue;
+        const own = user.groupKey === key;
+        const rows = rowsFor(key).filter((r) => !this.repo.reminderSent(user.id, "event", String(r.id)));
+        // Человеку без тихих часов добор нужен только как повтор недавней
+        // неудачной отправки, а не как пересказ всего дня.
+        const fresh = quiet ? rows : rows.filter((r) => Date.now() - Date.parse(r.createdAt) < 2 * 60 * 60 * 1000);
+        if (!fresh.length) continue;
+        const events: ChangeEvent[] = fresh.map((r) => {
+          const p = r.payload as { before?: Occurrence; after?: Occurrence; fields?: string[] };
+          return { kind: r.kind as ChangeEvent["kind"], groupKey: r.groupKey, date: r.date, period: r.period, before: p.before, after: p.after, fields: p.fields };
+        });
+        const mine = events.filter((e) => {
+          if (isSessionPeriod(e.period) && !user.notifySession) return false;
+          if (!own) return true;
+          const sg = e.after?.subgroup ?? e.before?.subgroup ?? null;
+          return !user.subgroup || sg == null || sg === user.subgroup;
+        });
+        if (!mine.length) {
+          // Чужая подгруппа или сессия без подписки: это не «не доставлено».
+          for (const r of fresh) this.repo.markReminderSent(user.id, "event", String(r.id));
+          continue;
+        }
+        const kb = new InlineKeyboard().text("📆 Файл изменений в календарь", `cics:${key}`);
+        if (!own) kb.row().text("👁 Не следить за группой", `unwatch:${key}`);
+        const head = quiet ? "🌙 <i>Пока у тебя были тихие часы, расписание изменилось.</i>\n\n" : "";
+        if (await this.send(user, clampHtml(`${head}${formatChanges(group, mine)}`), { kind: "changes-backlog", replyMarkup: kb })) {
+          sent++;
+          for (const r of fresh) this.repo.markReminderSent(user.id, "event", String(r.id));
+        }
+      }
     }
     return sent;
   }
+
 
   inQuietHours(user: User, now: WallClock = wallClock()): boolean {
     if (!user.quietFrom || !user.quietTo) return false;
@@ -474,6 +504,4 @@ function humanMinutes(min: number): string {
   return m ? `${h} ${hw} ${m} мин` : `${h} ${hw}`;
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
+

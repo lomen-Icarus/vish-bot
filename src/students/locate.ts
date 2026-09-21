@@ -2,7 +2,7 @@
  * Где студент должен быть по расписанию. Отдельный модуль, потому что этим
  * пользуются двое: экран «Где студент» и инструмент ИИ-поиска.
  */
-import { esc } from "../schedule/format.js";
+import { esc, plural } from "../schedule/format.js";
 import { findGroup, logicalKeyFor, type LogicalGroup } from "../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import { fmtDDMM, fmtHHMM, wallClock, type LocalDate } from "../time.js";
@@ -26,7 +26,7 @@ const place = (o: Occurrence): string => (o.isDistance ? "дистанционн
 /** Пара одной строкой; подгруппу называем, когда она неизвестна и вариантов несколько. */
 function lessonLine(o: Occurrence, showSubgroup: boolean): string {
   const sub = showSubgroup && o.subgroup ? `${o.subgroup} подгр. — ` : "";
-  return `${sub}<b>${esc(o.subject)}</b> (${lessonTypeLabel(o.type)}), ${place(o)}`;
+  return `${sub}<b>${esc(o.subject)}</b> (${esc(lessonTypeLabel(o.type))}), ${place(o)}`;
 }
 
 /**
@@ -44,7 +44,7 @@ export function whereNowText(lessons: Occurrence[], date: LocalDate, today: Loca
     if (!live.length) return `📍 ${fmtDDMM(date)}: пар нет.`;
     const n = slots(live);
     const first = live[0]!;
-    return `📍 ${fmtDDMM(date)}: ${n} пар${n === 1 ? "а" : n < 5 ? "ы" : ""}, начало в ${first.start != null ? fmtHHMM(first.start) : "?"}.`;
+    return `📍 ${fmtDDMM(date)}: ${n} ${plural(n, "пара", "пары", "пар")}, начало в ${first.start != null ? fmtHHMM(first.start) : "?"}.`;
   }
   if (!live.length) return "📍 Сегодня пар нет — по расписанию человек свободен.";
   const now = clock.minutes;

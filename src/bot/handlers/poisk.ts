@@ -14,7 +14,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, isMenuText } from "../keyboards.js";
+import { BTN, groupCb, isMenuText } from "../keyboards.js";
 import { dayView, weekView } from "../views.js";
 import { esc, clampHtml } from "../../schedule/format.js";
 import { courseFor, parseGroupName, type LogicalGroup } from "../../schedule/groups.js";
@@ -113,7 +113,7 @@ async function showStudentDay(ctx: BotContext, student: StudentRecord, date: Loc
     let why: string;
     if (resolved.ambiguous.length) {
       why = `В расписании под «${esc(student.groupTitle)}» несколько разных групп. В реестре не написано, какая именно — выбери:`;
-      for (const g of resolved.ambiguous) kb.text(`📅 ${g.title}`, `posg:${student.id}:${g.key}`).row();
+      for (const g of resolved.ambiguous) kb.text(`📅 ${g.title}`, groupCb(`posg:${student.id}`, g.key)).row();
     } else {
       why = /^ОЗ/i.test(student.groupTitle) ? "Это заочная группа: её расписание бот не показывает." : "Такой группы нет в расписании ВИШ (возможно, человек уже выпустился или перевёлся).";
     }

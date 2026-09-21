@@ -6,6 +6,7 @@ import { addDays, fmtDDMM, isLocalDate, mondayOf, parseDayWord, parseRuDate, tod
 import { clampHtml, esc, formatChangeEvent } from "../../schedule/format.js";
 import type { ChangeEvent } from "../../schedule/diff.js";
 import { findGroup } from "../../schedule/groups.js";
+import { logger } from "../../logger.js";
 
 export const scheduleHandlers = new Composer<BotContext>();
 
@@ -193,17 +194,26 @@ scheduleHandlers.callbackQuery(/^g:(.+)$/, async (ctx) => {
 
 scheduleHandlers.callbackQuery(/^ob:(on|custom|later)$/, async (ctx) => {
   const choice = ctx.match[1];
+  // Повторное нажатие (двойной тап, повтор после лага) даёт «message is not
+  // modified»; без перехвата человек застревал бы на этом экране навсегда.
+  const say = async (text: string): Promise<void> => {
+    try {
+      await ctx.editMessageText(text);
+    } catch (err) {
+      if (!String(err).includes("message is not modified")) logger.debug({ err: String(err) }, "onboarding edit failed");
+    }
+  };
   if (choice === "on") {
     ctx.deps.repo.updateUser(ctx.user.id, { notifyChanges: true, remindFirstMin: 120, remindDistanceMin: 5 });
     await ctx.answerCallbackQuery({ text: "Готово" });
-    await ctx.editMessageText("✅ Уведомления включены: изменения в расписании, напоминание за 2 часа до первой пары, ссылка на вебинар за 5 минут до дистанта.");
+    await say("✅ Уведомления включены: изменения в расписании, напоминание за 2 часа до первой пары, ссылка на вебинар за 5 минут до дистанта.");
   } else if (choice === "custom") {
     ctx.deps.repo.updateUser(ctx.user.id, { notifyChanges: true });
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Открой ⚙️ Настройки и включи то, что нужно.");
+    await say("Открой ⚙️ Настройки и включи то, что нужно.");
   } else {
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText("Хорошо. Уведомления можно включить в ⚙️ Настройках.");
+    await say("Хорошо. Уведомления можно включить в ⚙️ Настройках.");
   }
   // Ask how they want to see the schedule before showing the first one.
   if (ctx.deps.renderer) {
