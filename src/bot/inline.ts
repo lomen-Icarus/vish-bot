@@ -28,13 +28,15 @@ export interface InlineRequest {
   intake: number | null;
   /** Запрос вообще пустой: показываем короткую подсказку своей группой. */
   empty: boolean;
+  /** В запросе была группа, но такой нет: об этом надо сказать, а не подсовывать свою. */
+  unknownGroup: boolean;
 }
 
-const WEEK_WORDS = /^(неделя|неделю|нед|недел\w*|week)$/iu;
+const WEEK_WORDS = /^(нед|недел[а-яё]*|week)$/iu;
 const NEXT_WORDS = /^(след|следующая|следующую|next)$/iu;
-const STREAM_WORDS = /^(поток|потока|курс|stream)$/iu;
-const COMMON_WORDS = /^(общие|общая|общее|общих|вместе|common)$/iu;
-const DAY_WORDS = /^(пара|пары|день|сегодня|завтра|вчера|(после|поза)+(завтра|вчера))$/iu;
+const STREAM_WORDS = /^(поток[а-яё]*|курс|stream)$/iu;
+const COMMON_WORDS = /^(общ[а-яё]+|вместе|common)$/iu;
+const DAY_WORDS = /^(пара|пары|день|дня)$/iu;
 
 /** Разбирает inline-запрос: режим, дату и группу. */
 export function parseInlineQuery(deps: Deps, query: string, user: User | null): InlineRequest {
@@ -83,12 +85,25 @@ export function parseInlineQuery(deps: Deps, query: string, user: User | null): 
   }
   const groupQuery = rest.join(" ").trim();
   const groups = groupQuery ? findGroup(deps.service.groups(), groupQuery) : [];
-  // «поток 24» — это год набора, а не группа.
-  const intakeWord = rest.find((w) => /^\d{2}$/.test(w));
-  const intake = intakeWord && deps.service.intakes().includes(Number(intakeWord)) ? Number(intakeWord) : null;
+  // «поток 24» — это год набора, а не группа. Берём первое двузначное слово,
+  // которое действительно есть среди наборов: в «поток 12 26» год — это «26».
+  const intakes = deps.service.intakes();
+  const named = rest.find((w) => /^\d{2}$/.test(w) && intakes.includes(Number(w)));
+  // Года не назвали, но назвали группу («поток 12-26») — берём набор этой группы,
+  // иначе человек попросил один поток, а получил бы свой.
+  const fromGroup = groups[0]?.intake || null;
   const own = user?.groupKey ? deps.service.group(user.groupKey) : null;
   const effective = groups.length ? groups : own ? [own] : deps.service.groups().slice(0, 4);
-  return { mode, date, groups: effective, intake: intake ?? (mode === "stream" || mode === "common" ? (own?.intake ?? deps.service.intakes()[0] ?? null) : null), empty: words.length === 0 };
+  const wantsStream = mode === "stream" || mode === "common" || mode === "auto";
+  return {
+    mode,
+    date,
+    groups: effective,
+    intake: named ? Number(named) : wantsStream ? (fromGroup ?? own?.intake ?? intakes[0] ?? null) : null,
+    // Запрос был, но группу по нему не нашли: подставлять свою молча нельзя.
+    unknownGroup: !!groupQuery && groups.length === 0,
+    empty: words.length === 0,
+  };
 }
 
 const cut = (s: string, n = 4000): string => (s.length <= n ? s : `${s.slice(0, n - 1).trimEnd()}…`);
@@ -104,11 +119,22 @@ function preview(text: string): string {
     .slice(0, 110);
 }
 
+/**
+ * id inline-результата ограничен 64 байтами, а кириллица занимает по два.
+ * Режем по байтам и выбрасываем «обрубок» последней буквы: из него получается
+ * U+FFFD, который сам по себе занимает три байта и снова ломает лимит.
+ */
+function shortId(id: string): string {
+  const buf = Buffer.from(id, "utf8");
+  if (buf.length <= 64) return id;
+  const cut = buf.subarray(0, 64).toString("utf8").replace(/\uFFFD+$/, "");
+  return Buffer.byteLength(cut) <= 64 ? cut : cut.slice(0, -1);
+}
+
 function article(id: string, title: string, text: string): InlineQueryResultArticle {
   return {
     type: "article",
-    // id ограничен 64 байтами: кириллица — два байта на букву, поэтому режем.
-    id: Buffer.from(id).subarray(0, 64).toString(),
+    id: shortId(id),
     title,
     description: preview(text),
     input_message_content: { message_text: cut(text), parse_mode: "HTML" },
@@ -141,20 +167,42 @@ export function buildInlineResults(deps: Deps, req: InlineRequest, user: User | 
     const { text, monday } = weekView(deps, g, req.date, own && g.key === own.key ? subgroup : null);
     out.push(article(`w:${g.key}:${monday}`, `🗓 ${g.title} · неделя ${fmtDDMM(monday)}–${fmtDDMM(addDays(monday, 6))}`, text));
   };
+  // Поток за день и общие пары за неделю читают одни и те же группы, а день
+  // всегда внутри своей недели. Материализуем неделю один раз: inline-запрос
+  // прилетает на каждое нажатие клавиши, и лишний разбор расписания там дорог.
+  const weekCache = new Map<string, ReturnType<typeof streamRows>>();
+  const streamWeek = (intake: number, monday: LocalDate): ReturnType<typeof streamRows> => {
+    const key = `${intake}:${monday}`;
+    let cached = weekCache.get(key);
+    if (!cached) {
+      cached = streamRows(deps, intake, monday, addDays(monday, 6), own, subgroup);
+      weekCache.set(key, cached);
+    }
+    return cached;
+  };
   const addStream = (intake: number): void => {
-    const { rows } = streamRows(deps, intake, req.date, req.date, own, subgroup);
+    const { rows } = streamWeek(intake, mondayOf(req.date));
     const text = formatStreamDay(intake, req.date, rows, deps.service.weekInfo(req.date), today, own?.intake === intake ? own.key : null);
     out.push(article(`s:${intake}:${req.date}`, `🎓 Поток 20${intake} · ${req.date === today ? "сегодня" : fmtDDMM(req.date)}`, text));
   };
   const addCommon = (intake: number): void => {
     const monday = mondayOf(req.date);
-    const { rows } = streamRows(deps, intake, monday, addDays(monday, 6), own, subgroup);
+    const { rows } = streamWeek(intake, monday);
     const ownInStream = own && own.intake === intake ? own : null;
     const text = formatCommonLessons(intake, monday, rows, ownInStream);
     if (!commonLessons(rows, ownInStream?.key ?? null).length && !ownInStream) return;
     out.push(article(`c:${intake}:${monday}`, `🤝 Общие пары · поток 20${intake}`, text));
   };
 
+  if (req.unknownGroup) {
+    out.push(
+      article(
+        `nf:${req.date}`,
+        "🤷 Такой группы не нашёл",
+        "Проверь номер: группы ВИШ выглядят как 12-23. Можно написать просто «12-23», «виш 12 23» или добавить дату: «12-23 завтра».",
+      ),
+    );
+  }
   switch (req.mode) {
     case "week":
       for (const g of req.groups.slice(0, 8)) addWeek(g);

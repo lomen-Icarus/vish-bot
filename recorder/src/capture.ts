@@ -138,9 +138,11 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
       })
       .catch(() => undefined);
 
-    const area = await firstVisible(page, PRESENTATION_SELECTORS);
+    // Клиент BBB дорисовывает доску не сразу, и одной попытки мало: ищем
+    // область снова на каждом круге, пока не найдём.
+    let area = await firstVisible(page, PRESENTATION_SELECTORS);
     result.usedSelector = area?.selector ?? null;
-    if (!area) notes.push("область презентации не нашлась: снимаем весь экран");
+    if (!area) notes.push("область презентации сразу не нашлась, ищу дальше");
 
     const deadline = Date.now() + opts.maxMinutes * 60_000;
     let lastHash = "";
@@ -152,6 +154,13 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
     while (Date.now() < deadline) {
       await sleep(opts.intervalSeconds * 1000);
       if (page.isClosed()) break;
+      if (!area) {
+        area = await firstVisible(page, PRESENTATION_SELECTORS);
+        if (area) {
+          result.usedSelector = area.selector;
+          notes.push(`область презентации нашлась позже: ${area.selector}`);
+        }
+      }
       let png: Buffer;
       try {
         png = area ? await area.locator.screenshot({ timeout: 15_000 }) : await page.screenshot({ timeout: 15_000 });

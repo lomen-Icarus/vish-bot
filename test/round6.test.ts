@@ -104,6 +104,34 @@ describe("inline", () => {
     for (const r of results) expect(String(r.input_message_content && "message_text" in r.input_message_content ? r.input_message_content.message_text : "").length).toBeLessThanOrEqual(4096);
   });
 
+  it("берёт поток у названной группы, а не у смотрящего", () => {
+    const deps = makeDeps();
+    // Смотрящий из набора 23, спрашивает про группу набора 23 другого номера —
+    // поток должен быть её, а не «своего» по умолчанию.
+    const req = parseInlineQuery(deps, "поток 14-23", user(group.key));
+    expect(req.mode).toBe("stream");
+    expect(req.intake).toBe(other.intake);
+  });
+
+  it("не подсовывает своё расписание вместо ненайденной группы", () => {
+    const deps = makeDeps();
+    const req = parseInlineQuery(deps, "99-99 завтра", user(group.key));
+    expect(req.unknownGroup).toBe(true);
+    const results = buildInlineResults(deps, req, user(group.key));
+    expect(results[0]!.title).toMatch(/не нашёл/i);
+  });
+
+  it("id остаётся в 64 байтах даже у группы с длинным названием", () => {
+    const deps = makeDeps();
+    const long: LogicalGroup = { ...group, key: "виш-12-23 (11.03.04 индивидуальный учебный план)", title: "ВИШ-12-23 (11.03.04 индивидуальный учебный план)" };
+    deps.service = { ...makeService(), groups: () => [long], group: () => long, stream: () => [long] } as unknown as ScheduleService;
+    const req = parseInlineQuery(deps, "", user(null));
+    for (const r of buildInlineResults(deps, req, user(null))) {
+      expect(Buffer.byteLength(r.id)).toBeLessThanOrEqual(64);
+      expect(r.id).not.toContain("\uFFFD");
+    }
+  });
+
   it("работает для человека без группы: показывает первые группы школы", () => {
     const deps = makeDeps();
     const req = parseInlineQuery(deps, "завтра", null);

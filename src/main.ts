@@ -68,8 +68,14 @@ async function main(): Promise<void> {
         whereabouts: (studentId) => {
           const st = students.get(studentId);
           if (!st) return null;
-          const { group } = resolveStudentGroup(service.groups(), st);
-          if (!group) return "Группы этого человека нет в расписании ВИШ.";
+          const { group, ambiguous } = resolveStudentGroup(service.groups(), st);
+          if (!group) {
+            // Под одним номером в расписании бывает две разные группы: молча
+            // выбрать одну — значит показать чужие пары как его.
+            return ambiguous.length
+              ? `В расписании под «${st.groupTitle}» несколько разных групп (${ambiguous.map((g) => g.title).join(", ")}), поэтому где он сейчас — сказать нельзя.`
+              : "Группы этого человека нет в расписании ВИШ.";
+          }
           const today = todayMsk();
           const lessons = filterSubgroup(service.lessonsOn(group, today), st.subgroup);
           return whereNowText(lessons, today, today, st.subgroup).replace(/<[^>]+>/g, "");

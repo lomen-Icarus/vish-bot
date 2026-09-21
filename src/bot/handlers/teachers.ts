@@ -55,6 +55,11 @@ async function showWebinarTeacher(ctx: BotContext, t: WebinarTeacher): Promise<v
  * Карточка преподавателя из карты: по id, а если его ещё не обходили — по имени
  * (так находятся преподаватели дистанта, у которых id нет вовсе).
  */
+export function teacherVishTag(repo: BotContext["deps"]["repo"], teacherId: number | null, name: string): string {
+  const row = (teacherId != null ? repo.teacherMapById(teacherId) : null) ?? repo.teacherMapByKey(teacherMapKey(null, name));
+  return row?.vish ? " (ВИШ)" : "";
+}
+
 function mapRow(ctx: BotContext, teacherId: number | null, name: string) {
   return (teacherId != null ? ctx.deps.repo.teacherMapById(teacherId) : null) ?? ctx.deps.repo.teacherMapByKey(teacherMapKey(null, name));
 }
@@ -79,8 +84,21 @@ async function sendTeacherPhoto(ctx: BotContext, t: TeacherRef, fullName: string
     const row = photo.row;
     const caption = [`👨‍🏫 <b>${esc(fullName ?? t.name)}</b>${row?.vish ? " (ВИШ)" : ""}`, [row?.degree, row?.department].filter(Boolean).map((x) => esc(String(x))).join(" · ")].filter(Boolean).join("\n");
     if (photo.fileId) {
-      await ctx.replyWithPhoto(photo.fileId, { caption, parse_mode: "HTML", disable_notification: true });
-      return;
+      try {
+        await ctx.replyWithPhoto(photo.fileId, { caption, parse_mode: "HTML", disable_notification: true });
+        return;
+      } catch (err) {
+        // file_id живёт внутри одного бота: после смены токена он перестаёт
+        // работать, и фото пропало бы навсегда. Забываем и качаем заново.
+        logger.debug({ err: String(err), teacher: t.id }, "stale photo file_id, refetching");
+        teachers.forgetPhotoFileId(photo.key);
+        const fresh = await teachers.photo(t.id);
+        if (!fresh.bytes) return;
+        const again = await ctx.replyWithPhoto(new InputFile(fresh.bytes, `teacher-${t.id}.jpg`), { caption, parse_mode: "HTML", disable_notification: true });
+        const id = again.photo?.[again.photo.length - 1]?.file_id;
+        if (id) ctx.deps.repo.setTeacherPhotoFileId(fresh.key, id);
+        return;
+      }
     }
     if (!photo.bytes) return;
     const sent = await ctx.replyWithPhoto(new InputFile(photo.bytes, `teacher-${t.id}.jpg`), { caption, parse_mode: "HTML", disable_notification: true });
@@ -177,8 +195,10 @@ teacherHandlers.callbackQuery(/^tw:(\d+):(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
 
 teacherHandlers.callbackQuery(/^twf:(\d+)$/, async (ctx) => {
   const id = Number(ctx.match[1]);
-  const t = await ctx.deps.teachers?.byId(id);
-  const name = t?.name ?? ctx.deps.repo.teacherMapById(id)?.name ?? `#${id}`;
+  // Имя берём из своей базы: поход в справочник портала может занять минуту,
+  // а Telegram ждёт ответа на нажатие несколько секунд и иначе «морозит» кнопку.
+  const known = ctx.deps.repo.teacherMapById(id)?.name ?? ctx.deps.repo.watchedTeachers(ctx.user.id).find((w) => w.teacherId === id)?.name;
+  const name = known ?? `#${id}`;
   const following = ctx.deps.repo.toggleWatchTeacher(ctx.user.id, id, name);
   await ctx.answerCallbackQuery({
     text: following ? "Слежу: пришлю его расписание вечером и за 2 часа до первой пары" : "Больше не слежу за этим преподавателем",
@@ -201,8 +221,18 @@ teacherHandlers.callbackQuery(/^twf:(\d+)$/, async (ctx) => {
 
 async function showTeacherDay(ctx: BotContext, t: TeacherRef, date: LocalDate, edit = false): Promise<void> {
   const teachers = ctx.deps.teachers!;
+  // В try — только портал: если не отправится сообщение, это не его вина,
+  // и писать студенту «портал не ответил» было бы враньём.
+  let loaded: { lessons: Occurrence[]; fullName: string | null };
   try {
-    const { lessons, fullName } = await teachers.lessons(t, date, date);
+    loaded = await teachers.lessons(t, date, date);
+  } catch (err) {
+    logger.warn({ err: String(err), teacher: t.id }, "teacher schedule failed");
+    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
+    return;
+  }
+  {
+    const { lessons, fullName } = loaded;
     const title = `${fullName ?? t.name}${vishTag(ctx, t.id, fullName ?? t.name)}`;
     const text = formatDay(pseudoGroup(t, title), date, lessons, ctx.deps.service.weekInfo(date), todayMsk(), { now: wallClock() });
     const kb = teacherDayNav(t.id, date, { following: ctx.deps.repo.watchesTeacher(ctx.user.id, t.id) });
@@ -214,19 +244,24 @@ async function showTeacherDay(ctx: BotContext, t: TeacherRef, date: LocalDate, e
         if (String(err).includes("message is not modified")) return;
       }
     }
-    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
+    await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: kb });
     if (!edit) await sendTeacherPhoto(ctx, t, fullName);
-  } catch (err) {
-    logger.warn({ err: String(err), teacher: t.id }, "teacher schedule failed");
-    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
   }
 }
 
 async function showTeacherWeek(ctx: BotContext, t: TeacherRef, anyDate: LocalDate, edit = false): Promise<void> {
   const teachers = ctx.deps.teachers!;
   const monday = mondayOf(anyDate);
+  let loaded: { lessons: Occurrence[]; fullName: string | null };
   try {
-    const { lessons, fullName } = await teachers.lessons(t, monday, addDays(monday, 6));
+    loaded = await teachers.lessons(t, monday, addDays(monday, 6));
+  } catch (err) {
+    logger.warn({ err: String(err), teacher: t.id }, "teacher week failed");
+    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
+    return;
+  }
+  {
+    const { lessons, fullName } = loaded;
     const byDate = new Map<LocalDate, Occurrence[]>();
     for (const o of lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
     const text = formatWeek(pseudoGroup(t, `${fullName ?? t.name}${vishTag(ctx, t.id, fullName ?? t.name)}`), monday, byDate, ctx.deps.service.weekInfo(monday), todayMsk());
@@ -239,9 +274,6 @@ async function showTeacherWeek(ctx: BotContext, t: TeacherRef, anyDate: LocalDat
         if (String(err).includes("message is not modified")) return;
       }
     }
-    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
-  } catch (err) {
-    logger.warn({ err: String(err), teacher: t.id }, "teacher week failed");
-    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
+    await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: kb });
   }
 }

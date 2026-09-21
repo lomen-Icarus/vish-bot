@@ -10,10 +10,13 @@
  *     BigBlueButton с одноразовым токеном.
  */
 import { fetch as undiciFetch, ProxyAgent, type Dispatcher } from "undici";
+import { parseWebinars } from "chuvsu-js/parsers";
 
 export const PORTAL_BASE = "https://tt.chuvsu.ru";
 
 export interface WebinarRow {
+  /** «Вебинар по расписанию» — только такие записываем. */
+  scheduled: boolean;
   /** idw для getjoin; пустая строка — подключиться ещё нельзя. */
   joinId: string;
   /** idwt для getjoin. */
@@ -80,15 +83,27 @@ export class Portal {
 
   /** Гостевой вход: портал отдаёт сессионную куку, без неё страница вебинаров пуста. */
   async loginAsGuest(): Promise<void> {
-    await this.request(`${PORTAL_BASE}/auth`, {
+    this.cookies.clear();
+    const res = await this.request(`${PORTAL_BASE}/auth`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ guest: "Войти гостем" }).toString(),
     });
+    if (!this.cookies.size) throw new Error(`портал не дал сессию гостю (HTTP ${res.status})`);
   }
 
-  /** Страница вебинаров за день (HTML). */
+  /**
+   * Страница вебинаров за день. Гостевая сессия живёт не вечно: если портал
+   * отдал форму входа, заходим гостем заново и повторяем запрос один раз.
+   */
   async webinarPage(date: string, facultyId: number): Promise<string> {
+    const html = await this.fetchWebinarPage(date, facultyId);
+    if (!looksLikeLoginPage(html)) return html;
+    await this.loginAsGuest();
+    return this.fetchWebinarPage(date, facultyId);
+  }
+
+  private async fetchWebinarPage(date: string, facultyId: number): Promise<string> {
     const [y, m, d] = date.split("-");
     const res = await this.request(`${PORTAL_BASE}/webinar`, {
       method: "POST",
@@ -122,48 +137,34 @@ export class Portal {
   }
 }
 
-const textOf = (html: string): string =>
-  html
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/\s+/g, " ")
-    .trim();
-
-const toMinutes = (hhmm: string | undefined): number | null => {
-  if (!hhmm) return null;
-  const m = /^(\d{1,2})[:.](\d{2})$/.exec(hhmm.trim());
-  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
-};
-
 /**
- * Разбор строк таблицы вебинаров. Нас интересует не столько содержимое
- * (его знает бот), сколько `jointo(...)`: он и есть пропуск в комнату.
+ * Разбор строк вебинаров берём из chuvsu-js — той же библиотеки, которой
+ * пользуется бот. Своя регулярка спотыкалась о вложенные таблицы и о кавычки
+ * в `jointo('90412',1)`, а этот парсер живёт вместе с порталом.
  */
 export function parseWebinarRows(html: string): WebinarRow[] {
-  const rows: WebinarRow[] = [];
-  for (const tr of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)) {
-    const inner = tr[1]!;
-    const join = /jointo(?:sub)?\((\d+)\s*,\s*(\d+)\)/.exec(inner);
-    const cells = [...inner.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((c) => textOf(c[1]!));
-    if (cells.length < 2) continue;
-    const raw = cells.join(" | ");
-    const time = /(\d{1,2}[:.]\d{2})\s*[–—-]\s*(\d{1,2}[:.]\d{2})/.exec(raw);
-    const groups = [...raw.matchAll(/(ОЗ)?ВИШ[\s-]*\d{1,2}[\s-]*\d{2}(?:иот)?(?:\s*\([^)]*\))?/gu)].map((m) => m[0].replace(/\s+/g, " ").trim());
-    // Преподаватель — «Фамилия И. О.»; берём первое такое вхождение строки.
-    const teacher = /([А-ЯЁ][а-яё-]+\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.)/u.exec(raw)?.[1] ?? "";
-    rows.push({
-      joinId: join?.[1] ?? "",
-      joinType: join?.[2] ?? "1",
-      startMinutes: toMinutes(time?.[1]),
-      endMinutes: toMinutes(time?.[2]),
-      subject: cells[1] ?? "",
-      teacher,
-      groups: [...new Set(groups)],
-      title: cells[2] ?? "",
-      raw,
-    });
-  }
-  return rows;
+  const minutes = (t: { hours: number; minutes: number } | undefined): number | null => (t ? t.hours * 60 + t.minutes : null);
+  return parseWebinars(html).map((w) => ({
+    joinId: w.id ?? "",
+    joinType: String(w.idType ?? 1),
+    startMinutes: minutes(w.time?.start),
+    endMinutes: minutes(w.time?.end),
+    subject: w.subject?.trim() ?? "",
+    teacher: w.teacher?.name?.trim() ?? "",
+    groups: (w.groups ?? []).map((g) => g.trim()).filter(Boolean),
+    title: w.title?.trim() ?? "",
+    // Вне расписания бывают закрытые встречи — их записывать нельзя.
+    scheduled: w.scheduled !== false,
+    raw: w.raw ?? "",
+  }));
+}
+
+/**
+ * Портал отдал форму входа вместо страницы: сессия протухла.
+ * Та же проверка, что и у бота: поля `wname` есть и на странице вебинаров —
+ * внутри диалога подключения, поэтому одного их наличия мало.
+ */
+export function looksLikeLoginPage(html: string): boolean {
+  if (!html.includes('name="wname"')) return false;
+  return !html.includes('id="joindialog"');
 }

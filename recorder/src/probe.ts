@@ -11,7 +11,7 @@ import path from "node:path";
 import { chromium } from "playwright-core";
 import { loadConfig, loadDotEnv } from "./config.js";
 import { Portal, parseWebinarRows } from "./portal.js";
-import { mskNow, wanted } from "./main.js";
+import { mskNow, wanted } from "./plan.js";
 import { log } from "./log.js";
 
 async function main(): Promise<void> {

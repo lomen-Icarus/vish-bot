@@ -198,7 +198,12 @@ export class TeacherService {
     const cached = this.pages.get(key);
     if (cached && Date.now() - cached.fetchedAt < PAGE_TTL_MS) return cached;
     const { days, info } = await this.portal.getTeacherPage(teacherId, period);
-    const entry: CachedPage = { fetchedAt: Date.now(), days, fullName: info?.name ?? null, info: info ?? null };
+    const now = Date.now();
+    // Ночной обход справочника заводит запись на каждого преподавателя ЧувГУ,
+    // а отдаём мы страницу только 15 минут. Без уборки разобранные семестровые
+    // расписания всего университета лежат в памяти до перезапуска процесса.
+    for (const [k, v] of this.pages) if (now - v.fetchedAt >= PAGE_TTL_MS) this.pages.delete(k);
+    const entry: CachedPage = { fetchedAt: now, days, fullName: info?.name ?? null, info: info ?? null };
     this.pages.set(key, entry);
     return entry;
   }
@@ -247,12 +252,15 @@ export class TeacherService {
       }
       const vishGroups = [...groups].filter(isVishGroupTitle);
       const key = teacherMapKey(teacherId, page.fullName ?? fallbackName ?? String(teacherId));
+      // Тот же человек мог прийти со страницы вебинаров (ключ по имени) — там
+      // уже известно, что он наш. Не теряем это, если сейчас у него пар нет.
+      const fromWebinars = this.repo.teacherMapByKey(teacherMapKey(null, page.fullName ?? fallbackName ?? ""));
       this.repo.upsertTeacherMap({
         key,
         teacherId,
         name: page.fullName ?? fallbackName ?? `#${teacherId}`,
-        vish: vishGroups.length > 0,
-        groups: vishGroups.slice(0, 40),
+        vish: vishGroups.length > 0 || fromWebinars?.vish === true,
+        groups: (vishGroups.length ? vishGroups : (fromWebinars?.groups ?? [])).slice(0, 40),
         subjects: [...subjects].slice(0, 40),
         department: page.info?.department ?? null,
         degree: page.info?.degree ?? null,
@@ -263,6 +271,24 @@ export class TeacherService {
       });
       return this.repo.teacherMapByKey(key);
     } catch (err) {
+      // Отмечаем попытку, иначе «битый» id вечно первый в очереди обхода
+      // (teacherMapStale сортирует непроверенных вперёд) и портал долбится зря.
+      const key = teacherMapKey(teacherId, fallbackName ?? String(teacherId));
+      const prev = this.repo.teacherMapByKey(key);
+      this.repo.upsertTeacherMap({
+        key,
+        teacherId,
+        name: prev?.name ?? fallbackName ?? `#${teacherId}`,
+        vish: prev?.vish ?? false,
+        groups: prev?.groups ?? [],
+        subjects: prev?.subjects ?? [],
+        department: prev?.department ?? null,
+        degree: prev?.degree ?? null,
+        photoUrl: prev?.photoUrl ?? null,
+        photoFileId: prev?.photoFileId ?? null,
+        source: "portal",
+        checkedAt: new Date().toISOString(),
+      });
       logger.debug({ err: String(err), teacherId }, "teacher map refresh failed");
       return null;
     }
@@ -280,10 +306,13 @@ export class TeacherService {
     const dir = await this.directory();
     for (const t of dir) this.repo.seedTeacherMap(teacherMapKey(t.id, t.name), t.id, t.name);
     const ids = this.repo.teacherMapStale(limit);
+    const nameById = new Map(dir.map((t) => [t.id, t.name]));
     let checked = 0;
     let vish = 0;
     for (const id of ids) {
-      const row = await this.refreshMapFor(id);
+      // Имя из справочника у нас уже есть: без него карточка без шапки
+      // превратилась бы в «#12345».
+      const row = await this.refreshMapFor(id, nameById.get(id));
       checked++;
       if (row?.vish) vish++;
     }
@@ -291,10 +320,16 @@ export class TeacherService {
     return { checked, vish };
   }
 
+  /** Забыть закешированный file_id: Telegram его не принял (сменили токен, файл удалён). */
+  forgetPhotoFileId(key: string): void {
+    this.repo.setTeacherPhotoFileId(key, "");
+  }
+
   /** Фото преподавателя: из кеша Telegram (file_id) или байтами с портала. */
   async photo(teacherId: number): Promise<{ key: string; fileId: string | null; bytes: Buffer | null; row: TeacherMapRow | null }> {
     let row = this.repo.teacherMapById(teacherId);
     if (row?.photoFileId) return { key: row.key, fileId: row.photoFileId, bytes: null, row };
+    // Пустая строка — это «забыли» из forgetPhotoFileId: качаем заново.
     if (!row?.photoUrl) {
       row = await this.refreshMapFor(teacherId, row?.name);
     }

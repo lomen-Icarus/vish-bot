@@ -7,7 +7,7 @@ import { clampHtml, esc } from "../../schedule/format.js";
 import { todayMsk } from "../../time.js";
 import { aiAllowance, aiLimits } from "../../ai/limits.js";
 import type { AskMentions } from "../../ai/ask.js";
-import { webinarKey } from "./teachers.js";
+import { teacherVishTag, webinarKey } from "./teachers.js";
 import { logger } from "../../logger.js";
 
 export const askHandlers = new Composer<BotContext>();
@@ -69,25 +69,28 @@ function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentio
   const items: Array<[string, string]> = [];
   // Один человек приходит и из справочника (t:<id>), и со страницы вебинаров
   // (wtc:<hash>) — по callback_data это разные кнопки, поэтому помним и имена.
-  const names = new Set<string>();
+  // Преподаватели и студенты считаются отдельно: «Троишестова Д.А.» и
+  // «Троишестов Иван Сергеевич» дают одинаковый ключ, и кнопка на студента
+  // пропадала бы из-за однофамильца-преподавателя.
+  const names = { teacher: new Set<string>(), student: new Set<string>() };
   // «Иванова И.И.» и «Иванова Ирина Ивановна» — один человек: фамилия + инициалы.
   const key = (s: string): string => {
     const parts = s.toLowerCase().replace(/ё/g, "е").split(/[.\s]+/).filter(Boolean);
     return `${parts[0] ?? ""}|${parts.slice(1).map((w) => w[0]).join("")}`;
   };
-  const add = (label: string, data: string, name?: string): void => {
+  const add = (label: string, data: string, name?: string, kind: "teacher" | "student" = "teacher"): void => {
     if (taken.has(data) || items.length >= 6) return;
     if (name) {
       const k = key(name);
-      if (names.has(k)) return;
-      names.add(k);
+      if (names[kind].has(k)) return;
+      names[kind].add(k);
     }
     taken.add(data);
     items.push([label.slice(0, 40), data]);
   };
-  for (const t of mentions.teachers) add(`👨‍🏫 ${t.name}`, `t:${t.id}`, t.name);
+  for (const t of mentions.teachers) add(`👨‍🏫 ${t.name}${teacherVishTag(ctx.deps.repo, t.id, t.name)}`, `t:${t.id}`, t.name);
   for (const name of mentions.webinarTeachers) add(`👨‍🏫 ${name}`, webinarKey(name), name);
-  for (const st of mentions.students) add(`🕵️ ${st.name} · ${st.groupTitle}`, `pop:${st.id}`, st.name);
+  for (const st of mentions.students) add(`🕵️ ${st.name} · ${st.groupTitle}`, `pop:${st.id}`, st.name, "student");
   for (const key of mentions.groupKeys) {
     const g = ctx.deps.service.group(key);
     if (g && g.key !== ctx.user.groupKey) add(`📅 ${g.title}`, `pdn:${g.key}:${today}`);

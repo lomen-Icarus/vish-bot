@@ -1,4 +1,5 @@
 import { Cron } from "croner";
+import { rmSync } from "node:fs";
 import type { ScheduleService } from "../schedule/service.js";
 import type { Notifier } from "../notify/dispatcher.js";
 import type { Repo } from "../db/repo.js";
@@ -58,6 +59,14 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       opts.repo.pruneChangeEvents(30);
       // Журнал «сыска» — это аудит: держим полгода, потом чистим.
       opts.repo.prunePoiskLog(180);
+      // Слайды занимают мегабайты: старше четырёх месяцев они никому не нужны.
+      for (const file of opts.repo.pruneSlideDecks(120)) {
+        try {
+          rmSync(file, { force: true });
+        } catch (err) {
+          logger.debug({ err: String(err), file }, "старый PDF со слайдами не удалился");
+        }
+      }
       logger.info("housekeeping done");
     }),
   ];
