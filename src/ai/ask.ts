@@ -20,6 +20,20 @@ export interface AskOptions {
   model: string;
 }
 
+/**
+ * Доступ к реестру студентов для ИИ-поиска. Живёт за интерфейсом: сам сервис
+ * ничего не знает ни про лимиты, ни про журнал — это дело бота.
+ */
+export interface StudentLookup {
+  search(query: string, limit: number): Array<{ id: string; name: string; groupTitle: string; subgroup: number | null; fuzzy: boolean }>;
+  /** Можно ли этому человеку искать людей прямо сейчас (дневной лимит). */
+  allowed(userId: number): boolean;
+  /** Записать обращение в журнал (аудит + лимит). */
+  note(userId: number, query: string, studentId: string | null): void;
+  /** Где человек должен быть сейчас по расписанию его группы. */
+  whereabouts(studentId: string): string | null;
+}
+
 /** Кого назвали инструменты по ходу ответа: бот вешает это кнопками под текстом. */
 export interface AskMentions {
   /** Преподаватели из справочника портала. */
@@ -28,6 +42,8 @@ export interface AskMentions {
   webinarTeachers: string[];
   /** Ключи групп, чьё расписание смотрели. */
   groupKeys: string[];
+  /** Найденные студенты (когда включён глобальный поиск). */
+  students: Array<{ id: string; name: string; groupTitle: string }>;
 }
 
 export interface AskResult {
@@ -38,7 +54,7 @@ export interface AskResult {
 }
 
 function emptyMentions(): AskMentions {
-  return { teachers: [], webinarTeachers: [], groupKeys: [] };
+  return { teachers: [], webinarTeachers: [], groupKeys: [], students: [] };
 }
 
 function remember<T>(list: T[], item: T, same: (a: T, b: T) => boolean, limit = 6): void {
@@ -54,6 +70,7 @@ const SYSTEM = `Ты — помощник по расписанию Высшей
 Как отвечать:
 - Студенты называют предметы разговорно: «математика»/«матан» = «Математический анализ», «Алгебра и геометрия» тоже математика; «физра» = «Физическая культура и спорт»; «инфа» = «Информатика»; «прога» = «Программирование»/«Основы программирования»; «англ» = «Иностранный язык»; «история» = «История России»; «ОРГ» = «Основы российской государственности». Если точного предмета нет — ищи по смыслу инструментом find_subject и предлагай ближайшие совпадения.
 - Если спрашивают про другую группу (например «у 14-26») — используй get_schedule для неё; названия групп вида «14-26» = «ВИШ-14-26».
+- В поиск пишут что угодно одной строкой: фамилию преподавателя, ФИО студента, номер группы, название предмета, «кто ведёт физику», «где Иванов». Сначала пойми, о ком или о чём речь, и используй нужный инструмент — не отказывай только потому, что это не похоже на вопрос о расписании. Обязательно помечай, кого нашёл: «преподаватель (ВИШ)», «студент ВИШ, группа 12-23», «группа», «предмет». Если под запрос подходит и преподаватель, и студент — покажи оба варианта.
 - Опечатки — это нормально. Если фамилия или название написаны с ошибкой, всё равно ищи: инструменты сами подбирают похожие. Если нашлись похожие люди — не отвечай «не найден», а предложи варианты: «Возможно, ты про Троишестову Д. С. или Троицкую А. В.?» Кнопки с этими именами бот добавит под ответом сам, поэтому просто назови их и попроси выбрать.
 - Вопросы про преподавателя («кто такая Иванова», «что ведёт Петров», «когда у Сидорова пары», «кто ведёт физику») — это вопросы о расписании. Используй find_teacher: он ищет по фамилии или имени в любом порядке и возвращает предметы, группы и ближайшие пары. Отвечай тем, что есть в расписании: какие предметы ведёт, у каких групп, когда ближайшие пары. Биографию, должность и контакты бот не знает — так и скажи, если спросят.
 - В расписании групп портал НЕ указывает преподавателя. Преподаватели известны по онлайн-парам (страница вебинаров) и, если у бота есть учётка портала, по справочнику преподавателей. Отвечая про человека, опирайся только на то, что вернул find_teacher, и честно говори, если данных нет. Не угадывай.
@@ -114,6 +131,7 @@ export class AskService {
     private readonly opts: AskOptions,
     private readonly teachers: TeacherService | null = null,
     private readonly webinars: WebinarService | null = null,
+    private readonly students: StudentLookup | null = null,
   ) {
     this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 90_000 });
   }
@@ -125,7 +143,7 @@ export class AskService {
     return found.length === 1 ? found[0]! : found.length > 1 ? (found.find((g) => g.key === fallback.key) ?? found[0]!) : null;
   }
 
-  private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined, mentions: AskMentions) {
+  private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined, mentions: AskMentions, userId: number) {
     const service = this.service;
     const teachers = this.teachers;
     const webinars = this.webinars;
@@ -237,6 +255,30 @@ export class AskService {
       },
     });
 
+    const students = this.students;
+    const findStudent = betaZodTool({
+      name: "find_student",
+      description:
+        "Найти студента ВИШ по ФИО в реестре школы и сказать, где он должен быть сейчас по расписанию своей группы. Использовать, когда спрашивают про конкретного человека («где Иванов», «в какой группе Петрова», «где сейчас Сидоров Иван»).",
+      inputSchema: z.object({ query: z.string().describe("Фамилия, можно с именем") }),
+      run: async (input) => {
+        if (!students) return "Глобальный поиск студентов в этом боте выключен. Скажи, что бот ищет только преподавателей, группы и предметы.";
+        if (!students.allowed(userId)) return "У этого человека на сегодня кончился лимит поисков людей. Так и скажи.";
+        const found = students.search(input.query, 5);
+        students.note(userId, input.query, found[0]?.id ?? null);
+        if (!found.length) return `В реестре студентов ВИШ никого похожего на «${input.query}» нет. Возможно, это первокурсник: их в реестре нет.`;
+        for (const st of found) remember(mentions.students, { id: st.id, name: st.name, groupTitle: st.groupTitle }, (a, b) => a.id === b.id);
+        const exact = found.filter((f) => !f.fuzzy);
+        const list = (exact.length ? exact : found).slice(0, 5);
+        const lines = list.map((st) => {
+          const where = students.whereabouts(st.id);
+          return `${st.name} — студент ВИШ, группа ${st.groupTitle}${st.subgroup ? `, ${st.subgroup} подгруппа` : ""}.${where ? ` ${where}` : ""}`;
+        });
+        const note = exact.length ? "" : `\nТочного совпадения нет, это похожие по написанию — предложи выбрать.`;
+        return `${lines.join("\n")}${note}\nЭто расписание его группы, а не факт присутствия: предупреди об этом одной фразой.`;
+      },
+    });
+
     const botHelpTool = betaZodTool({
       name: "bot_help",
       description: "Что умеет бот и какие у него кнопки и команды. Используй для любых вопросов о боте и о том, как им пользоваться.",
@@ -244,7 +286,7 @@ export class AskService {
       run: async () => botHelp ?? "Справка по боту недоступна.",
     });
 
-    return [getSchedule, findSubject, listGroups, findTeacher, botHelpTool];
+    return students ? [getSchedule, findSubject, listGroups, findTeacher, findStudent, botHelpTool] : [getSchedule, findSubject, listGroups, findTeacher, botHelpTool];
   }
 
   async answer(input: { question: string; group: LogicalGroup | null; subgroup: number | null; userId: number; botHelp?: string }): Promise<AskResult> {
@@ -261,7 +303,7 @@ export class AskService {
       max_iterations: 6,
       system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
       output_config: { effort: "medium" },
-      tools: this.tools(input.group, input.subgroup, input.botHelp, mentions),
+      tools: this.tools(input.group, input.subgroup, input.botHelp, mentions, input.userId),
       messages: [
         {
           role: "user",

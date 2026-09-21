@@ -66,6 +66,8 @@ export interface User {
   format: ScheduleFormat;
   notifyChanges: boolean;
   notifySession: boolean;
+  /** Присылать ли PDF со слайдами записанных вебинаров. */
+  wantSlides: boolean;
   notifyNotices: boolean;
   remindFirstMin: number | null;
   remindEachMin: number | null;
@@ -97,6 +99,7 @@ interface UserRow {
   format: string;
   notify_changes: number;
   notify_session: number;
+  want_slides: number | null;
   notify_notices: number;
   remind_first_min: number | null;
   remind_each_min: number | null;
@@ -130,6 +133,7 @@ function rowToUser(r: UserRow): User {
     format: (r.format as ScheduleFormat) ?? "both",
     notifyChanges: r.notify_changes === 1,
     notifySession: r.notify_session === 1,
+    wantSlides: r.want_slides == null ? true : r.want_slides === 1,
     notifyNotices: r.notify_notices === 1,
     remindFirstMin: r.remind_first_min,
     remindEachMin: r.remind_each_min,
@@ -187,6 +191,47 @@ function rowToWebinar(r: Record<string, unknown>): WebinarRow {
     title: r.title == null ? null : String(r.title),
     groups,
     scheduled: r.scheduled == null ? true : Number(r.scheduled) === 1,
+  };
+}
+
+export interface TeacherMapRow {
+  key: string;
+  teacherId: number | null;
+  name: string;
+  /** Ведёт ли пары у групп ВИШ. */
+  vish: boolean;
+  groups: string[];
+  subjects: string[];
+  department: string | null;
+  degree: string | null;
+  photoUrl: string | null;
+  photoFileId: string | null;
+  source: "portal" | "webinar";
+  checkedAt: string | null;
+}
+
+function rowToTeacherMap(r: Record<string, unknown>): TeacherMapRow {
+  const list = (v: unknown): string[] => {
+    try {
+      const parsed = JSON.parse(String(v ?? "[]")) as unknown;
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  };
+  return {
+    key: String(r.key),
+    teacherId: r.teacher_id == null ? null : Number(r.teacher_id),
+    name: String(r.name),
+    vish: Number(r.vish) === 1,
+    groups: list(r.groups_json),
+    subjects: list(r.subjects_json),
+    department: r.department == null ? null : String(r.department),
+    degree: r.degree == null ? null : String(r.degree),
+    photoUrl: r.photo_url == null ? null : String(r.photo_url),
+    photoFileId: r.photo_file_id == null || String(r.photo_file_id) === "" ? null : String(r.photo_file_id),
+    source: r.source === "portal" ? "portal" : "webinar",
+    checkedAt: r.checked_at == null ? null : String(r.checked_at),
   };
 }
 
@@ -314,6 +359,7 @@ export class Repo {
     if (patch.quietFrom !== undefined) map.quiet_from = patch.quietFrom;
     if (patch.quietTo !== undefined) map.quiet_to = patch.quietTo;
     if (patch.topics !== undefined) map.topics = JSON.stringify(patch.topics);
+    if (patch.wantSlides !== undefined) map.want_slides = patch.wantSlides ? 1 : 0;
     if (patch.streamIntake !== undefined) map.stream_intake = patch.streamIntake;
     if (patch.calToken !== undefined) map.cal_token = patch.calToken;
     if (patch.calAlarmMin !== undefined) map.cal_alarm_min = patch.calAlarmMin;
@@ -671,6 +717,145 @@ export class Repo {
   }
 
   // ---------- AI usage ----------
+  // ---- слайды записанных вебинаров ----
+  addSlideDeck(row: { date: string; subject: string; teacher: string | null; title: string | null; groups: string[]; slides: number; file: string; bytes: number }): number {
+    const r = this.db
+      .prepare("INSERT INTO slide_decks (date, subject, teacher, title, groups_json, slides, file, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(row.date, row.subject, row.teacher, row.title, JSON.stringify(row.groups), row.slides, row.file, row.bytes, nowIso());
+    return r.lastInsertRowid;
+  }
+
+  markDeckSent(id: number, fileId: string | null, sent: number): void {
+    this.db.prepare("UPDATE slide_decks SET sent = ?, file_id = COALESCE(?, file_id) WHERE id = ?").run(sent, fileId, id);
+  }
+
+  recentSlideDecks(limit = 10): Array<{ id: number; date: string; subject: string; teacher: string | null; groups: string[]; slides: number; file: string; bytes: number; fileId: string | null; sent: number; createdAt: string }> {
+    const rows = this.db.prepare("SELECT * FROM slide_decks ORDER BY id DESC LIMIT ?").all(limit) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: Number(r.id),
+      date: String(r.date),
+      subject: String(r.subject),
+      teacher: r.teacher == null ? null : String(r.teacher),
+      groups: (() => {
+        try {
+          const parsed = JSON.parse(String(r.groups_json ?? "[]")) as unknown;
+          return Array.isArray(parsed) ? parsed.map(String) : [];
+        } catch {
+          return [];
+        }
+      })(),
+      slides: Number(r.slides),
+      file: String(r.file),
+      bytes: Number(r.bytes ?? 0),
+      fileId: r.file_id == null ? null : String(r.file_id),
+      sent: Number(r.sent),
+      createdAt: String(r.created_at),
+    }));
+  }
+
+  // ---- карта преподавателей: кто из них ведёт у ВИШ ----
+  upsertTeacherMap(row: TeacherMapRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO teacher_map (key, teacher_id, name, vish, groups_json, subjects_json, department, degree, photo_url, photo_file_id, source, checked_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET
+           teacher_id = COALESCE(excluded.teacher_id, teacher_map.teacher_id),
+           name = excluded.name,
+           vish = MAX(excluded.vish, teacher_map.vish),
+           groups_json = excluded.groups_json,
+           subjects_json = excluded.subjects_json,
+           department = COALESCE(excluded.department, teacher_map.department),
+           degree = COALESCE(excluded.degree, teacher_map.degree),
+           photo_url = COALESCE(excluded.photo_url, teacher_map.photo_url),
+           source = excluded.source,
+           checked_at = excluded.checked_at`,
+      )
+      .run(
+        row.key,
+        row.teacherId ?? null,
+        row.name,
+        row.vish ? 1 : 0,
+        JSON.stringify(row.groups ?? []),
+        JSON.stringify(row.subjects ?? []),
+        row.department ?? null,
+        row.degree ?? null,
+        row.photoUrl ?? null,
+        row.photoFileId ?? null,
+        row.source,
+        row.checkedAt ?? nowIso(),
+      );
+  }
+
+  /** Добавить в карту, не трогая уже собранное (для обхода справочника). */
+  seedTeacherMap(key: string, teacherId: number | null, name: string): void {
+    this.db.prepare("INSERT OR IGNORE INTO teacher_map (key, teacher_id, name, vish, source) VALUES (?, ?, ?, 0, 'portal')").run(key, teacherId, name);
+  }
+
+  teacherMapByKey(key: string): TeacherMapRow | null {
+    const r = this.db.prepare("SELECT * FROM teacher_map WHERE key = ?").get(key) as Record<string, unknown> | undefined;
+    return r ? rowToTeacherMap(r) : null;
+  }
+
+  teacherMapById(teacherId: number): TeacherMapRow | null {
+    const r = this.db.prepare("SELECT * FROM teacher_map WHERE teacher_id = ?").get(teacherId) as Record<string, unknown> | undefined;
+    return r ? rowToTeacherMap(r) : null;
+  }
+
+  teacherMapAll(onlyVish = false): TeacherMapRow[] {
+    const rows = this.db.prepare(`SELECT * FROM teacher_map${onlyVish ? " WHERE vish = 1" : ""} ORDER BY name`).all() as Array<Record<string, unknown>>;
+    return rows.map(rowToTeacherMap);
+  }
+
+  teacherMapStats(): { total: number; vish: number; checked: number } {
+    const r = this.db.prepare("SELECT COUNT(*) AS total, COALESCE(SUM(vish), 0) AS vish, COUNT(checked_at) AS checked FROM teacher_map").get() as { total: number; vish: number; checked: number };
+    return { total: r.total, vish: r.vish, checked: r.checked };
+  }
+
+  /** Кого ещё не проверяли (или проверяли давно) — для фонового обхода справочника. */
+  teacherMapStale(limit: number, olderThanDays = 30): number[] {
+    const rows = this.db
+      .prepare("SELECT teacher_id FROM teacher_map WHERE teacher_id IS NOT NULL AND (checked_at IS NULL OR checked_at < datetime('now', ?)) ORDER BY checked_at IS NOT NULL, checked_at LIMIT ?")
+      .all(`-${olderThanDays} days`, limit) as Array<{ teacher_id: number }>;
+    return rows.map((r) => r.teacher_id);
+  }
+
+  setTeacherPhotoFileId(key: string, fileId: string): void {
+    this.db.prepare("UPDATE teacher_map SET photo_file_id = ? WHERE key = ?").run(fileId, key);
+  }
+
+  // ---- слежение за преподавателем ----
+  toggleWatchTeacher(userId: number, teacherId: number, name: string): boolean {
+    const existing = this.db.prepare("SELECT 1 FROM watch_teachers WHERE user_id = ? AND teacher_id = ?").get(userId, teacherId);
+    if (existing) {
+      this.db.prepare("DELETE FROM watch_teachers WHERE user_id = ? AND teacher_id = ?").run(userId, teacherId);
+      return false;
+    }
+    this.db.prepare("INSERT INTO watch_teachers (user_id, teacher_id, name, created_at) VALUES (?, ?, ?, ?)").run(userId, teacherId, name, nowIso());
+    return true;
+  }
+
+  watchedTeachers(userId: number): Array<{ teacherId: number; name: string }> {
+    const rows = this.db.prepare("SELECT teacher_id, name FROM watch_teachers WHERE user_id = ? ORDER BY name").all(userId) as Array<{ teacher_id: number; name: string }>;
+    return rows.map((r) => ({ teacherId: r.teacher_id, name: r.name }));
+  }
+
+  watchesTeacher(userId: number, teacherId: number): boolean {
+    return !!this.db.prepare("SELECT 1 FROM watch_teachers WHERE user_id = ? AND teacher_id = ?").get(userId, teacherId);
+  }
+
+  /** Все, за кем кто-нибудь следит: по одному преподавателю на строку. */
+  teacherWatchers(): Array<{ teacherId: number; name: string; userIds: number[] }> {
+    const rows = this.db.prepare("SELECT teacher_id, name, user_id FROM watch_teachers ORDER BY teacher_id").all() as Array<{ teacher_id: number; name: string; user_id: number }>;
+    const byTeacher = new Map<number, { teacherId: number; name: string; userIds: number[] }>();
+    for (const r of rows) {
+      const entry = byTeacher.get(r.teacher_id) ?? { teacherId: r.teacher_id, name: r.name, userIds: [] };
+      entry.userIds.push(r.user_id);
+      byTeacher.set(r.teacher_id, entry);
+    }
+    return [...byTeacher.values()];
+  }
+
   /**
    * Журнал глобального поиска людей: и аудит (кто кого искал), и счётчик против
    * выкачивания базы. Как и ai_usage, переживает /soon — иначе лимит сбрасывался
@@ -693,6 +878,13 @@ export class Repo {
     const r = this.db.prepare("SELECT COUNT(*) AS c, COUNT(DISTINCT user_id) AS u FROM poisk_log WHERE day = ?").get(day) as { c: number; u: number };
     return { searches: r.c, users: r.u };
   }
+  /** Старые пачки слайдов: записи и пути к файлам, чтобы их можно было удалить с диска. */
+  pruneSlideDecks(olderThanDays = 120): string[] {
+    const rows = this.db.prepare("SELECT file FROM slide_decks WHERE created_at < datetime('now', ?)").all(`-${olderThanDays} days`) as Array<{ file: string }>;
+    this.db.prepare("DELETE FROM slide_decks WHERE created_at < datetime('now', ?)").run(`-${olderThanDays} days`);
+    return rows.map((r) => r.file);
+  }
+
   prunePoiskLog(olderThanDays = 180): void {
     this.db.prepare("DELETE FROM poisk_log WHERE created_at < datetime('now', ?)").run(`-${olderThanDays} days`);
   }

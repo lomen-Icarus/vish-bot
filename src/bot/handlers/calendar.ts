@@ -5,7 +5,7 @@ import { BTN } from "../keyboards.js";
 import { icsFileName } from "../../schedule/ics.js";
 import { changesCalendar, groupCalendar } from "../../schedule/calendar.js";
 import type { ChangeEvent } from "../../schedule/diff.js";
-import { esc } from "../../schedule/format.js";
+import { esc, plural } from "../../schedule/format.js";
 import { calendarPath } from "../../http/server.js";
 import { fmtDDMM, todayMsk } from "../../time.js";
 
@@ -118,10 +118,4 @@ calendarHandlers.callbackQuery(/^cics:(.+)$/, async (ctx) => {
   });
 });
 
-function plural(n: number, one: string, few: string, many: string): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
-  return many;
-}
+

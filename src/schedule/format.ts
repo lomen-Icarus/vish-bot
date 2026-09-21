@@ -4,6 +4,15 @@ import type { LogicalGroup } from "./groups.js";
 import { lessonTypeLabel, type Occurrence } from "./model.js";
 import type { WeekInfo } from "./service.js";
 
+/** Русское склонение по числу: 1 слайд, 2 слайда, 5 слайдов, 21 слайд. */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}
+
 export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -150,7 +159,8 @@ export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<L
       const where = o.isDistance ? "💻" : o.room ? esc(o.room) : "";
       const sg = o.subgroup ? ` (${o.subgroup} п.)` : "";
       const flags = `${o.movedFrom ? " ↩️" : ""}${o.substituted ? " 🔁" : ""}`;
-      return `   ${slotBadge(o)} ${timeRange(o) ? `<code>${fmtHHMM(o.start!)}</code> ` : ""}${subj} <i>${lessonTypeLabel(o.type)}</i>${where ? ` · ${where}` : ""}${sg}${flags}`;
+      // Показываем и конец пары: «когда освобожусь» спрашивают не реже, чем «когда начало».
+      return `   ${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subj} <i>${lessonTypeLabel(o.type)}</i>${where ? ` · ${where}` : ""}${sg}${flags}`;
     });
     parts.push(`${title}\n${rows.join("\n")}`);
   }

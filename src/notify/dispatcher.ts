@@ -3,13 +3,38 @@ import { GrammyError, InlineKeyboard, InputFile } from "grammy";
 import type { Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
-import { clampHtml, formatChanges, formatDay, formatNotice, filterSubgroup } from "../schedule/format.js";
+import { clampHtml, formatChanges, formatDay, formatNotice, filterSubgroup, plural } from "../schedule/format.js";
 import { isSessionPeriod, lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
 import { WEBINAR_URL } from "../bot/keyboards.js";
 import type { WebinarService } from "../portal/webinars.js";
+import type { TeacherService } from "../portal/teachers.js";
+import { logicalKeyFor, type LogicalGroup } from "../schedule/groups.js";
+import { readFileSync } from "node:fs";
+
+/** За сколько минут до первой пары преподавателя писать подписчикам. */
+const TEACHER_LEAD_MIN = 120;
+/** Во сколько присылать «завтра у него», если у человека не задан свой вечер. */
+const TEACHER_EVENING_AT = "20:00";
+/** Раньше этого времени первых пар не бывает, так что до 8:00 − лид ходить на портал незачем. */
+const EARLIEST_LESSON_START = 8 * 60;
+/** Сколько «холодных» преподавателей за тик разрешено подтянуть с портала. */
+const TEACHER_COLD_PER_TICK = 5;
+/** Сколько живёт разобранный день преподавателя (неудачный поход — заметно меньше). */
+const TEACHER_DAY_TTL_MS = 3 * 60 * 60 * 1000;
+const TEACHER_DAY_FAIL_TTL_MS = 15 * 60 * 1000;
+
+/** Окно в пять минут: тик ежеминутный, но пропущенная минута не должна съесть уведомление. */
+function withinWindow(nowMinutes: number, dueMinutes: number, width = 5): boolean {
+  return nowMinutes >= dueMinutes && nowMinutes < dueMinutes + width;
+}
+
+/** Расписание преподавателя печатается тем же форматтером, что и группа. */
+function teacherPseudoGroup(name: string): LogicalGroup {
+  return { key: `teacher:${name}`, title: name, prefix: "", number: 0, intake: 0, course: 0, portalIds: [], portalNames: [] };
+}
 
 export interface SendOptions {
   photo?: Buffer;
@@ -26,7 +51,161 @@ export class Notifier {
     private readonly renderer: Renderer | null,
     private readonly adminIds: number[] = [],
     private readonly webinars: WebinarService | null = null,
+    private readonly teachers: TeacherService | null = null,
   ) {}
+
+  /**
+   * Слайды записанного вебинара: PDF уходит тем, у кого эта пара в расписании.
+   * Первому получателю файл загружается, остальным — по file_id, чтобы не
+   * гонять один и тот же PDF через сеть десятки раз.
+   */
+  async sendSlideDeck(deck: { deckId: number; date: string; subject: string; teacher: string | null; title: string | null; groups: string[]; slides: number; file: string }, now: WallClock = wallClock()): Promise<number> {
+    const keys = new Set(deck.groups.map((g) => logicalKeyFor(g)));
+    const users = this.repo.listUsers({ onlyActive: true }).filter((u) => u.wantSlides && u.groupKey && keys.has(u.groupKey));
+    if (!users.length) {
+      logger.info({ deckId: deck.deckId, groups: deck.groups }, "слайды никому не нужны: нет людей из этих групп");
+      this.repo.markDeckSent(deck.deckId, null, 0);
+      return 0;
+    }
+    const bytes = (() => {
+      try {
+        return readFileSync(deck.file);
+      } catch (err) {
+        logger.warn({ err: String(err), file: deck.file }, "файл слайдов не читается");
+        return null;
+      }
+    })();
+    if (!bytes) {
+      this.repo.markDeckSent(deck.deckId, null, 0);
+      return 0;
+    }
+    const caption = [
+      `📎 <b>Слайды пары</b>`,
+      `${escapeHtml(deck.subject)}${deck.teacher ? ` · ${escapeHtml(deck.teacher)}` : ""}`,
+      `${escapeHtml(deck.date)}${deck.title ? ` · ${escapeHtml(deck.title.slice(0, 80))}` : ""} · ${deck.slides} ${plural(deck.slides, "слайд", "слайда", "слайдов")}`,
+      "",
+      "<i>Снято ботом прямо с вебинара. Если препод показывал не всё — значит, не всё и записалось.</i>",
+    ]
+      .join("\n")
+      // Подпись к документу у Telegram ограничена 1024 символами, а предмет и
+      // тема приезжают снаружи и бывают длинными.
+      .slice(0, 1000);
+    const name = `${deck.date}-${deck.subject.replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 50) || "slides"}.pdf`;
+    let fileId: string | null = null;
+    let sent = 0;
+    for (const user of users) {
+      try {
+        const quiet = this.inQuietHours(user, now);
+        const msg = await this.api.sendDocument(user.id, fileId ?? new InputFile(bytes, name), {
+          caption,
+          parse_mode: "HTML",
+          disable_notification: quiet,
+        });
+        fileId ??= msg.document?.file_id ?? null;
+        this.repo.logNotification(user.id, "slides", true);
+        sent++;
+        await sleep(45);
+      } catch (err) {
+        const msg = err instanceof GrammyError ? err.description : String(err);
+        this.repo.logNotification(user.id, "slides", false, msg.slice(0, 200));
+        // Telegram отдаёт «удалённый аккаунт» и «чат не найден» кодом 400,
+        // а не 403 — считаем их такой же недоступностью, как и блокировку.
+        if (err instanceof GrammyError && (err.error_code === 403 || /blocked|deactivated|chat not found/i.test(msg))) this.repo.updateUser(user.id, { blocked: true });
+      }
+    }
+    this.repo.markDeckSent(deck.deckId, fileId, sent);
+    logger.info({ deckId: deck.deckId, sent, of: users.length }, "слайды разосланы");
+    return sent;
+  }
+
+  /** Расписание преподавателя на день, с кешем: портал медленный, а тик — ежеминутный. */
+  private readonly teacherDayCache = new Map<string, { at: number; lessons: Occurrence[]; fullName: string | null; ok: boolean }>();
+
+  /** Свежий ли кеш — тот же вопрос, что и в teacherDay, но без похода на портал. */
+  private teacherDayFresh(teacherId: number, date: LocalDate): boolean {
+    const hit = this.teacherDayCache.get(`${teacherId}|${date}`);
+    return !!hit && Date.now() - hit.at < (hit.ok ? TEACHER_DAY_TTL_MS : TEACHER_DAY_FAIL_TTL_MS);
+  }
+
+  /** null — портал не ответил: это не «пар нет», такое напоминание слать нельзя. */
+  private async teacherDay(teacherId: number, name: string, date: LocalDate): Promise<{ lessons: Occurrence[]; fullName: string | null } | null> {
+    const key = `${teacherId}|${date}`;
+    const hit = this.teacherDayCache.get(key);
+    // Неудачу кешируем тоже, только ненадолго. Без этого каждый минутный тик
+    // заново идёт в портал по всем отслеживаемым преподавателям, а один поход
+    // при 403 тянется до минуты (три попытки с паузами) — тик не успевает
+    // закончиться, protect:true глотает следующие, и встают все напоминания.
+    if (this.teacherDayFresh(teacherId, date)) return hit!.ok ? hit! : null;
+    if (!this.teachers) return null;
+    let entry: { at: number; lessons: Occurrence[]; fullName: string | null; ok: boolean };
+    try {
+      const res = await this.teachers.lessons({ id: teacherId, name }, date, date);
+      entry = { at: Date.now(), lessons: res.lessons.filter((o) => o.status === "scheduled" && o.start != null), fullName: res.fullName, ok: true };
+    } catch (err) {
+      logger.warn({ err: String(err), teacherId }, "teacher day for watchers failed");
+      entry = { at: Date.now(), lessons: [], fullName: null, ok: false };
+    }
+    this.teacherDayCache.set(key, entry);
+    // Кеш живёт в памяти процесса: чистим вчерашнее, чтобы не рос вечно.
+    for (const k of [...this.teacherDayCache.keys()]) if (k.split("|")[1]! < addDays(date, -1)) this.teacherDayCache.delete(k);
+    return entry.ok ? entry : null;
+  }
+
+  /**
+   * Слежение за преподавателем: вечером — его завтрашний день, и ещё раз за два
+   * часа до его первой пары. Портал дёргаем один раз на преподавателя, а не на
+   * каждого подписчика.
+   */
+  async tickTeacherWatches(now: WallClock = wallClock()): Promise<number> {
+    if (!this.teachers) return 0;
+    const watched = this.repo.teacherWatchers();
+    if (!watched.length) return 0;
+    const tomorrow = addDays(now.date, 1);
+    // Утреннее напоминание живёт в окне [первая пара − лид, первая пара), а первых пар
+    // раньше 8:00 не бывает: ночью расписание на сегодня не нужно никому.
+    const mayBeMorning = now.minutes >= EARLIEST_LESSON_START - TEACHER_LEAD_MIN;
+    let cold = TEACHER_COLD_PER_TICK;
+    let sent = 0;
+    for (const w of watched) {
+      const users = w.userIds.map((id) => this.repo.getUser(id)).filter((u): u is User => !!u && !u.blocked);
+      if (!users.length) continue;
+      const eveningDue = users.some((u) => withinWindow(now.minutes, parseHHMM(u.eveningAt ?? TEACHER_EVENING_AT) ?? 20 * 60));
+      if (!eveningDue && !mayBeMorning) continue;
+      // В ключе кеша есть дата, поэтому в полночь (и при рестарте) он холодный сразу у
+      // всех. Один поход — две страницы портала, между запросами 900 мс, так что
+      // холодные растягиваем по тикам: окно утреннего напоминания широкое, успеем.
+      // Вечернее окно узкое (пять минут) — его не откладываем никогда.
+      if (!eveningDue && !this.teacherDayFresh(w.teacherId, now.date)) {
+        if (cold <= 0) continue;
+        cold--;
+      }
+      const dayLessons = mayBeMorning ? await this.teacherDay(w.teacherId, w.name, now.date) : null;
+      const today = dayLessons?.lessons ?? [];
+      const first = today.length ? Math.min(...today.map((o) => o.start!)) : null;
+      const morningDue = first != null && now.minutes >= first - TEACHER_LEAD_MIN && now.minutes < first;
+      if (!eveningDue && !morningDue) continue;
+      const evening = eveningDue ? await this.teacherDay(w.teacherId, w.name, tomorrow) : null;
+      for (const user of users) {
+        if (this.inQuietHours(user, now)) continue;
+        const name = dayLessons?.fullName ?? evening?.fullName ?? w.name;
+        if (morningDue && !this.repo.reminderSent(user.id, "teacher-first", `${w.teacherId}:${now.date}`)) {
+          this.repo.markReminderSent(user.id, "teacher-first", `${w.teacherId}:${now.date}`);
+          const body = formatDay(teacherPseudoGroup(name), now.date, today, this.service.weekInfo(now.date), now.date, { now });
+          const left = first! - now.minutes;
+          if (await this.send(user, `👨‍🏫 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} первая пара у <b>${escapeHtml(name)}</b>\n\n${body}`, { kind: "teacher-first" })) sent++;
+        }
+        const userEvening = withinWindow(now.minutes, parseHHMM(user.eveningAt ?? TEACHER_EVENING_AT) ?? 20 * 60);
+        // Пустой день не шлём вовсе: у преподавателя он может быть и просто свободным,
+        // а ещё так «пар нет» не запишется в дедуп вместо неполученного расписания.
+        if (userEvening && evening?.lessons.length && !this.repo.reminderSent(user.id, "teacher-evening", `${w.teacherId}:${tomorrow}`)) {
+          this.repo.markReminderSent(user.id, "teacher-evening", `${w.teacherId}:${tomorrow}`);
+          const body = formatDay(teacherPseudoGroup(name), tomorrow, evening.lessons, this.service.weekInfo(tomorrow), now.date, {});
+          if (await this.send(user, `👨‍🏫 <b>${escapeHtml(name)}</b> завтра:\n\n${body}`, { kind: "teacher-evening", silent: true })) sent++;
+        }
+      }
+    }
+    return sent;
+  }
 
   async send(user: User, html: string, opts: SendOptions): Promise<boolean> {
     try {
@@ -121,9 +300,11 @@ export class Notifier {
           if (id != null) this.repo.markReminderSent(user.id, "event", String(id));
         }
         const text = formatChanges(group, fresh);
-        // Own group: one tap re-imports just the changed lessons into the phone calendar.
-        // Watched group: one tap stops these notifications.
-        const kb = own ? new InlineKeyboard().text("📆 Обновить в календаре", `cics:${groupKey}`) : new InlineKeyboard().text("👁 Не следить за группой", `unwatch:${groupKey}`);
+        // Файл с изменениями предлагаем сразу в уведомлении — и по своей группе,
+        // и по той, за которой человек просто следит: одно нажатие, и в календаре
+        // телефона обновлены ровно изменившиеся пары.
+        const kb = new InlineKeyboard().text("📆 Файл изменений в календарь", `cics:${groupKey}`);
+        if (!own) kb.row().text("👁 Не следить за группой", `unwatch:${groupKey}`);
         if (await this.send(user, clampHtml(text), { kind: "changes", replyMarkup: kb })) delivered++;
       }
       this.repo.markEventsNotified(list.map((r) => r.id));
@@ -173,7 +354,7 @@ export class Notifier {
       });
       for (const r of rows) this.repo.markReminderSent(user.id, "event", String(r.id));
       if (!mine.length) continue;
-      const kb = new InlineKeyboard().text("📆 Обновить в календаре", `cics:${user.groupKey}`);
+      const kb = new InlineKeyboard().text("📆 Файл изменений в календарь", `cics:${user.groupKey}`);
       const text = `🌙 <i>Пока у тебя были тихие часы, расписание изменилось.</i>\n\n${formatChanges(group, mine)}`;
       if (await this.send(user, clampHtml(text), { kind: "changes-backlog", replyMarkup: kb })) sent++;
     }

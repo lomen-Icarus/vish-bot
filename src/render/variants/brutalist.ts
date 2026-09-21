@@ -172,7 +172,7 @@ function timeCol(start: number | null, end: number | null, slot: number | null, 
     "div",
     { display: "flex", flexDirection: "column", width, flexShrink: 0, padding: "18px 0 18px 20px" },
     text(start != null ? fmtHHMM(start) : "—", { fontSize: 42, fontWeight: 800, color: fg, letterSpacing: 1, lineHeight: 1 }),
-    text(end != null ? fmtHHMM(end) : "", { fontSize: 26, fontWeight: 600, color: sub, letterSpacing: 1, marginTop: 6 }),
+    text(end != null ? `ДО ${fmtHHMM(end)}` : "", { fontSize: 28, fontWeight: 800, color: fg, letterSpacing: 1, marginTop: 6 }),
     slot != null ? text(`${slot} ПАРА`, { fontSize: 24, fontWeight: 800, color: sub, letterSpacing: 2, marginTop: 12 }) : null,
   );
 }
@@ -297,7 +297,12 @@ export async function createRenderer(): Promise<Renderer | null> {
               return h(
                 "div",
                 { display: "flex", flexDirection: "row", alignItems: "stretch", width: "100%", borderTop: k === 0 ? "none" : `${BORDER}px solid ${INK}`, opacity: moved ? 0.55 : 1 },
-                h("div", { display: "flex", width: 134, flexShrink: 0, alignItems: "flex-start", padding: "14px 0 14px 20px" }, text(o.start != null ? fmtHHMM(o.start) : "—", { fontSize: 30, fontWeight: 800, color: INK, letterSpacing: 1, lineHeight: 1.1 })),
+                h(
+                  "div",
+                  { display: "flex", flexDirection: "column", width: 134, flexShrink: 0, alignItems: "flex-start", padding: "14px 0 14px 20px" },
+                  text(o.start != null ? fmtHHMM(o.start) : "—", { fontSize: 30, fontWeight: 800, color: INK, letterSpacing: 1, lineHeight: 1.1 }),
+                  text(o.end != null ? fmtHHMM(o.end) : "", { fontSize: 22, fontWeight: 700, color: MUTED, letterSpacing: 1, lineHeight: 1.2 }),
+                ),
                 h("div", { display: "flex", width: BORDER, backgroundColor: INK, flexShrink: 0 }),
                 h(
                   "div",
