@@ -301,10 +301,22 @@ describe("global student search", () => {
     expect(out).not.toMatch(/📍/);
   });
 
+  it("считает один и тот же запрос одним поиском, а не двумя", () => {
+    const deps = makeDeps({ poisk: true, students: new StudentDirectory(tempFile("students.csv", CSV)) });
+    const day = todayMsk();
+    // Локальный поиск и инструмент ИИ по одному запросу — это один поиск.
+    deps.repo.logPoisk(7, day, "поиск: Троишестов", null);
+    deps.repo.logPoisk(7, day, "ии: Троишестов", "abc");
+    expect(deps.repo.poiskUsage(7, day)).toBe(1);
+    deps.repo.logPoisk(7, day, "поиск: Иванова", null);
+    expect(deps.repo.poiskUsage(7, day)).toBe(2);
+  });
+
   it("holds the daily limit", async () => {
     const deps = makeDeps({ poisk: true, students: new StudentDirectory(tempFile("students.csv", CSV)) });
     const day = todayMsk();
-    for (let i = 0; i < 30; i++) deps.repo.logPoisk(7, day, "кто-то", null);
+    // Разные запросы: одинаковые подряд теперь склеиваются в один поиск.
+    for (let i = 0; i < 30; i++) deps.repo.logPoisk(7, day, `кто-то-${i}`, null);
     const out = texts(await run(textUpdate("/poisk"), deps));
     expect(out).toMatch(/лимит поисков/i);
   });

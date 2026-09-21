@@ -46,7 +46,12 @@ class RenderPool implements Renderer {
     this.starting = new Promise<ChildProcess>((resolve, reject) => {
       const worker = path.join(path.dirname(fileURLToPath(import.meta.url)), "worker.js");
       const child = fork(worker, [], { env: { ...process.env, POSTER_THEME: this.opts.theme }, stdio: ["ignore", "inherit", "inherit", "ipc"] });
-      const ready = setTimeout(() => reject(new Error("render worker did not start")), 30_000);
+      // Не убить ребёнка здесь — значит оставить живой node с resvg в памяти,
+      // и на каждый следующий постер форкать ещё один.
+      const ready = setTimeout(() => {
+        child.kill();
+        reject(new Error("render worker did not start"));
+      }, 30_000);
       child.once("message", (msg: RenderResponse) => {
         clearTimeout(ready);
         if (msg.ok) {
@@ -70,6 +75,7 @@ class RenderPool implements Renderer {
       });
       child.once("error", (err) => {
         clearTimeout(ready);
+        child.kill();
         reject(err);
       });
     }).finally(() => {

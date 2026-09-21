@@ -768,6 +768,9 @@ export class Repo {
            department = COALESCE(excluded.department, teacher_map.department),
            degree = COALESCE(excluded.degree, teacher_map.degree),
            photo_url = COALESCE(excluded.photo_url, teacher_map.photo_url),
+           -- Сменилось фото на портале — старый file_id Telegram больше не тот
+           -- человек: забываем его, иначе бот будет слать старую карточку вечно.
+           photo_file_id = CASE WHEN excluded.photo_url IS NOT NULL AND excluded.photo_url <> COALESCE(teacher_map.photo_url, '') THEN NULL ELSE teacher_map.photo_file_id END,
            source = excluded.source,
            checked_at = excluded.checked_at`,
       )
@@ -862,7 +865,18 @@ export class Repo {
    * бы одной командой.
    */
   logPoisk(userId: number, day: string, query: string, student: string | null): void {
-    this.db.prepare("INSERT INTO poisk_log (user_id, day, query, student, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, day, query.slice(0, 200), student, nowIso());
+    // Один запрос человека может пройти двумя путями сразу (локальный поиск и
+    // инструмент ИИ). Считаем это одним поиском: иначе лимит сгорал бы вдвое
+    // быстрее, а в журнале была бы одна и та же строка дважды.
+    const text = query.slice(0, 200);
+    const recent = this.db
+      .prepare("SELECT id FROM poisk_log WHERE user_id = ? AND day = ? AND created_at > datetime('now', '-2 minutes') AND replace(replace(query, 'ии: ', ''), 'поиск: ', '') = ? ORDER BY id DESC LIMIT 1")
+      .get(userId, day, text.replace(/^(ии|поиск): /, "")) as { id: number } | undefined;
+    if (recent) {
+      if (student) this.db.prepare("UPDATE poisk_log SET student = COALESCE(student, ?) WHERE id = ?").run(student, recent.id);
+      return;
+    }
+    this.db.prepare("INSERT INTO poisk_log (user_id, day, query, student, created_at) VALUES (?, ?, ?, ?, ?)").run(userId, day, text, student, nowIso());
   }
   /** Человек выбрал из списка кандидатов: уточняем последнюю запись журнала, не тратя лимит. */
   markPoiskChoice(userId: number, day: string, student: string): void {

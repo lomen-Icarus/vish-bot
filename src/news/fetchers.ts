@@ -23,13 +23,27 @@ function agent(): Dispatcher | undefined {
   return dispatcher;
 }
 
+/**
+ * Адрес для сообщения об ошибке: без строки запроса. В запросе VK лежит
+ * сервисный токен, а текст ошибки уходит в news_sources.last_error, в логи и
+ * админу в ответ на /news_scan.
+ */
+function safeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url.split("?")[0] ?? "";
+  }
+}
+
 async function getText(url: string, timeoutMs = 30_000): Promise<string> {
   const res = await undiciFetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; vish-bot/0.1; +telegram)", "Accept-Language": "ru,en;q=0.5" },
     signal: AbortSignal.timeout(timeoutMs),
     dispatcher: agent(),
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status} for ${safeUrl(url)}`);
   return res.text();
 }
 
@@ -47,9 +61,12 @@ export function htmlToText(html: string): string {
 
 export function decodeEntities(s: string): string {
   const named: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", laquo: "«", raquo: "»", mdash: "—", ndash: "–", hellip: "…", copy: "©" };
+  // Кривая сущность вида &#9999999999; роняла String.fromCodePoint, а вместе с
+  // ним — разбор всего источника за день. Непонятное оставляем как было.
+  const codePoint = (n: number, raw: string): string => (Number.isFinite(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : raw);
   return s
-    .replace(/&#(\d+);/g, (_, n: string) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n: string) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&#(\d+);/g, (m, n: string) => codePoint(Number(n), m))
+    .replace(/&#x([0-9a-f]+);/gi, (m, n: string) => codePoint(parseInt(n, 16), m))
     .replace(/&([a-z]+);/gi, (m, n: string) => named[n.toLowerCase()] ?? m);
 }
 

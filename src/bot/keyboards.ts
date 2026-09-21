@@ -71,6 +71,20 @@ export function intakePicker(intakes: number[], selected: number): InlineKeyboar
   return kb;
 }
 
+/**
+ * Данные кнопки с ключом группы. Ключ приходит из названия на портале и бывает
+ * длинным («виш-11-23 (радиотехника и телекоммуникации)»), а Telegram не
+ * принимает callback_data длиннее 64 байт и отвергает всю клавиатуру целиком.
+ * Режем по байтам; ScheduleService.group() понимает такой обрезок.
+ */
+export function groupCb(prefix: string, key: string, suffix = ""): string {
+  const tail = suffix ? `:${suffix}` : "";
+  const room = 64 - Buffer.byteLength(`${prefix}:${tail}`);
+  let cut = key;
+  while (Buffer.byteLength(cut) > room) cut = cut.slice(0, -1);
+  return `${prefix}:${cut}${tail}`;
+}
+
 export function groupLabel(g: LogicalGroup): string {
   return g.title.replace(/^ВИШ-/, "").replace(/^ОЗВИШ-/, "оз ").replace(/\s*\((.*?)\)\s*$/, " $1");
 }
@@ -92,7 +106,7 @@ export function groupPicker(groups: LogicalGroup[], opts: { prefix?: string; sel
     for (const g of list) {
       const mark = opts.selected === g.key ? "✅ " : "";
       const label = groupLabel(g);
-      kb.text(`${mark}${label}`, `${cb}:${g.key}`);
+      kb.text(`${mark}${label}`, groupCb(cb, g.key));
       inRow++;
       const wide = label.length > 8;
       if (inRow >= (wide ? 2 : 3)) {
@@ -166,7 +180,7 @@ export function streamDayNav(date: LocalDate, today: LocalDate, opts: { image: b
     // A new message: the stream screen stays where it is.
     for (const g of opts.groups) {
       const qualifier = /\((.*?)\)/.exec(g.title)?.[1]?.trim();
-      kb.text(qualifier ? `${g.number} ${qualifier}` : String(g.number), `pdn:${g.key}:${date}`);
+      kb.text(qualifier ? `${g.number} ${qualifier}` : String(g.number), groupCb("pdn", g.key, date));
     }
   }
   return kb;

@@ -10,7 +10,7 @@ import { mergeVariants } from "../schedule/merge.js";
 import { expandDays } from "../schedule/expand.js";
 import { SEMESTER_WEEKS } from "../schedule/service.js";
 import type { Occurrence } from "../schedule/model.js";
-import type { LocalDate } from "../time.js";
+import { addDays, todayMsk, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 import type { ParsedScheduleDay } from "chuvsu-js/parsers";
 import { nameMatch, nameMatchScore, normName, type NameMatch } from "../text/match.js";
@@ -210,20 +210,27 @@ export class TeacherService {
 
   /** Concrete lessons of a teacher for [from, to] (semester + session of the semester). */
   async lessons(teacher: TeacherRef, from: LocalDate, to: LocalDate): Promise<{ lessons: Occurrence[]; fullName: string | null }> {
-    const semester = this.schedule.semesterFor(from);
-    const anchor = this.schedule.weekOneMonday(semester);
     const out: Occurrence[] = [];
     let fullName: string | null = null;
-    const sem = await this.page(teacher.id, semester);
-    fullName = sem.fullName;
-    if (anchor) {
-      out.push(...expandDays(mergeVariants([{ name: teacher.name, days: sem.days }]), { groupKey: `teacher:${teacher.id}`, period: semester, weekOneMonday: anchor, weekCount: SEMESTER_WEEKS, from, to }));
-    }
-    try {
-      const ses = await this.page(teacher.id, this.schedule.sessionFor(semester));
-      out.push(...expandDays(mergeVariants([{ name: teacher.name, days: ses.days }]), { groupKey: `teacher:${teacher.id}`, period: this.schedule.sessionFor(semester), weekOneMonday: anchor ?? from, from, to }));
-    } catch (err) {
-      logger.debug({ err: String(err) }, "teacher session page unavailable");
+    // Диапазон может пересекать границу семестров (конец января, начало
+    // сентября): берём все семестры, которые в него попадают, как это делает
+    // ScheduleService.materialize. Иначе дни «за границей» молча пропадали.
+    const semesters = new Set<1 | 3>();
+    for (let d = from; d <= to; d = addDays(d, 1)) semesters.add(this.schedule.semesterFor(d));
+    for (const semester of semesters) {
+      const anchor = this.schedule.weekOneMonday(semester);
+      const sem = await this.page(teacher.id, semester);
+      fullName ??= sem.fullName;
+      if (anchor) {
+        out.push(...expandDays(mergeVariants([{ name: teacher.name, days: sem.days }]), { groupKey: `teacher:${teacher.id}`, period: semester, weekOneMonday: anchor, weekCount: SEMESTER_WEEKS, from, to }));
+      }
+      try {
+        const session = this.schedule.sessionFor(semester);
+        const ses = await this.page(teacher.id, session);
+        out.push(...expandDays(mergeVariants([{ name: teacher.name, days: ses.days }]), { groupKey: `teacher:${teacher.id}`, period: session, weekOneMonday: anchor ?? from, from, to }));
+      } catch (err) {
+        logger.debug({ err: String(err) }, "teacher session page unavailable");
+      }
     }
     out.sort((a, b) => a.date.localeCompare(b.date) || (a.start ?? 0) - (b.start ?? 0) || (a.slot ?? 0) - (b.slot ?? 0));
     return { lessons: out, fullName };
@@ -237,7 +244,7 @@ export class TeacherService {
    * это делается фоном и понемногу.
    */
   async refreshMapFor(teacherId: number, fallbackName?: string): Promise<TeacherMapRow | null> {
-    const semester = this.schedule.semesterFor(this.today());
+    const semester = this.schedule.semesterFor(todayMsk());
     try {
       const page = await this.page(teacherId, semester);
       const groups = new Set<string>();
@@ -292,10 +299,6 @@ export class TeacherService {
       logger.debug({ err: String(err), teacherId }, "teacher map refresh failed");
       return null;
     }
-  }
-
-  private today(): LocalDate {
-    return new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
   }
 
   /**
