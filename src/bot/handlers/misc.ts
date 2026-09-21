@@ -2,13 +2,13 @@ import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { BTN, groupLabel, isMenuText, mainKeyboard } from "../keyboards.js";
-import { featuresText, helpText, needGroup } from "../views.js";
+import { featuresSections, featuresText, needGroup } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
 import { webinarKey } from "./teachers.js";
-import { esc } from "../../schedule/format.js";
-import { dayView } from "../views.js";
+import { clampHtml, esc } from "../../schedule/format.js";
+import { buildInlineResults, INLINE_HINT, parseInlineQuery } from "../inline.js";
 import { findGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import { addDays, fmtDDMM, fmtHHMM, parseRuDate, todayMsk, weekdayName } from "../../time.js";
@@ -30,9 +30,15 @@ miscHandlers.command("start", async (ctx) => {
   await ctx.reply(`С возвращением! Твоя группа: <b>${esc(group.title)}</b>.`, { parse_mode: "HTML", reply_markup: kb });
 });
 
-miscHandlers.command("help", (ctx) => ctx.reply(helpText(ctx.deps), { parse_mode: "HTML" }));
-miscHandlers.command("features", (ctx) => ctx.reply(featuresText(ctx.deps), { parse_mode: "HTML" }));
-miscHandlers.hears(BTN.features, (ctx) => ctx.reply(featuresText(ctx.deps), { parse_mode: "HTML" }));
+/** Карта функций приходит двумя сообщениями: одним она не влезает в лимит Telegram. */
+async function showFeatures(ctx: BotContext): Promise<void> {
+  for (const part of featuresSections(ctx.deps, { admin: ctx.isAdmin })) {
+    await ctx.reply(clampHtml(part), { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+  }
+}
+miscHandlers.command("help", showFeatures);
+miscHandlers.command("features", showFeatures);
+miscHandlers.hears(BTN.features, showFeatures);
 
 // ---- suggest news to media team ----
 function newsRecipients(ctx: BotContext): number[] {
@@ -228,6 +234,27 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
     if (buttons % 2) kb.row();
   }
 
+  // 4. Студенты — когда включён глобальный поиск. Тот же лимит и тот же журнал,
+  // что и у «Где студент»: через поиск базу выкачать не проще.
+  const students = deps.students;
+  if (students && nameWords.length > 0 && nameWords.length <= 3) {
+    const limit = deps.config.POISK_DAILY_LIMIT;
+    const day = todayMsk();
+    const allowed = limit <= 0 || ctx.isAdmin || deps.repo.poiskUsage(ctx.user.id, day) < limit;
+    if (allowed) {
+      const hits = students.search(query, 4);
+      if (hits.length) {
+        deps.repo.logPoisk(ctx.user.id, day, `поиск: ${query}`, hits[0]!.student.id);
+        parts.push(`<b>Студенты ВИШ</b>: ${hits.map((h) => `${esc(h.student.name)} — ${esc(h.student.groupTitle)}`).join("; ")}`);
+        for (const h of hits) {
+          kb.text(`🕵️ ${h.student.name}`.slice(0, 40), `pop:${h.student.id}`);
+          if (++buttons % 2 === 0) kb.row();
+        }
+        if (buttons % 2) kb.row();
+      }
+    }
+  }
+
   return { parts, kb, buttons };
 }
 
@@ -273,33 +300,13 @@ miscHandlers.on("message:text", async (ctx, next) => {
 });
 
 // ---- inline mode: @bot 12-23 завтра ----
+// Разбор запроса и сборка вариантов живут в src/bot/inline.ts.
 miscHandlers.on("inline_query", async (ctx) => {
-  const deps = ctx.deps;
-  const q = ctx.inlineQuery.query.trim();
-  const groups = deps.service.groups();
-  const words = q.split(/\s+/).filter(Boolean);
-  let date = todayMsk();
-  const dateWord = words.find((w) => /^(сегодня|завтра|\d{1,2}[./]\d{1,2}([./]\d{2,4})?)$/iu.test(w));
-  if (dateWord) {
-    if (/завтра/iu.test(dateWord)) date = addDays(date, 1);
-    else if (!/сегодня/iu.test(dateWord)) date = parseRuDate(dateWord) ?? date;
-  }
-  const groupQuery = words.filter((w) => w !== dateWord).join(" ");
-  let candidates = groupQuery ? findGroup(groups, groupQuery) : [];
-  if (!candidates.length && !groupQuery && ctx.user.groupKey) {
-    const own = deps.service.group(ctx.user.groupKey);
-    if (own) candidates = [own];
-  }
-  if (!candidates.length && !groupQuery) candidates = groups.slice(0, 10);
-  const results = candidates.slice(0, 10).map((g) => {
-    const { text } = dayView(deps, g, date, null);
-    return {
-      type: "article" as const,
-      id: `${g.key}:${date}`.slice(0, 64),
-      title: `${g.title} — ${date === todayMsk() ? "сегодня" : date}`,
-      description: text.replace(/<[^>]+>/g, "").split("\n").slice(2, 6).join(" · ").slice(0, 100),
-      input_message_content: { message_text: text.slice(0, 4000), parse_mode: "HTML" as const },
-    };
+  const req = parseInlineQuery(ctx.deps, ctx.inlineQuery.query, ctx.user ?? null);
+  const results = buildInlineResults(ctx.deps, req, ctx.user ?? null);
+  await ctx.answerInlineQuery(results, {
+    cache_time: 60,
+    is_personal: true,
+    button: { text: "❔ Как писать запрос", start_parameter: "inline" },
   });
-  await ctx.answerInlineQuery(results, { cache_time: 60, is_personal: true });
 });

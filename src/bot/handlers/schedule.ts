@@ -2,7 +2,7 @@ import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { BTN, formatPicker, groupPicker, onboardingKeyboard } from "../keyboards.js";
 import { groupRequiredText, needGroup, sendDay, sendWeek } from "../views.js";
-import { addDays, fmtDDMM, isLocalDate, mondayOf, parseRuDate, todayMsk } from "../../time.js";
+import { addDays, fmtDDMM, isLocalDate, mondayOf, parseDayWord, parseRuDate, todayMsk } from "../../time.js";
 import { clampHtml, esc, formatChangeEvent } from "../../schedule/format.js";
 import type { ChangeEvent } from "../../schedule/diff.js";
 import { findGroup } from "../../schedule/groups.js";
@@ -45,6 +45,15 @@ scheduleHandlers.command("date", async (ctx) => {
   const date = parseRuDate(ctx.match ?? "");
   if (!date) return void (await ctx.reply("Напиши дату как <code>14.09</code> или <code>14.09.2026</code>", { parse_mode: "HTML" }));
   await sendDay(ctx, group, date);
+});
+
+// Слово-дата в личке: «послезавтра», «позапозавчера» — работает как «14.09».
+scheduleHandlers.hears(/^\s*((?:после|поза)*(?:завтра|вчера)|сегодня)\s*$/iu, async (ctx) => {
+  const offset = parseDayWord(ctx.match[1]!);
+  if (offset === null) return;
+  const group = needGroup(ctx);
+  if (!group) return void (await ctx.reply(groupRequiredText()));
+  await sendDay(ctx, group, addDays(todayMsk(), offset));
 });
 
 // Plain date typed into the chat: "14.09"
@@ -272,7 +281,7 @@ export function changesText(ctx: BotContext): { text: string; hasEvents: boolean
 async function showChanges(ctx: BotContext): Promise<void> {
   const { text, hasEvents } = changesText(ctx);
   const kb = new InlineKeyboard();
-  if (hasEvents && ctx.user.groupKey) kb.text("📆 Обновить в календаре", `cics:${ctx.user.groupKey}`);
+  if (hasEvents && ctx.user.groupKey) kb.text("📆 Файл изменений в календарь", `cics:${ctx.user.groupKey}`);
   await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: hasEvents ? kb : undefined });
 }
 scheduleHandlers.command("changes", showChanges);

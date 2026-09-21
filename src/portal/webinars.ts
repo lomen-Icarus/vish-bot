@@ -14,7 +14,7 @@
 import type { Webinar } from "chuvsu-js";
 import type { PortalClient } from "./client.js";
 import type { Repo, WebinarRow } from "../db/repo.js";
-import { teacherMatch } from "./teachers.js";
+import { isVishGroupTitle, teacherMapKey, teacherMatch } from "./teachers.js";
 import { addDays, todayMsk, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 
@@ -157,8 +157,39 @@ export class WebinarService {
     const horizon = addDays(todayMsk(), -1);
     for (const date of [...this.lastRefresh.keys()]) if (date < horizon) this.lastRefresh.delete(date);
     for (const date of [...this.cache.keys()]) if (date < horizon) this.cache.delete(date);
-    if (stored) logger.info({ stored, dates: dates.length }, "webinars refreshed");
+    if (stored) {
+      logger.info({ stored, dates: dates.length }, "webinars refreshed");
+      this.syncTeacherMap();
+    }
     return stored;
+  }
+
+  /**
+   * Преподаватели онлайн-пар попадают в общую карту: страница вебинаров — это
+   * факультет ВИШ, поэтому все они относятся к ВИШ, даже когда учётки портала
+   * нет и полный справочник недоступен.
+   */
+  syncTeacherMap(): number {
+    let n = 0;
+    for (const t of this.teachers()) {
+      const vishGroups = t.groups.filter(isVishGroupTitle);
+      this.repo.upsertTeacherMap({
+        key: teacherMapKey(null, t.name),
+        teacherId: null,
+        name: t.name,
+        vish: vishGroups.length > 0,
+        groups: vishGroups.slice(0, 40),
+        subjects: t.subjects.slice(0, 40),
+        department: null,
+        degree: t.degree ?? null,
+        photoUrl: null,
+        photoFileId: null,
+        source: "webinar",
+        checkedAt: new Date().toISOString(),
+      });
+      n++;
+    }
+    return n;
   }
 
   /** Refresh today plus the next `days` days; called hourly and at startup. */

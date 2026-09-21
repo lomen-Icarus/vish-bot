@@ -150,7 +150,8 @@ export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<L
       const where = o.isDistance ? "💻" : o.room ? esc(o.room) : "";
       const sg = o.subgroup ? ` (${o.subgroup} п.)` : "";
       const flags = `${o.movedFrom ? " ↩️" : ""}${o.substituted ? " 🔁" : ""}`;
-      return `   ${slotBadge(o)} ${timeRange(o) ? `<code>${fmtHHMM(o.start!)}</code> ` : ""}${subj} <i>${lessonTypeLabel(o.type)}</i>${where ? ` · ${where}` : ""}${sg}${flags}`;
+      // Показываем и конец пары: «когда освобожусь» спрашивают не реже, чем «когда начало».
+      return `   ${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subj} <i>${lessonTypeLabel(o.type)}</i>${where ? ` · ${where}` : ""}${sg}${flags}`;
     });
     parts.push(`${title}\n${rows.join("\n")}`);
   }

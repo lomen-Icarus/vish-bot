@@ -73,6 +73,9 @@ const schema = z.object({
   POISK_DB: z.string().default("./data/students.csv"),
   /** Сколько раз в сутки один человек может искать людей (защита от выкачивания базы). */
   POISK_DAILY_LIMIT: z.coerce.number().int().nonnegative().catch(30),
+  /** Токен, которым сервер записи вебинаров подписывает загрузку слайдов (POST /slides). Пусто — приём выключен. */
+  SLIDES_TOKEN: z.string().optional().transform((v) => (v && v.trim().length >= 16 ? v.trim() : undefined)),
+  SLIDES_DIR: z.string().default("./data/slides"),
   PORTAL_TLS_INSECURE: z
     .string()
     .default("0")

@@ -1,0 +1,25 @@
+{
+  "name": "vish-webinar-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Записывает слайды вебинаров ВИШ (BigBlueButton) и отдаёт их боту",
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "probe": "node dist/probe.js",
+    "dev:probe": "tsx src/probe.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "playwright-core": "^1.50.0",
+    "undici": "^8.10.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
