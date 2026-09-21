@@ -171,7 +171,7 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
       const list = ctx.deps.repo.watchedTeachers(ctx.user.id);
       if (!list.length) return void (await ctx.reply("Ты пока ни за кем не следишь. Открой «👨‍🏫 Преподаватели», найди человека и нажми «Следить за преподом»."));
       const kb = new InlineKeyboard();
-      for (const t of list) kb.text(`🔕 ${t.name}`, `twf:${t.teacherId}`).row();
+      for (const t of list) kb.text(`🔕 ${t.name}`, `twx:${t.teacherId}`).row();
       await ctx.reply(
         `👨‍🏫 <b>Слежу за преподавателями</b>\n\nВечером пришлю их завтрашний день, и ещё раз за 2 часа до первой пары. Нажми, чтобы перестать следить.`,
         { parse_mode: "HTML", reply_markup: kb },
@@ -220,6 +220,29 @@ settingsHandlers.callbackQuery(/^wt:(.+)$/, async (ctx) => {
     await ctx.editMessageReplyMarkup({ reply_markup: watchKeyboard(ctx) });
   } catch {
     /* ignore */
+  }
+});
+
+/**
+ * Отписка из списка слежений. Отдельный колбэк, потому что здесь надо
+ * перерисовать весь список, а не менять надпись на одной кнопке (иначе все
+ * строки списка превратились бы в «Следить за преподом»).
+ */
+settingsHandlers.callbackQuery(/^twx:(\d+)$/, async (ctx) => {
+  const id = Number(ctx.match[1]);
+  const name = ctx.deps.repo.watchedTeachers(ctx.user.id).find((w) => w.teacherId === id)?.name ?? `#${id}`;
+  ctx.deps.repo.toggleWatchTeacher(ctx.user.id, id, name);
+  await ctx.answerCallbackQuery({ text: `Больше не слежу за ${name}` });
+  const list = ctx.deps.repo.watchedTeachers(ctx.user.id);
+  const kb = new InlineKeyboard();
+  for (const t of list) kb.text(`🔕 ${t.name}`, `twx:${t.teacherId}`).row();
+  try {
+    await ctx.editMessageText(list.length ? "👨‍🏫 <b>Слежу за преподавателями</b>\n\nВечером пришлю их завтрашний день, и ещё раз за 2 часа до первой пары. Нажми, чтобы перестать следить." : "👨‍🏫 Слежений больше нет.", {
+      parse_mode: "HTML",
+      reply_markup: list.length ? kb : undefined,
+    });
+  } catch {
+    /* сообщение могло устареть */
   }
 });
 

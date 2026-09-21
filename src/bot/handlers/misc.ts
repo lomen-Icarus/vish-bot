@@ -6,7 +6,7 @@ import { featuresSections, featuresText, needGroup } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
-import { webinarKey } from "./teachers.js";
+import { teacherVishTag, webinarKey } from "./teachers.js";
 import { clampHtml, esc } from "../../schedule/format.js";
 import { buildInlineResults, INLINE_HINT, parseInlineQuery } from "../inline.js";
 import { findGroup } from "../../schedule/groups.js";
@@ -19,6 +19,27 @@ export const miscHandlers = new Composer<BotContext>();
 miscHandlers.command("start", async (ctx) => {
   const kb = mainKeyboard();
   const group = needGroup(ctx);
+  // Кнопка над inline-списком открывает личку с «/start inline» — значит,
+  // человек спрашивает именно про inline, и отвечать надо про него.
+  if ((ctx.match ?? "").trim() === "inline") {
+    const bot = ctx.deps.botUsername ?? "бот";
+    await ctx.reply(
+      [
+        "<b>💬 Как писать в любом чате</b>",
+        "",
+        `Набери <code>@${bot}</code> и дальше что нужно:`,
+        `• <code>@${bot} 12-23 завтра</code> — день группы`,
+        `• <code>@${bot} неделя</code> — своя неделя`,
+        `• <code>@${bot} поток 24</code> — весь поток`,
+        `• <code>@${bot} общие</code> — общие пары`,
+        `• <code>@${bot} послепослезавтра</code> — любая дата словом или числом (<code>25.09</code>)`,
+        "",
+        "Бот добавлять в чат не нужно: сообщение отправляешь ты сам.",
+      ].join("\n"),
+      { parse_mode: "HTML", reply_markup: kb },
+    );
+    return;
+  }
   if (!group) {
     await ctx.reply(
       "Привет! Я бот расписания Высшей инженерной школы ЧувГУ.\n\nПокажу пары на любой день, пришлю изменения в расписании и напомню о парах. Сначала выбери группу.",
@@ -218,7 +239,7 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
     try {
       for (const t of deps.teachers ? await deps.teachers.search(query, 5) : []) {
         names.push(t.name);
-        kb.text(`👨‍🏫 ${t.name}`, `t:${t.id}`);
+        kb.text(`👨‍🏫 ${t.name}${teacherVishTag(deps.repo, t.id, t.name)}`, `t:${t.id}`);
         if (++buttons % 2 === 0) kb.row();
       }
     } catch (err) {
@@ -243,9 +264,13 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
     const allowed = limit <= 0 || ctx.isAdmin || deps.repo.poiskUsage(ctx.user.id, day) < limit;
     if (allowed) {
       const hits = students.search(query, 4);
+      // Журнал ведём и на промахах — иначе базу можно перебирать бесплатно.
+      // ИИ по тому же запросу ищет людей сам, поэтому запись ставим здесь
+      // только когда ИИ не будет вызван: иначе с человека спишется два поиска.
+      if (!deps.ask) deps.repo.logPoisk(ctx.user.id, day, `поиск: ${query}`, hits[0]?.student.id ?? null);
       if (hits.length) {
-        deps.repo.logPoisk(ctx.user.id, day, `поиск: ${query}`, hits[0]!.student.id);
-        parts.push(`<b>Студенты ВИШ</b>: ${hits.map((h) => `${esc(h.student.name)} — ${esc(h.student.groupTitle)}`).join("; ")}`);
+        const guess = hits.every((h) => h.fuzzy);
+        parts.push(`<b>Студенты ВИШ</b>${guess ? " (похожие по написанию)" : ""}: ${hits.map((h) => `${esc(h.student.name)} — ${esc(h.student.groupTitle)}`).join("; ")}`);
         for (const h of hits) {
           kb.text(`🕵️ ${h.student.name}`.slice(0, 40), `pop:${h.student.id}`);
           if (++buttons % 2 === 0) kb.row();
@@ -283,7 +308,10 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
     await ctx.reply(`По «${esc(query)}» ничего не нашёл. Попробуй короче: номер группы, часть названия предмета или фамилию.${noAccount}`, { parse_mode: "HTML" });
     return;
   }
-  await ctx.reply(`🔍 <b>Поиск: ${esc(query)}</b>\n\n${hits.parts.join("\n\n")}`, { parse_mode: "HTML", reply_markup: hits.buttons ? hits.kb : undefined });
+  // grammY на row() кладёт пустой массив: при нечётном числе кнопок последний
+  // ряд остаётся пустым, а Telegram такую клавиатуру не принимает.
+  const kb = new InlineKeyboard(hits.kb.inline_keyboard.filter((row) => row.length).map((row) => [...row]));
+  await ctx.reply(`🔍 <b>Поиск: ${esc(query)}</b>\n\n${hits.parts.join("\n\n")}`, { parse_mode: "HTML", reply_markup: hits.buttons ? kb : undefined });
 }
 
 miscHandlers.on("message:text", async (ctx, next) => {

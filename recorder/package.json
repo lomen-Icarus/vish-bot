@@ -4,7 +4,9 @@
   "private": true,
   "description": "Записывает слайды вебинаров ВИШ (BigBlueButton) и отдаёт их боту",
   "type": "module",
-  "engines": { "node": ">=22.19.0" },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
@@ -13,6 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "chuvsu-js": "^5.2.2",
     "pdf-lib": "^1.17.1",
     "playwright-core": "^1.50.0",
     "undici": "^8.10.2"

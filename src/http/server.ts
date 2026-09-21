@@ -100,11 +100,16 @@ export function createHttpServer(deps: HttpDeps): Server {
     try {
       const meta = JSON.parse(Buffer.from(String(req.headers["x-slides-meta"] ?? ""), "base64").toString("utf8")) as Partial<SlideDeckUpload> & { slides?: number };
       if (!meta.date || !meta.subject) return reply(400, "в X-Slides-Meta нужны date и subject");
+      // Дата уходит в подпись и в имя файла: принимаем только YYYY-MM-DD.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(meta.date))) return reply(400, "date должна быть в формате YYYY-MM-DD");
       const body = await readBody(req, MAX_DECK_BYTES);
       if (!body.length || body.subarray(0, 4).toString() !== "%PDF") return reply(400, "тело должно быть PDF");
       const dir = deps.slidesDir ?? "./data/slides";
       mkdirSync(dir, { recursive: true });
-      const safe = `${meta.date}-${String(meta.subject).replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 60) || "вебинар"}.pdf`.replace(/[/\\]/g, "-");
+      // В один день по одному предмету бывает две пары у разных потоков —
+      // без времени в имени вторая затирала бы первую.
+      const stamp = new Date().toISOString().slice(11, 16).replace(":", "");
+      const safe = `${meta.date}-${stamp}-${String(meta.subject).replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 60) || "вебинар"}.pdf`.replace(/[/\\]/g, "-");
       const file = path.join(dir, safe);
       writeFileSync(file, body);
       const groups = Array.isArray(meta.groups) ? meta.groups.map(String) : [];

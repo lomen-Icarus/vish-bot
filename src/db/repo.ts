@@ -229,7 +229,7 @@ function rowToTeacherMap(r: Record<string, unknown>): TeacherMapRow {
     department: r.department == null ? null : String(r.department),
     degree: r.degree == null ? null : String(r.degree),
     photoUrl: r.photo_url == null ? null : String(r.photo_url),
-    photoFileId: r.photo_file_id == null ? null : String(r.photo_file_id),
+    photoFileId: r.photo_file_id == null || String(r.photo_file_id) === "" ? null : String(r.photo_file_id),
     source: r.source === "portal" ? "portal" : "webinar",
     checkedAt: r.checked_at == null ? null : String(r.checked_at),
   };
@@ -878,6 +878,13 @@ export class Repo {
     const r = this.db.prepare("SELECT COUNT(*) AS c, COUNT(DISTINCT user_id) AS u FROM poisk_log WHERE day = ?").get(day) as { c: number; u: number };
     return { searches: r.c, users: r.u };
   }
+  /** Старые пачки слайдов: записи и пути к файлам, чтобы их можно было удалить с диска. */
+  pruneSlideDecks(olderThanDays = 120): string[] {
+    const rows = this.db.prepare("SELECT file FROM slide_decks WHERE created_at < datetime('now', ?)").all(`-${olderThanDays} days`) as Array<{ file: string }>;
+    this.db.prepare("DELETE FROM slide_decks WHERE created_at < datetime('now', ?)").run(`-${olderThanDays} days`);
+    return rows.map((r) => r.file);
+  }
+
   prunePoiskLog(olderThanDays = 180): void {
     this.db.prepare("DELETE FROM poisk_log WHERE created_at < datetime('now', ?)").run(`-${olderThanDays} days`);
   }
