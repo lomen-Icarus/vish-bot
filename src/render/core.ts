@@ -6,6 +6,7 @@
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { plural } from "../schedule/format.js";
 import satori, { type Font } from "satori";
 import { Resvg } from "@resvg/resvg-js";
 import { logger } from "../logger.js";
@@ -62,10 +63,7 @@ export async function toPng(tree: El, fonts: Font[], width = W): Promise<Buffer>
   return Buffer.from(png);
 }
 
+/** «1 пара, 2 пары, 5 пар» — правило общее с текстовыми экранами. */
 export function pluralPairs(n: number): string {
-  const m10 = n % 10;
-  const m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return "пара";
-  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return "пары";
-  return "пар";
+  return plural(n, "пара", "пары", "пар");
 }

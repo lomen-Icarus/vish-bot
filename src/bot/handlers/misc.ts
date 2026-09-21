@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, groupLabel, isMenuText, mainKeyboard } from "../keyboards.js";
+import { BTN, groupCb, groupLabel, isMenuText, mainKeyboard } from "../keyboards.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import { askAi } from "./ask.js";
@@ -198,7 +198,7 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
   if (groups.length) {
     parts.push(`<b>Группы</b>: ${groups.map((g) => esc(g.title)).join(", ")}`);
     for (const g of groups.slice(0, 6)) {
-      kb.text(`📅 ${groupLabel(g)}`, `pdn:${g.key}:${today}`);
+      kb.text(`📅 ${groupLabel(g)}`, groupCb("pdn", g.key, today));
       if (++buttons % 3 === 0) kb.row();
     }
     if (buttons % 3) kb.row();
@@ -213,7 +213,7 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
       const lines = [...hits.entries()].slice(0, 5).map(([subject, occ]) => {
         const next = occ.slice(0, 3).map((o) => `${weekdayName(o.date)} ${fmtDDMM(o.date)}${o.start != null ? ` ${fmtHHMM(o.start)}` : ""}${o.room ? ` · ${esc(o.room)}` : ""}${o.isDistance ? " · 💻" : ""}`);
         const teacher = occ.find((o) => o.teacher)?.teacher;
-        return `• <b>${esc(subject)}</b> (${lessonTypeLabel(occ[0]!.type)})${teacher ? ` — ${esc(teacher)}` : ""}\n   ${next.join("\n   ")}`;
+        return `• <b>${esc(subject)}</b> (${esc(lessonTypeLabel(occ[0]!.type))})${teacher ? ` — ${esc(teacher)}` : ""}\n   ${next.join("\n   ")}`;
       });
       parts.push(`<b>${title}</b>\n${lines.join("\n")}`);
       return true;
@@ -264,10 +264,10 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
     const allowed = limit <= 0 || ctx.isAdmin || deps.repo.poiskUsage(ctx.user.id, day) < limit;
     if (allowed) {
       const hits = students.search(query, 4);
-      // Журнал ведём и на промахах — иначе базу можно перебирать бесплатно.
-      // ИИ по тому же запросу ищет людей сам, поэтому запись ставим здесь
-      // только когда ИИ не будет вызван: иначе с человека спишется два поиска.
-      if (!deps.ask) deps.repo.logPoisk(ctx.user.id, day, `поиск: ${query}`, hits[0]?.student.id ?? null);
+      // Журнал ведём всегда, в том числе на промахах: иначе базу можно было бы
+      // перебирать по фамилиям бесплатно и без следов. Если по тому же запросу
+      // сработает ещё и инструмент ИИ, repo.logPoisk склеит это в одну запись.
+      deps.repo.logPoisk(ctx.user.id, day, `поиск: ${query}`, hits[0]?.student.id ?? null);
       if (hits.length) {
         const guess = hits.every((h) => h.fuzzy);
         parts.push(`<b>Студенты ВИШ</b>${guess ? " (похожие по написанию)" : ""}: ${hits.map((h) => `${esc(h.student.name)} — ${esc(h.student.groupTitle)}`).join("; ")}`);

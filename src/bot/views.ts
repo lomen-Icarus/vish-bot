@@ -1,7 +1,7 @@
 import { InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext, Deps } from "./context.js";
 import { BTN, dayNav, weekNav } from "./keyboards.js";
-import { esc, filterSubgroup, formatDay, formatWeek } from "../schedule/format.js";
+import { clampHtml, esc, filterSubgroup, formatDay, formatWeek } from "../schedule/format.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
 import type { Occurrence } from "../schedule/model.js";
@@ -96,14 +96,16 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
   const keyboard = dayNav(date, today, { image: hasImages, peekKey });
   if (opts.edit && ctx.callbackQuery?.message && !photoMsg) {
     try {
-      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
+      await ctx.editMessageText(clampHtml(text), { parse_mode: "HTML", reply_markup: keyboard });
       return;
     } catch (err) {
       if (String(err).includes("message is not modified")) return;
       logger.debug({ err: String(err) }, "edit failed, sending new message");
     }
   }
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+  // Сессионная неделя с консультациями перерастает лимит Telegram в 4096:
+  // без обрезки падал бы весь ответ, а человек не получал ничего.
+  await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: keyboard });
   if (hasImages && ctx.user.format === "both" && lessons.length > 0 && !opts.edit) {
     // "both": the text goes first, the poster follows silently with its own navigation.
     try {
@@ -139,13 +141,13 @@ export async function sendWeek(ctx: BotContext, group: LogicalGroup, anyDate: Lo
   const keyboard = weekNav(monday, { image: hasImages, peekKey });
   if (opts.edit && ctx.callbackQuery?.message && !photoMsg) {
     try {
-      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
+      await ctx.editMessageText(clampHtml(text), { parse_mode: "HTML", reply_markup: keyboard });
       return;
     } catch (err) {
       if (String(err).includes("message is not modified")) return;
     }
   }
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+  await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: keyboard });
 }
 
 export function groupRequiredText(): string {

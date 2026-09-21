@@ -1,4 +1,4 @@
-import { fmtDDMM, fmtDayMonth, fmtHHMM, weekdayName, weekdayShort, type LocalDate, type WallClock } from "../time.js";
+import { addDays, fmtDDMM, fmtDayMonth, fmtHHMM, weekdayName, weekdayShort, type LocalDate, type WallClock } from "../time.js";
 import type { ChangeEvent } from "./diff.js";
 import type { LogicalGroup } from "./groups.js";
 import { lessonTypeLabel, type Occurrence } from "./model.js";
@@ -55,15 +55,10 @@ export function parityLine(info: WeekInfo): string {
 }
 
 export function dayHeader(date: LocalDate, info: WeekInfo, today: LocalDate): string {
-  const rel = date === today ? "Сегодня" : date === addDaysStr(today, 1) ? "Завтра" : date === addDaysStr(today, -1) ? "Вчера" : null;
+  const rel = date === today ? "Сегодня" : date === addDays(today, 1) ? "Завтра" : date === addDays(today, -1) ? "Вчера" : null;
   const pl = parityLine(info);
   const main = `${weekdayName(date)}, ${fmtDayMonth(date)}`;
   return `<b>${rel ? `${rel} · ` : ""}${main}</b>${pl ? `\n${pl}` : ""}`;
-}
-
-function addDaysStr(date: LocalDate, n: number): LocalDate {
-  const t = Date.parse(date) + n * 86_400_000;
-  return new Date(t).toISOString().slice(0, 10);
 }
 
 /**
@@ -96,7 +91,7 @@ export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   const subject = moved ? `<s>${esc(o.subject)}</s>` : `<b>${esc(o.subject)}</b>`;
   lines.push(`${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subject}${ongoing ? " ▶️" : ""}`);
   const meta: string[] = [];
-  meta.push(lessonTypeLabel(o.type));
+  meta.push(esc(lessonTypeLabel(o.type)));
   if (o.isDistance) meta.push("💻 дистанционно");
   else if (o.room) meta.push(`ауд. ${esc(o.room)}`);
   if (o.teacher) meta.push(esc(o.teacher));
@@ -143,9 +138,9 @@ export function countLessons(n: number): string {
 
 export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<LocalDate, Occurrence[]>, info: WeekInfo, today: LocalDate, opts: FormatOptions = {}): string {
   const pl = parityLine(info);
-  const parts: string[] = [`<b>Неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDaysStr(monday, 6))}</b>${pl ? `\n${pl}` : ""}\n${esc(group.title)}`];
+  const parts: string[] = [`<b>Неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDays(monday, 6))}</b>${pl ? `\n${pl}` : ""}\n${esc(group.title)}`];
   for (let i = 0; i < 7; i++) {
-    const date = addDaysStr(monday, i);
+    const date = addDays(monday, i);
     const list = filterSubgroup(byDate.get(date) ?? [], opts.subgroup);
     if (list.length === 0 && i === 6) continue;
     const title = `<b>${weekdayName(date)}</b> · <i>${fmtDDMM(date)}${date === today ? " · сегодня" : ""}</i>`;
@@ -160,7 +155,7 @@ export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<L
       const sg = o.subgroup ? ` (${o.subgroup} п.)` : "";
       const flags = `${o.movedFrom ? " ↩️" : ""}${o.substituted ? " 🔁" : ""}`;
       // Показываем и конец пары: «когда освобожусь» спрашивают не реже, чем «когда начало».
-      return `   ${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subj} <i>${lessonTypeLabel(o.type)}</i>${where ? ` · ${where}` : ""}${sg}${flags}`;
+      return `   ${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subj} <i>${esc(lessonTypeLabel(o.type))}</i>${where ? ` · ${where}` : ""}${sg}${flags}`;
     });
     parts.push(`${title}\n${rows.join("\n")}`);
   }
@@ -170,7 +165,7 @@ export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<L
 function describe(o: Occurrence): string {
   const where = o.isDistance ? "дистанционно" : o.room ? `ауд. ${esc(o.room)}` : "";
   const sg = o.subgroup ? `, ${o.subgroup} подгр.` : "";
-  return `<b>${esc(o.subject)}</b> (${lessonTypeLabel(o.type)}${sg})${where ? ` · ${where}` : ""}`;
+  return `<b>${esc(o.subject)}</b> (${esc(lessonTypeLabel(o.type))}${sg})${where ? ` · ${where}` : ""}`;
 }
 
 function when(o: Occurrence): string {
@@ -190,7 +185,7 @@ export function formatWebinarTeacher(t: { name: string; position: string | null;
     for (const l of upcoming) {
       const when = `${weekdayShort(l.date)} ${fmtDDMM(l.date)}`;
       const time = l.start != null ? ` · <code>${fmtHHMM(l.start)}${l.end != null ? `–${fmtHHMM(l.end)}` : ""}</code>` : "";
-      lines.push(`${when}${time}${l.slot ? ` · ${l.slot} пара` : ""} — <b>${esc(l.subject)}</b> (${lessonTypeLabel(l.type)})`);
+      lines.push(`${when}${time}${l.slot ? ` · ${l.slot} пара` : ""} — <b>${esc(l.subject)}</b> (${esc(lessonTypeLabel(l.type))})`);
       if (l.groups.length) lines.push(`     ${esc(l.groups.join(", "))}`);
       if (l.title) lines.push(`     📝 ${esc(l.title.length > 90 ? l.title.slice(0, 87).trimEnd() + "…" : l.title)}`);
     }
