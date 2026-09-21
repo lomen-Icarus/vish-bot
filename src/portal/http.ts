@@ -17,6 +17,9 @@ export interface PortalHttpOptions {
 export interface HttpResponse {
   status: number;
   body: string;
+  /** Тело как байты — только для запросов с binary: true (фото). */
+  bytes?: Buffer;
+  contentType?: string;
   location?: string;
   url: string;
 }
@@ -77,6 +80,13 @@ export class PortalHttp {
     return this.request(url, { method: "GET" });
   }
 
+  /** GET, который возвращает байты (фото преподавателя), а не текст. */
+  async getBytes(url: string, maxBytes = 5 * 1024 * 1024): Promise<{ status: number; bytes: Buffer; contentType: string } | null> {
+    const res = await this.request(url, { method: "GET", binary: true, maxBytes });
+    if (res.status !== 200 || !res.bytes) return null;
+    return { status: res.status, bytes: res.bytes, contentType: res.contentType ?? "application/octet-stream" };
+  }
+
   post(url: string, form: Record<string, string>): Promise<HttpResponse> {
     return this.request(url, {
       method: "POST",
@@ -108,7 +118,7 @@ export class PortalHttp {
     return res;
   }
 
-  private request(url: string, init: { method: string; headers?: Record<string, string>; body?: string }): Promise<HttpResponse> {
+  private request(url: string, init: { method: string; headers?: Record<string, string>; body?: string; binary?: boolean; maxBytes?: number }): Promise<HttpResponse> {
     const run = async (): Promise<HttpResponse> => {
       const wait = this.lastRequestAt + this.minGapMs - Date.now();
       if (wait > 0) await sleep(wait);
@@ -131,10 +141,22 @@ export class PortalHttp {
             signal: AbortSignal.timeout(this.timeoutMs),
           });
           this.storeCookies(res.headers);
-          const body = await res.text();
           if (res.status >= 500 || res.status === 403 || res.status === 429) {
             throw new PortalHttpError(`HTTP ${res.status} from ${url}`, res.status);
           }
+          if (init.binary) {
+            const buf = Buffer.from(await res.arrayBuffer());
+            const limit = init.maxBytes ?? 5 * 1024 * 1024;
+            return {
+              status: res.status,
+              body: "",
+              bytes: buf.length > limit ? buf.subarray(0, limit) : buf,
+              contentType: res.headers.get("content-type") ?? undefined,
+              location: res.headers.get("location") ?? undefined,
+              url,
+            };
+          }
+          const body = await res.text();
           return { status: res.status, body, location: res.headers.get("location") ?? undefined, url };
         } catch (err) {
           lastError = err;

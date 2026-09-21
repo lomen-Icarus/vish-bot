@@ -14,6 +14,9 @@ import type { LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 import type { ParsedScheduleDay } from "chuvsu-js/parsers";
 import { nameMatch, nameMatchScore, normName, type NameMatch } from "../text/match.js";
+import { createHash } from "node:crypto";
+import { parseGroupName } from "../schedule/groups.js";
+import type { TeacherMapRow } from "../db/repo.js";
 
 export interface TeacherRef {
   id: number;
@@ -27,6 +30,8 @@ interface CachedPage {
   fetchedAt: number;
   days: ParsedScheduleDay[];
   fullName: string | null;
+  /** Карточка преподавателя: кафедра, степень и адрес фото. */
+  info: { name: string; degree?: string; department?: string; photoUrl?: string } | null;
 }
 
 /** Normalised words of a query, used for the portal's own search box. */
@@ -45,6 +50,18 @@ export function teacherMatchScore(name: string, query: string): number {
 /** Same, but says whether the match needed typo tolerance. */
 export function teacherMatch(name: string, query: string): NameMatch {
   return nameMatch(name, query);
+}
+
+/** Ключ в карте: у портальных преподавателей — id, у «дистантных» — хэш имени. */
+export function teacherMapKey(teacherId: number | null, name: string): string {
+  if (teacherId != null) return `t${teacherId}`;
+  return `w${createHash("sha1").update(normName(name)).digest("base64url").slice(0, 12)}`;
+}
+
+/** Группа ВИШ? Смотрим только на префикс названия — этого хватает и для ОЗВИШ. */
+export function isVishGroupTitle(title: string): boolean {
+  const p = parseGroupName(title);
+  return !!p && (p.prefix === "ВИШ" || p.prefix === "ОЗВИШ");
 }
 
 export class TeacherService {
@@ -181,7 +198,12 @@ export class TeacherService {
     const cached = this.pages.get(key);
     if (cached && Date.now() - cached.fetchedAt < PAGE_TTL_MS) return cached;
     const { days, info } = await this.portal.getTeacherPage(teacherId, period);
-    const entry: CachedPage = { fetchedAt: Date.now(), days, fullName: info?.name ?? null };
+    const now = Date.now();
+    // Ночной обход справочника заводит запись на каждого преподавателя ЧувГУ,
+    // а отдаём мы страницу только 15 минут. Без уборки разобранные семестровые
+    // расписания всего университета лежат в памяти до перезапуска процесса.
+    for (const [k, v] of this.pages) if (now - v.fetchedAt >= PAGE_TTL_MS) this.pages.delete(k);
+    const entry: CachedPage = { fetchedAt: now, days, fullName: info?.name ?? null, info: info ?? null };
     this.pages.set(key, entry);
     return entry;
   }
@@ -205,5 +227,119 @@ export class TeacherService {
     }
     out.sort((a, b) => a.date.localeCompare(b.date) || (a.start ?? 0) - (b.start ?? 0) || (a.slot ?? 0) - (b.slot ?? 0));
     return { lessons: out, fullName };
+  }
+
+  // ---- карта «кто из преподавателей ведёт у ВИШ» ----
+
+  /**
+   * Обновляет карту по одному преподавателю: тянет его семестровую страницу и
+   * смотрит, есть ли среди его групп группы ВИШ. Портал — медленный, поэтому
+   * это делается фоном и понемногу.
+   */
+  async refreshMapFor(teacherId: number, fallbackName?: string): Promise<TeacherMapRow | null> {
+    const semester = this.schedule.semesterFor(this.today());
+    try {
+      const page = await this.page(teacherId, semester);
+      const groups = new Set<string>();
+      const subjects = new Set<string>();
+      for (const day of page.days) {
+        for (const block of day.blocks ?? []) {
+          for (const lesson of block.lessons ?? []) {
+            if (lesson.subject) subjects.add(lesson.subject);
+            for (const g of lesson.groups ?? []) groups.add(g);
+          }
+        }
+      }
+      const vishGroups = [...groups].filter(isVishGroupTitle);
+      const key = teacherMapKey(teacherId, page.fullName ?? fallbackName ?? String(teacherId));
+      // Тот же человек мог прийти со страницы вебинаров (ключ по имени) — там
+      // уже известно, что он наш. Не теряем это, если сейчас у него пар нет.
+      const fromWebinars = this.repo.teacherMapByKey(teacherMapKey(null, page.fullName ?? fallbackName ?? ""));
+      this.repo.upsertTeacherMap({
+        key,
+        teacherId,
+        name: page.fullName ?? fallbackName ?? `#${teacherId}`,
+        vish: vishGroups.length > 0 || fromWebinars?.vish === true,
+        groups: (vishGroups.length ? vishGroups : (fromWebinars?.groups ?? [])).slice(0, 40),
+        subjects: [...subjects].slice(0, 40),
+        department: page.info?.department ?? null,
+        degree: page.info?.degree ?? null,
+        photoUrl: page.info?.photoUrl ?? null,
+        photoFileId: null,
+        source: "portal",
+        checkedAt: new Date().toISOString(),
+      });
+      return this.repo.teacherMapByKey(key);
+    } catch (err) {
+      // Отмечаем попытку, иначе «битый» id вечно первый в очереди обхода
+      // (teacherMapStale сортирует непроверенных вперёд) и портал долбится зря.
+      const key = teacherMapKey(teacherId, fallbackName ?? String(teacherId));
+      const prev = this.repo.teacherMapByKey(key);
+      this.repo.upsertTeacherMap({
+        key,
+        teacherId,
+        name: prev?.name ?? fallbackName ?? `#${teacherId}`,
+        vish: prev?.vish ?? false,
+        groups: prev?.groups ?? [],
+        subjects: prev?.subjects ?? [],
+        department: prev?.department ?? null,
+        degree: prev?.degree ?? null,
+        photoUrl: prev?.photoUrl ?? null,
+        photoFileId: prev?.photoFileId ?? null,
+        source: "portal",
+        checkedAt: new Date().toISOString(),
+      });
+      logger.debug({ err: String(err), teacherId }, "teacher map refresh failed");
+      return null;
+    }
+  }
+
+  private today(): LocalDate {
+    return new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+
+  /**
+   * Порция фонового обхода: сначала заносим весь справочник в карту, потом
+   * проверяем тех, кого ещё не смотрели (или смотрели давно).
+   */
+  async crawlMap(limit = 40): Promise<{ checked: number; vish: number }> {
+    const dir = await this.directory();
+    for (const t of dir) this.repo.seedTeacherMap(teacherMapKey(t.id, t.name), t.id, t.name);
+    const ids = this.repo.teacherMapStale(limit);
+    const nameById = new Map(dir.map((t) => [t.id, t.name]));
+    let checked = 0;
+    let vish = 0;
+    for (const id of ids) {
+      // Имя из справочника у нас уже есть: без него карточка без шапки
+      // превратилась бы в «#12345».
+      const row = await this.refreshMapFor(id, nameById.get(id));
+      checked++;
+      if (row?.vish) vish++;
+    }
+    if (checked) logger.info({ checked, vish, left: this.repo.teacherMapStats().total - this.repo.teacherMapStats().checked }, "teacher map crawl");
+    return { checked, vish };
+  }
+
+  /** Забыть закешированный file_id: Telegram его не принял (сменили токен, файл удалён). */
+  forgetPhotoFileId(key: string): void {
+    this.repo.setTeacherPhotoFileId(key, "");
+  }
+
+  /** Фото преподавателя: из кеша Telegram (file_id) или байтами с портала. */
+  async photo(teacherId: number): Promise<{ key: string; fileId: string | null; bytes: Buffer | null; row: TeacherMapRow | null }> {
+    let row = this.repo.teacherMapById(teacherId);
+    if (row?.photoFileId) return { key: row.key, fileId: row.photoFileId, bytes: null, row };
+    // Пустая строка — это «забыли» из forgetPhotoFileId: качаем заново.
+    if (!row?.photoUrl) {
+      row = await this.refreshMapFor(teacherId, row?.name);
+    }
+    if (!row?.photoUrl) return { key: row?.key ?? teacherMapKey(teacherId, String(teacherId)), fileId: null, bytes: null, row: row ?? null };
+    try {
+      const bytes = await this.portal.getTeacherPhoto(row.photoUrl);
+      return { key: row.key, fileId: null, bytes, row };
+    } catch (err) {
+      logger.debug({ err: String(err), teacherId }, "teacher photo failed");
+      return { key: row.key, fileId: null, bytes: null, row };
+    }
   }
 }

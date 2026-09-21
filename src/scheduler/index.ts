@@ -1,4 +1,5 @@
 import { Cron } from "croner";
+import { rmSync } from "node:fs";
 import type { ScheduleService } from "../schedule/service.js";
 import type { Notifier } from "../notify/dispatcher.js";
 import type { Repo } from "../db/repo.js";
@@ -46,6 +47,8 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
         if (sent) logger.info({ sent }, "reminders sent");
         const backlog = await opts.notifier.flushQuietBacklog();
         if (backlog) logger.info({ backlog }, "quiet-hours change backlog delivered");
+        const watched = await opts.notifier.tickTeacherWatches();
+        if (watched) logger.info({ watched }, "teacher watch reminders sent");
       } catch (err) {
         logger.error({ err }, "reminder tick failed");
       }
@@ -56,6 +59,14 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       opts.repo.pruneChangeEvents(30);
       // Журнал «сыска» — это аудит: держим полгода, потом чистим.
       opts.repo.prunePoiskLog(180);
+      // Слайды занимают мегабайты: старше четырёх месяцев они никому не нужны.
+      for (const file of opts.repo.pruneSlideDecks(120)) {
+        try {
+          rmSync(file, { force: true });
+        } catch (err) {
+          logger.debug({ err: String(err), file }, "старый PDF со слайдами не удалился");
+        }
+      }
       logger.info("housekeeping done");
     }),
   ];
@@ -81,6 +92,17 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
     };
     jobs.push(new Cron("41 4 * * *", { timezone: TZ, protect: true, name: "teacher-directory" }, () => refresh("cron")));
     setTimeout(() => void refresh("startup"), 20_000).unref();
+    // Карта «кто ведёт у ВИШ» строится понемногу: портал не выдержит обход
+    // всего справочника разом, а за несколько ночей карта наполнится сама.
+    jobs.push(
+      new Cron("*/20 1-5 * * *", { timezone: TZ, protect: true, name: "teacher-map" }, async () => {
+        try {
+          await teachers.crawlMap(40);
+        } catch (err) {
+          logger.warn({ err: String(err) }, "teacher map crawl failed");
+        }
+      }),
+    );
   }
   if (opts.news && opts.newsCron) {
     const news = opts.news;

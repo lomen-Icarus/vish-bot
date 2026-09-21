@@ -223,4 +223,50 @@ export const MIGRATIONS: string[] = [
   `
   UPDATE users SET topics = '["announcements"]' WHERE topics IS NULL OR trim(topics) = '' OR trim(topics) = '[]';
   `,
+  `
+  CREATE TABLE teacher_map (
+    key TEXT PRIMARY KEY,
+    teacher_id INTEGER,
+    name TEXT NOT NULL,
+    vish INTEGER NOT NULL DEFAULT 0,
+    groups_json TEXT NOT NULL DEFAULT '[]',
+    subjects_json TEXT NOT NULL DEFAULT '[]',
+    department TEXT,
+    degree TEXT,
+    photo_url TEXT,
+    photo_file_id TEXT,
+    source TEXT NOT NULL,
+    checked_at TEXT
+  );
+  CREATE INDEX teacher_map_vish ON teacher_map (vish);
+  CREATE INDEX teacher_map_teacher ON teacher_map (teacher_id);
+  `,
+  `
+  CREATE TABLE watch_teachers (
+    user_id INTEGER NOT NULL,
+    teacher_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, teacher_id)
+  );
+  CREATE INDEX watch_teachers_teacher ON watch_teachers (teacher_id);
+  `,
+  `
+  CREATE TABLE slide_decks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    teacher TEXT,
+    title TEXT,
+    groups_json TEXT NOT NULL DEFAULT '[]',
+    slides INTEGER NOT NULL DEFAULT 0,
+    file TEXT NOT NULL,
+    bytes INTEGER NOT NULL DEFAULT 0,
+    file_id TEXT,
+    sent INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX slide_decks_date ON slide_decks (date);
+  ALTER TABLE users ADD COLUMN want_slides INTEGER NOT NULL DEFAULT 1;
+  `,
 ];

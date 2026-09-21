@@ -1,4 +1,4 @@
-import { Composer, InlineKeyboard } from "grammy";
+import { Composer, InlineKeyboard, InputFile } from "grammy";
 import { createHash } from "node:crypto";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
@@ -7,7 +7,7 @@ import { clampHtml, esc, formatDay, formatWebinarTeacher, formatWeek } from "../
 import type { LogicalGroup } from "../../schedule/groups.js";
 import type { Occurrence } from "../../schedule/model.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../../time.js";
-import type { TeacherRef } from "../../portal/teachers.js";
+import { teacherMapKey, type TeacherRef } from "../../portal/teachers.js";
 import type { WebinarTeacher } from "../../portal/webinars.js";
 import { logger } from "../../logger.js";
 
@@ -49,6 +49,65 @@ async function showWebinarTeacher(ctx: BotContext, t: WebinarTeacher): Promise<v
   const text = clampHtml(formatWebinarTeacher(t, upcoming, false));
   const kb = new InlineKeyboard().text("🔎 Другой преподаватель", "t:search");
   await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => ctx.reply(text.replace(/<[^>]+>/g, ""), { reply_markup: kb }));
+}
+
+/**
+ * Карточка преподавателя из карты: по id, а если его ещё не обходили — по имени
+ * (так находятся преподаватели дистанта, у которых id нет вовсе).
+ */
+export function teacherVishTag(repo: BotContext["deps"]["repo"], teacherId: number | null, name: string): string {
+  const row = (teacherId != null ? repo.teacherMapById(teacherId) : null) ?? repo.teacherMapByKey(teacherMapKey(null, name));
+  return row?.vish ? " (ВИШ)" : "";
+}
+
+function mapRow(ctx: BotContext, teacherId: number | null, name: string) {
+  return (teacherId != null ? ctx.deps.repo.teacherMapById(teacherId) : null) ?? ctx.deps.repo.teacherMapByKey(teacherMapKey(null, name));
+}
+
+/**
+ * «(ВИШ)» рядом с фамилией. В университете есть полные тёзки, и без пометки
+ * невозможно понять, кто из них ведёт у нашей школы.
+ */
+function vishTag(ctx: BotContext, teacherId: number | null, name: string): string {
+  return mapRow(ctx, teacherId, name)?.vish ? " (ВИШ)" : "";
+}
+
+/**
+ * Фото преподавателя — ПОСЛЕДНИМ сообщением, уже после расписания: наверх
+ * никто не листает, а так и картинка видна, и расписание прямо над ней.
+ */
+async function sendTeacherPhoto(ctx: BotContext, t: TeacherRef, fullName: string | null): Promise<void> {
+  const teachers = ctx.deps.teachers;
+  if (!teachers) return;
+  try {
+    const photo = await teachers.photo(t.id);
+    const row = photo.row;
+    const caption = [`👨‍🏫 <b>${esc(fullName ?? t.name)}</b>${row?.vish ? " (ВИШ)" : ""}`, [row?.degree, row?.department].filter(Boolean).map((x) => esc(String(x))).join(" · ")].filter(Boolean).join("\n");
+    if (photo.fileId) {
+      try {
+        await ctx.replyWithPhoto(photo.fileId, { caption, parse_mode: "HTML", disable_notification: true });
+        return;
+      } catch (err) {
+        // file_id живёт внутри одного бота: после смены токена он перестаёт
+        // работать, и фото пропало бы навсегда. Забываем и качаем заново.
+        logger.debug({ err: String(err), teacher: t.id }, "stale photo file_id, refetching");
+        teachers.forgetPhotoFileId(photo.key);
+        const fresh = await teachers.photo(t.id);
+        if (!fresh.bytes) return;
+        const again = await ctx.replyWithPhoto(new InputFile(fresh.bytes, `teacher-${t.id}.jpg`), { caption, parse_mode: "HTML", disable_notification: true });
+        const id = again.photo?.[again.photo.length - 1]?.file_id;
+        if (id) ctx.deps.repo.setTeacherPhotoFileId(fresh.key, id);
+        return;
+      }
+    }
+    if (!photo.bytes) return;
+    const sent = await ctx.replyWithPhoto(new InputFile(photo.bytes, `teacher-${t.id}.jpg`), { caption, parse_mode: "HTML", disable_notification: true });
+    // Второй раз качать с портала незачем: Telegram отдаст ту же картинку по file_id.
+    const fileId = sent.photo?.[sent.photo.length - 1]?.file_id;
+    if (fileId && photo.key) ctx.deps.repo.setTeacherPhotoFileId(photo.key, fileId);
+  } catch (err) {
+    logger.debug({ err: String(err), teacher: t.id }, "teacher photo send failed");
+  }
 }
 
 function pseudoGroup(t: TeacherRef, fullName: string | null): LogicalGroup {
@@ -98,8 +157,10 @@ teacherHandlers.on("message:text", async (ctx, next) => {
   if (!guess && found.length === 1 && !fromWebinars.length) return showTeacherDay(ctx, found[0]!, todayMsk());
   if (!guess && !found.length && fromWebinars.length === 1) return showWebinarTeacher(ctx, fromWebinars[0]!);
   const kb = new InlineKeyboard();
-  for (const t of found) kb.text(t.name, `t:${t.id}`).row();
-  for (const t of fromWebinars) kb.text(`${t.name} (дистант)`, webinarKey(t.name)).row();
+  // Тёзки встречаются, поэтому «наши» помечены и идут первыми.
+  const ranked = [...found].sort((a, b) => Number(!!vishTag(ctx, b.id, b.name)) - Number(!!vishTag(ctx, a.id, a.name)));
+  for (const t of ranked) kb.text(`${t.name}${vishTag(ctx, t.id, t.name)}`, `t:${t.id}`).row();
+  for (const t of fromWebinars) kb.text(`${t.name} (ВИШ, дистант)`, webinarKey(t.name)).row();
   kb.text("🔎 Искать другого", "t:search");
   await ctx.reply(guess ? `Точного совпадения с «${esc(query)}» нет. Может быть, кто-то из них?` : "Кого показать?", { parse_mode: "HTML", reply_markup: kb });
 });
@@ -132,12 +193,49 @@ teacherHandlers.callbackQuery(/^tw:(\d+):(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
   await showTeacherWeek(ctx, t, ctx.match[2]!, true);
 });
 
+teacherHandlers.callbackQuery(/^twf:(\d+)$/, async (ctx) => {
+  const id = Number(ctx.match[1]);
+  // Имя берём из своей базы: поход в справочник портала может занять минуту,
+  // а Telegram ждёт ответа на нажатие несколько секунд и иначе «морозит» кнопку.
+  const known = ctx.deps.repo.teacherMapById(id)?.name ?? ctx.deps.repo.watchedTeachers(ctx.user.id).find((w) => w.teacherId === id)?.name;
+  const name = known ?? `#${id}`;
+  const following = ctx.deps.repo.toggleWatchTeacher(ctx.user.id, id, name);
+  await ctx.answerCallbackQuery({
+    text: following ? "Слежу: пришлю его расписание вечером и за 2 часа до первой пары" : "Больше не слежу за этим преподавателем",
+    show_alert: following,
+  });
+  try {
+    const msg = ctx.callbackQuery.message;
+    const data = msg && "reply_markup" in msg ? msg.reply_markup : undefined;
+    // Перерисовываем ту же клавиатуру, только с новой надписью на кнопке.
+    if (data?.inline_keyboard) {
+      const rows = data.inline_keyboard.map((row) =>
+        row.map((b) => ("callback_data" in b && b.callback_data === `twf:${id}` ? { ...b, text: following ? "🔕 Не следить за преподом" : "👁 Следить за преподом" } : b)),
+      );
+      await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: rows } });
+    }
+  } catch {
+    /* сообщение могло устареть */
+  }
+});
+
 async function showTeacherDay(ctx: BotContext, t: TeacherRef, date: LocalDate, edit = false): Promise<void> {
   const teachers = ctx.deps.teachers!;
+  // В try — только портал: если не отправится сообщение, это не его вина,
+  // и писать студенту «портал не ответил» было бы враньём.
+  let loaded: { lessons: Occurrence[]; fullName: string | null };
   try {
-    const { lessons, fullName } = await teachers.lessons(t, date, date);
-    const text = formatDay(pseudoGroup(t, fullName), date, lessons, ctx.deps.service.weekInfo(date), todayMsk(), { now: wallClock() });
-    const kb = teacherDayNav(t.id, date);
+    loaded = await teachers.lessons(t, date, date);
+  } catch (err) {
+    logger.warn({ err: String(err), teacher: t.id }, "teacher schedule failed");
+    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
+    return;
+  }
+  {
+    const { lessons, fullName } = loaded;
+    const title = `${fullName ?? t.name}${vishTag(ctx, t.id, fullName ?? t.name)}`;
+    const text = formatDay(pseudoGroup(t, title), date, lessons, ctx.deps.service.weekInfo(date), todayMsk(), { now: wallClock() });
+    const kb = teacherDayNav(t.id, date, { following: ctx.deps.repo.watchesTeacher(ctx.user.id, t.id) });
     if (edit) {
       try {
         await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
@@ -146,22 +244,28 @@ async function showTeacherDay(ctx: BotContext, t: TeacherRef, date: LocalDate, e
         if (String(err).includes("message is not modified")) return;
       }
     }
-    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
-  } catch (err) {
-    logger.warn({ err: String(err), teacher: t.id }, "teacher schedule failed");
-    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
+    await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: kb });
+    if (!edit) await sendTeacherPhoto(ctx, t, fullName);
   }
 }
 
 async function showTeacherWeek(ctx: BotContext, t: TeacherRef, anyDate: LocalDate, edit = false): Promise<void> {
   const teachers = ctx.deps.teachers!;
   const monday = mondayOf(anyDate);
+  let loaded: { lessons: Occurrence[]; fullName: string | null };
   try {
-    const { lessons, fullName } = await teachers.lessons(t, monday, addDays(monday, 6));
+    loaded = await teachers.lessons(t, monday, addDays(monday, 6));
+  } catch (err) {
+    logger.warn({ err: String(err), teacher: t.id }, "teacher week failed");
+    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
+    return;
+  }
+  {
+    const { lessons, fullName } = loaded;
     const byDate = new Map<LocalDate, Occurrence[]>();
     for (const o of lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
-    const text = formatWeek(pseudoGroup(t, fullName), monday, byDate, ctx.deps.service.weekInfo(monday), todayMsk());
-    const kb = teacherWeekNav(t.id, monday);
+    const text = formatWeek(pseudoGroup(t, `${fullName ?? t.name}${vishTag(ctx, t.id, fullName ?? t.name)}`), monday, byDate, ctx.deps.service.weekInfo(monday), todayMsk());
+    const kb = teacherWeekNav(t.id, monday, { following: ctx.deps.repo.watchesTeacher(ctx.user.id, t.id) });
     if (edit) {
       try {
         await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
@@ -170,9 +274,6 @@ async function showTeacherWeek(ctx: BotContext, t: TeacherRef, anyDate: LocalDat
         if (String(err).includes("message is not modified")) return;
       }
     }
-    await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
-  } catch (err) {
-    logger.warn({ err: String(err), teacher: t.id }, "teacher week failed");
-    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
+    await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: kb });
   }
 }

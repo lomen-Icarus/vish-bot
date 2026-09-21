@@ -135,7 +135,7 @@ export function formatCommonLessons(intake: number, monday: LocalDate, rows: Str
   for (const r of shared) byDate.set(r.date, [...(byDate.get(r.date) ?? []), r]);
   const parts = [...byDate.entries()].map(([date, list]) => {
     const lines = list.map((r) => {
-      const time = r.start != null ? `<code>${fmtHHMM(r.start)}</code> ` : "";
+      const time = r.start != null ? `<code>${fmtHHMM(r.start)}${r.end != null ? `–${fmtHHMM(r.end)}` : ""}</code> ` : "";
       const where = r.isDistance ? "💻" : r.room ? esc(r.room) : "";
       const others = r.groups.filter((_, i) => r.groupKeys[i] !== ownKey);
       return `   ${time}${esc(r.subject)} <i>${lessonTypeLabel(r.type)}</i>${where ? ` · ${where}` : ""}\n      вместе с: ${others.map(esc).join(", ") || "—"}`;

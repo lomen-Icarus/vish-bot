@@ -98,6 +98,11 @@ function healthText(ctx: BotContext): string {
     `Лимиты ИИ: ${aiLimits(deps.repo, deps.config, todayMsk()).perUser}/чел, ${aiLimits(deps.repo, deps.config, todayMsk()).global} общих · потрачено сегодня ${deps.repo.aiUsageGlobal(todayMsk())}`,
     `Inline-режим: ${deps.inline ? "включён" : "ВЫКЛЮЧЕН — включи в @BotFather: /setinline, затем /setinlinefeedback"}`,
     `Сыск (поиск студентов): ${poiskState(ctx)}`,
+    `Карта преподавателей: ${(() => {
+      const m = deps.repo.teacherMapStats();
+      return `${m.vish} из ${m.total} помечены как ВИШ, проверено ${m.checked}`;
+    })()}`,
+    `Слайды вебинаров: ${deps.config.SLIDES_TOKEN ? `приём включён, записей ${deps.repo.recentSlideDecks(1).length ? deps.repo.recentSlideDecks(1)[0]!.date : "нет"}` : "выключен (нет SLIDES_TOKEN)"}`,
     `Баннер портала: ${deps.repo.getMeta("banner") ? esc(deps.repo.getMeta("banner")!.slice(0, 120)) : "нет"}`,
   ]
     .filter(Boolean)
@@ -292,6 +297,16 @@ adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx) => {
     default:
       await ctx.answerCallbackQuery();
   }
+});
+
+adminOnly.command("slides", async (ctx) => {
+  const decks = ctx.deps.repo.recentSlideDecks(10);
+  if (!decks.length) {
+    const on = ctx.deps.config.SLIDES_TOKEN ? "приём включён, но записей пока нет" : "приём выключен: не задан SLIDES_TOKEN";
+    return void (await ctx.reply(`📎 <b>Слайды вебинаров</b>\n\n${on}.`, { parse_mode: "HTML" }));
+  }
+  const lines = decks.map((d) => `• ${d.date} · <b>${esc(d.subject)}</b>${d.teacher ? ` · ${esc(d.teacher)}` : ""} — ${d.slides} слайд(ов), ${Math.round(d.bytes / 1024)} КБ, отправлено ${d.sent} чел.`);
+  await ctx.reply(`📎 <b>Слайды вебинаров</b>\n\n${lines.join("\n")}`, { parse_mode: "HTML" });
 });
 
 adminOnly.command("stats", (ctx) => ctx.reply(statsText(ctx), { parse_mode: "HTML" }));

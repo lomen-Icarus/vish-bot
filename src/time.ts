@@ -137,6 +137,25 @@ export function parseRuDate(input: string, today: LocalDate = todayMsk()): Local
   return candidate;
 }
 
+/**
+ * Слова-даты: «сегодня», «завтра», «вчера», «послезавтра», «позавчера».
+ * Каждое лишнее «после» двигает день вперёд, каждое «поза» — назад, поэтому
+ * «послепослезавтра» — это сегодня + 3, а «позапозавчера» — сегодня − 3.
+ * Возвращает смещение в днях или null, если это не слово-дата.
+ */
+export function parseDayWord(input: string): number | null {
+  const w = input.trim().toLowerCase().replace(/ё/g, "е").replace(/\s+/g, "");
+  if (!w) return null;
+  if (w === "сегодня" || w === "сейчас") return 0;
+  const m = /^((?:после|поза)*)(завтра|вчера)$/.exec(w);
+  if (!m) return null;
+  const base = m[2] === "завтра" ? 1 : -1;
+  const prefixes = m[1]!.match(/после|поза/g) ?? [];
+  let offset = base;
+  for (const p of prefixes) offset += p === "после" ? 1 : -1;
+  return offset;
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }

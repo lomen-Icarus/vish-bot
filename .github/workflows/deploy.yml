@@ -36,6 +36,45 @@ jobs:
           path: release.tar.gz
           retention-days: 7
 
+  # Отдельный сервер записи вебинаров: собирается и заливается только если
+  # в секретах есть его id. Нет секрета — шаг просто не выполняется.
+  recorder:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PANEL_URL: ${{ secrets.PTERO_PANEL_URL }}
+      SERVER_ID: ${{ secrets.PTERO_RECORDER_SERVER_ID }}
+      API_KEY: ${{ secrets.PTERO_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build recorder
+        if: env.SERVER_ID != ''
+        working-directory: recorder
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+          mkdir -p release
+          cp -r dist package.json package-lock.json .env.example README.md release/
+          printf 'omit=dev\naudit=false\nfund=false\n' > release/.npmrc
+          tar -C release -czf ../recorder.tar.gz .
+      - name: Upload recorder to the panel
+        if: env.SERVER_ID != ''
+        run: |
+          set -euo pipefail
+          api() { curl -sS --fail-with-body -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$@"; }
+          upload_url=$(api "$PANEL_URL/api/client/servers/$SERVER_ID/files/upload" | python3 -c 'import json,sys; print(json.load(sys.stdin)["attributes"]["url"])')
+          curl -sS --fail-with-body -F "files=@recorder.tar.gz" "$upload_url&directory=%2F"
+          api -X POST -H "Content-Type: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID/files/decompress" -d '{"root":"/","file":"recorder.tar.gz"}'
+          api -X POST -H "Content-Type: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID/files/delete" -d '{"root":"/","files":["recorder.tar.gz"]}'
+          curl -sS --fail-with-body -X POST -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" -H "Content-Type: application/json" \
+            "$PANEL_URL/api/client/servers/$SERVER_ID/power" -d '{"signal":"restart"}'
+
   deploy:
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

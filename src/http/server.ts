@@ -4,16 +4,58 @@
  * subscribe to http:// feeds, so the hosting's open port and domain suffice.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import type { Repo } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { groupCalendar } from "../schedule/calendar.js";
 import { logger } from "../logger.js";
+
+export interface SlideDeckUpload {
+  date: string;
+  subject: string;
+  teacher: string | null;
+  title: string | null;
+  groups: string[];
+  slides: number;
+  /** Куда записан PDF. */
+  file: string;
+  bytes: number;
+  deckId: number;
+}
 
 export interface HttpDeps {
   repo: Repo;
   service: ScheduleService;
   port: number;
   host?: string;
+  /** Токен, которым записывалка вебинаров подписывает загрузку слайдов. */
+  slidesToken?: string;
+  /** Куда складывать присланные PDF. */
+  slidesDir?: string;
+  /** Вызывается после успешной загрузки: бот рассылает слайды подписчикам. */
+  onSlides?: (deck: SlideDeckUpload) => void;
+}
+
+const MAX_DECK_BYTES = 40 * 1024 * 1024;
+
+/** Читает тело запроса целиком, с жёстким потолком по размеру. */
+function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(new Error("too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
 }
 
 const FEED_CACHE_MS = 5 * 60_000;
@@ -47,9 +89,57 @@ export function createHttpServer(deps: HttpDeps): Server {
     return { status: 200, body, type: "text/calendar; charset=utf-8" };
   };
 
+  const handleSlides = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const reply = (status: number, text: string): void => {
+      res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(text);
+    };
+    const token = deps.slidesToken;
+    const auth = req.headers.authorization ?? "";
+    if (!token || auth !== `Bearer ${token}`) return reply(token ? 403 : 404, "нет доступа");
+    try {
+      const meta = JSON.parse(Buffer.from(String(req.headers["x-slides-meta"] ?? ""), "base64").toString("utf8")) as Partial<SlideDeckUpload> & { slides?: number };
+      if (!meta.date || !meta.subject) return reply(400, "в X-Slides-Meta нужны date и subject");
+      // Дата уходит в подпись и в имя файла: принимаем только YYYY-MM-DD.
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(meta.date))) return reply(400, "date должна быть в формате YYYY-MM-DD");
+      const body = await readBody(req, MAX_DECK_BYTES);
+      if (!body.length || body.subarray(0, 4).toString() !== "%PDF") return reply(400, "тело должно быть PDF");
+      const dir = deps.slidesDir ?? "./data/slides";
+      mkdirSync(dir, { recursive: true });
+      // В один день по одному предмету бывает две пары у разных потоков —
+      // без времени в имени вторая затирала бы первую.
+      const stamp = new Date().toISOString().slice(11, 16).replace(":", "");
+      const safe = `${meta.date}-${stamp}-${String(meta.subject).replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 60) || "вебинар"}.pdf`.replace(/[/\\]/g, "-");
+      const file = path.join(dir, safe);
+      writeFileSync(file, body);
+      const groups = Array.isArray(meta.groups) ? meta.groups.map(String) : [];
+      const deckId = deps.repo.addSlideDeck({
+        date: String(meta.date),
+        subject: String(meta.subject),
+        teacher: meta.teacher ? String(meta.teacher) : null,
+        title: meta.title ? String(meta.title) : null,
+        groups,
+        slides: Number(meta.slides ?? 0),
+        file,
+        bytes: body.length,
+      });
+      logger.info({ deckId, subject: meta.subject, slides: meta.slides, bytes: body.length }, "получены слайды вебинара");
+      deps.onSlides?.({ date: String(meta.date), subject: String(meta.subject), teacher: meta.teacher ? String(meta.teacher) : null, title: meta.title ? String(meta.title) : null, groups, slides: Number(meta.slides ?? 0), file, bytes: body.length, deckId });
+      reply(200, "ok");
+    } catch (err) {
+      logger.warn({ err: String(err) }, "не смог принять слайды");
+      reply(String(err).includes("too large") ? 413 : 400, "не принял");
+    }
+  };
+
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const method = req.method ?? "GET";
+    // Слайды вебинаров приходят POST-ом от записывалки на отдельном сервере.
+    if (method === "POST" && url.pathname === "/slides") {
+      void handleSlides(req, res);
+      return;
+    }
     if (method !== "GET" && method !== "HEAD") {
       res.writeHead(405, { Allow: "GET, HEAD" }).end();
       return;

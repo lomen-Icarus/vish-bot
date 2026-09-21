@@ -175,7 +175,7 @@ function timeStack(start: number | null, end: number | null, width: number, big:
   return col(
     { width, alignItems: "flex-end", paddingRight: 18 },
     text(start != null ? fmtHHMM(start) : "—", { fontSize: big, fontWeight: 400, color: accent ?? FG, lineHeight: 1, letterSpacing: -1 }),
-    end != null ? text(`–${fmtHHMM(end)}`, { fontSize: 26, fontWeight: 400, color: MUTED, marginTop: 10, lineHeight: 1 }) : null,
+    end != null ? text(`–${fmtHHMM(end)}`, { fontSize: 28, fontWeight: 600, color: accent ?? FG, marginTop: 10, lineHeight: 1 }) : null,
   );
 }
 
@@ -229,7 +229,11 @@ function weekLesson(o: Occurrence, accent: string, last: boolean): El {
   const meta = [lessonTypeLabel(o.type), o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "перенос" : "", o.substituted ? "замена" : ""].filter(Boolean).join("  ·  ");
   return row(
     { width: "100%", padding: "14px 0", borderBottom: last ? "none" : `1px solid ${RULE}`, opacity: moved ? 0.5 : 1 },
-    row({ width: WK_TIME_W, justifyContent: "flex-end", paddingRight: 14 }, text(o.start != null ? fmtHHMM(o.start) : "—", { fontSize: 30, fontWeight: 400, color: FG, lineHeight: 1, letterSpacing: -0.5 })),
+    col(
+      { width: WK_TIME_W, alignItems: "flex-end", paddingRight: 14 },
+      text(o.start != null ? fmtHHMM(o.start) : "—", { fontSize: 30, fontWeight: 400, color: FG, lineHeight: 1, letterSpacing: -0.5 }),
+      text(o.end != null ? `–${fmtHHMM(o.end)}` : "", { fontSize: 21, fontWeight: 400, color: MUTED, marginTop: 4, lineHeight: 1 }),
+    ),
     row({ width: WK_RAIL_W, justifyContent: "center", paddingTop: 9 }, dot(accent, false, 12)),
     col(
       { flex: 1, minWidth: 0, paddingLeft: 12 },
