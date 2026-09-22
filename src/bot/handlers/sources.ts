@@ -19,8 +19,13 @@ function sourcesText(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     lines.push(`#${s.id} <b>${esc(s.title ?? s.ref)}</b> (${s.kind}) — ${status}`);
     kb.text(`🗑 #${s.id} ${(s.title ?? s.ref).slice(0, 24)}`, `src:del:${s.id}`).row();
   }
-  lines.push("", "Добавить: <code>/source_add https://t.me/канал</code>, <code>/source_add https://vk.com/группа</code>, <code>/source_add https://vish.chuvsu.ru/news/</code>");
-  if (!ctx.deps.config.VK_SERVICE_TOKEN) lines.push("Для VK нужен <code>VK_SERVICE_TOKEN</code> в .env (сервисный ключ приложения VK).");
+  lines.push("", "Добавить: <code>/source_add https://t.me/канал</code>, <code>/source_add https://vish.chuvsu.ru/</code>, <code>/source_add https://vk.com/группа</code>");
+  lines.push("Telegram и сайт читаются без ключей. Сайт ВИШ сделан на Tilda — бот берёт оттуда ленту новостей с датами и фото.");
+  if (!ctx.deps.config.VK_SERVICE_TOKEN) {
+    // VK без ключа не отдаёт даже открытые стены, а ключ теперь выдают только
+    // через профиль VK Бизнес ID — честнее сказать это сразу, чем «⚠️ ошибка».
+    lines.push("VK пока не подключён: нужен <code>VK_SERVICE_TOKEN</code> в .env — сервисный ключ приложения из VK ID (id.vk.ru, раздел «Мои приложения»). Без него источники VK будут падать с ошибкой.");
+  }
   kb.text("🔎 Сканировать сейчас", "src:scan");
   return { text: lines.join("\n"), kb };
 }
