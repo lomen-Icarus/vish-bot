@@ -3,6 +3,7 @@ import type { ChangeEvent } from "./diff.js";
 import type { LogicalGroup } from "./groups.js";
 import { lessonTypeLabel, type Occurrence } from "./model.js";
 import type { WeekInfo } from "./service.js";
+import { samePerson, shortName } from "../text/match.js";
 
 /** Русское склонение по числу: 1 слайд, 2 слайда, 5 слайдов, 21 слайд. */
 export function plural(n: number, one: string, few: string, many: string): string {
@@ -103,45 +104,16 @@ export function captionFits(html: string): boolean {
  */
 export type TeacherView = "bold" | "plain" | "off";
 
-// Должность («доц.», «зав.каф.») и степень («к.пед.н.») идут до фамилии и
-// снимаются по одной: у одного человека их бывает сразу две.
-const POSITION_RE = /^(?:проф|доц|ст\.?\s?преп|преп|асс|зав\.?\s?каф|дир|зам)\.?\s+/iu;
-const DEGREE_RE = /^[кд]\.[а-яё.-]*н\.\s*/iu;
-
-function stripTitles(raw: string): string {
-  let out = raw.trim();
-  for (let i = 0; i < 4; i++) {
-    const next = out.replace(POSITION_RE, "").replace(DEGREE_RE, "");
-    if (next === out) break;
-    out = next;
-  }
-  return out;
-}
-
 /**
  * «доц. к.пед.н. Ярдухина Светлана Александровна» → «Ярдухина С. А.».
  * Должность и степень портал иногда вклеивает прямо в имя; в расписании они
  * только занимают строку, а полностью человек подписан в своей карточке.
+ * Сам разбор ФИО живёт в src/text/match.ts — он общий для всего бота.
  */
-export function shortTeacher(raw: string): string {
-  const clean = stripTitles(raw).replace(/\s+/g, " ").trim();
-  // «Иванова И.И.» и «Иванова И. И.» — одна и та же запись: точка не склеивает
-  // инициалы в одно слово, поэтому перед разбором она становится пробелом.
-  const parts = clean.replace(/\./g, " ").split(/\s+/).filter(Boolean);
-  if (parts.length < 2) return clean;
-  const initials = parts.slice(1, 3).map((w) => `${w[0]!.toUpperCase()}.`);
-  return [parts[0], ...initials].join(" ");
-}
+export const shortTeacher = shortName;
 
-/**
- * Один и тот же человек? Сравниваем по короткой форме: портал в разных местах
- * пишет то «доц. к.х.н. Иванова Ирина Ивановна», то «Иванова И. И.», и считать
- * это заменой преподавателя нельзя.
- */
-export function sameTeacher(a: string | null | undefined, b: string | null | undefined): boolean {
-  if (!a || !b) return a === b || (!a && !b);
-  return shortTeacher(a).toLowerCase().replace(/ё/g, "е") === shortTeacher(b).toLowerCase().replace(/ё/g, "е");
-}
+/** Один и тот же преподаватель, как бы его ни записали в двух местах портала. */
+export const sameTeacher = samePerson;
 
 /** Подпись преподавателя на постере: коротко, либо ничего, если выключено. */
 export function posterTeacher(name: string | null | undefined, view: TeacherView | undefined): string | null {
@@ -177,7 +149,7 @@ export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   if (o.substituted) {
     const bits: string[] = [];
     if (o.substituted.room !== undefined && o.substituted.room !== o.room) bits.push(`ауд. ${esc(o.substituted.room ?? "—")} → ${esc(o.room ?? "—")}`);
-    if (o.substituted.teacher !== undefined && o.substituted.teacher !== o.teacher) bits.push(`преп. ${esc(o.substituted.teacher ?? "—")} → ${esc(o.teacher ?? "—")}`);
+    if (o.substituted.teacher !== undefined && !sameTeacher(o.substituted.teacher, o.teacher)) bits.push(`преп. ${esc(shortTeacher(o.substituted.teacher ?? "—"))} → ${esc(shortTeacher(o.teacher ?? "—"))}`);
     if (o.substituted.distance === false && o.isDistance) bits.push("переведена в дистант");
     if (bits.length) lines.push(`     🔁 замена: ${bits.join("; ")}`);
   }

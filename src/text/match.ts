@@ -137,3 +137,67 @@ export function nameMatch(name: string, query: string): NameMatch {
 export function nameMatchScore(name: string, query: string): number {
   return nameMatch(name, query).score;
 }
+
+// ---- ФИО как личность: «тот же это человек или другой» ----
+
+/**
+ * Должность и степень идут перед фамилией и к имени не относятся. Точка после
+ * них бывает и со следующим пробелом, и без него («доц. Иванов», «доц.Иванов»).
+ */
+const TITLE_RE = /^(?:проф|доц|ст\.?\s?преп|преп|асс|зав\.?\s?каф|дир|зам)(?:\.\s*|\s+)|^[кд]\.[а-яё.-]*н\.\s*/iu;
+
+/** Снимает все звания подряд: у одного человека их бывает сразу два. */
+export function stripTitles(raw: string): string {
+  let out = raw.trim();
+  for (let i = 0; i < 4; i++) {
+    const next = out.replace(TITLE_RE, "");
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+/** Слова ФИО без званий: «доц. к.х.н. Иванова И.И.» → ["иванова","и","и"]. */
+export function nameWords(raw: string): string[] {
+  return normName(stripTitles(raw)).split(" ").filter(Boolean);
+}
+
+/** «Иванова Ирина Ивановна» → «Иванова И. И.»; звания отбрасываются. */
+export function shortName(raw: string): string {
+  // Точка не разделяет слова («Иванова И.И.» — это два инициала), а дефис,
+  // наоборот, часть фамилии: «Иванов-Петров» рвать нельзя.
+  const parts = stripTitles(raw).replace(/\./g, " ").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (!parts.length) return raw.trim();
+  if (parts.length < 2) return parts[0]!;
+  return [parts[0], ...parts.slice(1, 3).map((w) => `${w[0]!.toUpperCase()}.`)].join(" ");
+}
+
+/**
+ * Один ли это человек. Сравниваем пословно: полное слово обязано совпасть с
+ * полным, инициал совпадает с любым словом на ту же букву, а недостающее слово
+ * ничему не противоречит.
+ *
+ * Отсюда: «Смирнов» и «Смирнов С. С.» — один человек (второй источник просто
+ * подробнее), «Иванова И. И.» и «Иванова Ирина Ивановна» — тоже. А вот
+ * «Иванова Ирина Ивановна» и «Иванова Инна Игоревна» — разные: сравнение по
+ * одним инициалам их бы склеило, и настоящая замена преподавателя прошла бы
+ * незамеченной.
+ */
+export function samePerson(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return !a && !b;
+  return samePersonWords(nameWords(a), nameWords(b));
+}
+
+/** То же сравнение по уже разобранным словам: для списков, где их считают заранее. */
+export function samePersonWords(pa: string[], pb: string[]): boolean {
+  if (!pa.length || !pb.length) return false;
+  const n = Math.min(pa.length, pb.length, 3);
+  for (let i = 0; i < n; i++) {
+    const [x, y] = [pa[i]!, pb[i]!];
+    if (x === y) continue;
+    // Инициал против полного слова — совпадение; два полных слова — нет.
+    if ((x.length === 1 || y.length === 1) && x[0] === y[0]) continue;
+    return false;
+  }
+  return true;
+}
