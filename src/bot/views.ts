@@ -101,15 +101,27 @@ function posterPlan(ctx: BotContext, opts: SendOpts, hasLessons: boolean): Poste
 
 /**
  * Отправляет постер по плану: одним сообщением с подписью, если расписание в
- * неё влезает, иначе текстом и постером следом.
+ * неё влезает, иначе текстом и постером следом. Возвращает false, только если
+ * человек не получил вообще ничего — тогда зовущий отправит обычный текст.
  */
-async function sendPoster(ctx: BotContext, png: Buffer, fileName: string, text: string | null, kb: InlineKeyboard, plan: PosterPlan): Promise<void> {
+async function sendPoster(ctx: BotContext, png: Buffer, fileName: string, text: string | null, kb: InlineKeyboard, plan: PosterPlan): Promise<boolean> {
   const caption = text && captionFits(text) ? text : undefined;
-  if (plan.photoMsg && (await editPhoto(ctx, png, fileName, caption, kb))) return;
+  if (plan.photoMsg && (await editPhoto(ctx, png, fileName, caption, kb))) return true;
   // Длинный текст (обычно неделя) идёт первым и молча: постер должен остаться
   // последним сообщением — на нём кнопки, да и листать вверх никто не станет.
-  if (text && !caption) await ctx.reply(clampHtml(text), { parse_mode: "HTML", disable_notification: true });
-  await ctx.replyWithPhoto(new InputFile(png, fileName), { caption, parse_mode: "HTML", reply_markup: kb });
+  let textSent = false;
+  if (text && !caption) {
+    await ctx.reply(clampHtml(text), { parse_mode: "HTML", disable_notification: true });
+    textSent = true;
+  }
+  try {
+    await ctx.replyWithPhoto(new InputFile(png, fileName), { caption, parse_mode: "HTML", reply_markup: kb });
+    return true;
+  } catch (err) {
+    // Картинку Telegram не принял. Текст, если он уже ушёл, дублировать нельзя.
+    logger.warn({ err: String(err) }, "poster send failed");
+    return textSent;
+  }
 }
 
 /** Send or edit a day view according to the user's format preference. */
@@ -125,13 +137,13 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
   const fileName = `${group.title}-${date}.png`;
 
   if (plan.image && deps.renderer) {
+    let png: Buffer | null = null;
     try {
-      const png = await deps.renderer.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock(), theme: ctx.user.posterTheme ?? undefined });
-      await sendPoster(ctx, png, fileName, plan.text ? text : null, dayNav(date, today, { image: false, peekKey }), plan);
-      return;
+      png = await deps.renderer.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock(), theme: ctx.user.posterTheme ?? undefined });
     } catch (err) {
       logger.warn({ err: String(err) }, "day image render failed, falling back to text");
     }
+    if (png && (await sendPoster(ctx, png, fileName, plan.text ? text : null, dayNav(date, today, { image: false, peekKey }), plan))) return;
   }
   const keyboard = dayNav(date, today, { image: hasImages, peekKey });
   if (plan.editingText) {
@@ -158,13 +170,13 @@ export async function sendWeek(ctx: BotContext, group: LogicalGroup, anyDate: Lo
   const plan = posterPlan(ctx, opts, byDate.size > 0);
   const fileName = `${group.title}-week-${monday}.png`;
   if (plan.image && deps.renderer) {
+    let png: Buffer | null = null;
     try {
-      const png = await deps.renderer.renderWeek({ group, monday, byDate, weekInfo: deps.service.weekInfo(monday), today: todayMsk(), subgroup, theme: ctx.user.posterTheme ?? undefined });
-      await sendPoster(ctx, png, fileName, plan.text ? text : null, weekNav(monday, { image: false, peekKey }), plan);
-      return;
+      png = await deps.renderer.renderWeek({ group, monday, byDate, weekInfo: deps.service.weekInfo(monday), today: todayMsk(), subgroup, theme: ctx.user.posterTheme ?? undefined });
     } catch (err) {
       logger.warn({ err: String(err) }, "week image render failed, falling back to text");
     }
+    if (png && (await sendPoster(ctx, png, fileName, plan.text ? text : null, weekNav(monday, { image: false, peekKey }), plan))) return;
   }
   const keyboard = weekNav(monday, { image: hasImages, peekKey });
   if (plan.editingText) {
