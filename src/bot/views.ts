@@ -1,7 +1,7 @@
-import { InputFile, InputMediaBuilder } from "grammy";
+import { InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext, Deps } from "./context.js";
 import { BTN, dayNav, weekNav } from "./keyboards.js";
-import { clampHtml, esc, filterSubgroup, formatDay, formatWeek } from "../schedule/format.js";
+import { captionFits, clampHtml, esc, filterSubgroup, formatDay, formatWeek } from "../schedule/format.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
 import type { Occurrence } from "../schedule/model.js";
@@ -68,6 +68,50 @@ export async function editPhoto(ctx: BotContext, png: Buffer, fileName: string, 
   }
 }
 
+/**
+ * Как показывать расписание по настройке «формат»:
+ *   text  — только текст;
+ *   image — только постер, без дублирующего текста рядом;
+ *   both  — одно сообщение: постер, а расписание его подписью.
+ * В подпись Telegram пускает 1024 символа: неделя туда не влезает, и тогда
+ * текст уходит отдельным сообщением, а постер — последним, чтобы стрелки
+ * навигации остались внизу экрана.
+ */
+interface PosterPlan {
+  /** Рисовать постер. */
+  image: boolean;
+  /** Текст расписания нужен рядом с постером. */
+  text: boolean;
+  /** Человек листает уже отправленный постер: меняем картинку на месте. */
+  photoMsg: boolean;
+  /** Навигация по текстовому сообщению: остаёмся в тексте, не плодим картинки. */
+  editingText: boolean;
+}
+
+function posterPlan(ctx: BotContext, opts: SendOpts, hasLessons: boolean): PosterPlan {
+  const hasImages = !!ctx.deps.renderer;
+  const photoMsg = !!opts.edit && isPhotoMessage(ctx);
+  const editingText = !!opts.edit && !!ctx.callbackQuery?.message && !photoMsg;
+  const mode = ctx.user.format;
+  const both = mode === "both" && hasLessons;
+  const image = hasImages && !editingText && (opts.forceImage || mode === "image" || both || photoMsg);
+  // «Картинкой» нажали руками — человек просил именно картинку, текст не нужен.
+  return { image, text: both && !opts.forceImage, photoMsg, editingText };
+}
+
+/**
+ * Отправляет постер по плану: одним сообщением с подписью, если расписание в
+ * неё влезает, иначе текстом и постером следом.
+ */
+async function sendPoster(ctx: BotContext, png: Buffer, fileName: string, text: string | null, kb: InlineKeyboard, plan: PosterPlan): Promise<void> {
+  const caption = text && captionFits(text) ? text : undefined;
+  if (plan.photoMsg && (await editPhoto(ctx, png, fileName, caption, kb))) return;
+  // Длинный текст (обычно неделя) идёт первым и молча: постер должен остаться
+  // последним сообщением — на нём кнопки, да и листать вверх никто не станет.
+  if (text && !caption) await ctx.reply(clampHtml(text), { parse_mode: "HTML", disable_notification: true });
+  await ctx.replyWithPhoto(new InputFile(png, fileName), { caption, parse_mode: "HTML", reply_markup: kb });
+}
+
 /** Send or edit a day view according to the user's format preference. */
 export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalDate, opts: SendOpts = {}): Promise<void> {
   const deps = ctx.deps;
@@ -77,24 +121,20 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
   const { text, lessons } = dayView(deps, group, date, subgroup);
   const today = todayMsk();
   const hasImages = !!deps.renderer;
-  const photoMsg = !!opts.edit && isPhotoMessage(ctx);
-  const wantImage = hasImages && (opts.forceImage || ctx.user.format === "image" || photoMsg);
+  const plan = posterPlan(ctx, opts, lessons.length > 0);
   const fileName = `${group.title}-${date}.png`;
 
-  if (wantImage && deps.renderer) {
+  if (plan.image && deps.renderer) {
     try {
       const png = await deps.renderer.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock(), theme: ctx.user.posterTheme ?? undefined });
-      const caption = text.length <= 1000 ? text : undefined;
-      const kb = dayNav(date, today, { image: false, peekKey });
-      if (photoMsg && (await editPhoto(ctx, png, fileName, caption, kb))) return;
-      await ctx.replyWithPhoto(new InputFile(png, fileName), { caption, parse_mode: "HTML", reply_markup: kb });
+      await sendPoster(ctx, png, fileName, plan.text ? text : null, dayNav(date, today, { image: false, peekKey }), plan);
       return;
     } catch (err) {
       logger.warn({ err: String(err) }, "day image render failed, falling back to text");
     }
   }
   const keyboard = dayNav(date, today, { image: hasImages, peekKey });
-  if (opts.edit && ctx.callbackQuery?.message && !photoMsg) {
+  if (plan.editingText) {
     try {
       await ctx.editMessageText(clampHtml(text), { parse_mode: "HTML", reply_markup: keyboard });
       return;
@@ -106,15 +146,6 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
   // Сессионная неделя с консультациями перерастает лимит Telegram в 4096:
   // без обрезки падал бы весь ответ, а человек не получал ничего.
   await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: keyboard });
-  if (hasImages && ctx.user.format === "both" && lessons.length > 0 && !opts.edit) {
-    // "both": the text goes first, the poster follows silently with its own navigation.
-    try {
-      const png = await deps.renderer!.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock(), theme: ctx.user.posterTheme ?? undefined });
-      await ctx.replyWithPhoto(new InputFile(png, fileName), { disable_notification: true, reply_markup: dayNav(date, today, { image: false, peekKey }) });
-    } catch (err) {
-      logger.warn({ err: String(err) }, "day image render failed");
-    }
-  }
 }
 
 export async function sendWeek(ctx: BotContext, group: LogicalGroup, anyDate: LocalDate, opts: SendOpts = {}): Promise<void> {
@@ -124,22 +155,19 @@ export async function sendWeek(ctx: BotContext, group: LogicalGroup, anyDate: Lo
   const peekKey = opts.peek || !own ? group.key : undefined;
   const { text, monday, byDate } = weekView(deps, group, anyDate, subgroup);
   const hasImages = !!deps.renderer;
-  const photoMsg = !!opts.edit && isPhotoMessage(ctx);
-  const wantImage = hasImages && (opts.forceImage || ctx.user.format === "image" || photoMsg);
+  const plan = posterPlan(ctx, opts, byDate.size > 0);
   const fileName = `${group.title}-week-${monday}.png`;
-  if (wantImage && deps.renderer) {
+  if (plan.image && deps.renderer) {
     try {
       const png = await deps.renderer.renderWeek({ group, monday, byDate, weekInfo: deps.service.weekInfo(monday), today: todayMsk(), subgroup, theme: ctx.user.posterTheme ?? undefined });
-      const kb = weekNav(monday, { image: false, peekKey });
-      if (photoMsg && (await editPhoto(ctx, png, fileName, undefined, kb))) return;
-      await ctx.replyWithPhoto(new InputFile(png, fileName), { reply_markup: kb });
+      await sendPoster(ctx, png, fileName, plan.text ? text : null, weekNav(monday, { image: false, peekKey }), plan);
       return;
     } catch (err) {
       logger.warn({ err: String(err) }, "week image render failed, falling back to text");
     }
   }
   const keyboard = weekNav(monday, { image: hasImages, peekKey });
-  if (opts.edit && ctx.callbackQuery?.message && !photoMsg) {
+  if (plan.editingText) {
     try {
       await ctx.editMessageText(clampHtml(text), { parse_mode: "HTML", reply_markup: keyboard });
       return;

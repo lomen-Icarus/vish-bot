@@ -93,11 +93,13 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
     jobs.push(new Cron("41 4 * * *", { timezone: TZ, protect: true, name: "teacher-directory" }, () => refresh("cron")));
     setTimeout(() => void refresh("startup"), 20_000).unref();
     // Карта «кто ведёт у ВИШ» строится понемногу: портал не выдержит обход
-    // всего справочника разом, а за несколько ночей карта наполнится сама.
+    // всего справочника разом, а за пару ночей карта наполнится сама. Между
+    // запросами к порталу выдерживается пауза, поэтому порция в 120 человек —
+    // это примерно две минуты работы в глухое ночное окно.
     jobs.push(
       new Cron("*/20 1-5 * * *", { timezone: TZ, protect: true, name: "teacher-map" }, async () => {
         try {
-          await teachers.crawlMap(40);
+          await teachers.crawlMap(120);
         } catch (err) {
           logger.warn({ err: String(err) }, "teacher map crawl failed");
         }
