@@ -16,7 +16,7 @@
  * успевают поменяться, а ФИО — нет.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { normName } from "../text/match.js";
+import { nameWords, normName, samePersonWords } from "../text/match.js";
 import { logger } from "../logger.js";
 
 export interface KnownPerson {
@@ -38,30 +38,6 @@ export type KnownStatus =
   | "no-handle"
   /** В файле несколько подходящих людей: угадывать нельзя. */
   | "ambiguous";
-
-/**
- * Один ли это человек. Сравнение нарочно строгое, без поправки на опечатки:
- * здесь не подсказка в поиске, а утверждение «вот этот человек пользуется
- * ботом», и ошибиться в нём хуже, чем ответить «не знаю».
- *
- * Фамилия — точно. Имя и отчество — точно, но инициал совпадает с полным
- * словом («Иванов И. И.» = «Иванов Иван Иванович»), а отсутствующее слово ничему
- * не противоречит («Иванов Иван» подходит любому Иванову Ивану). Зато два
- * РАЗНЫХ отчества — это разные люди, и на них матч обязан развалиться.
- */
-function sameWord(a: string, b: string): boolean {
-  if (a === b) return true;
-  if (a.length === 1 || b.length === 1) return a[0] === b[0];
-  return false;
-}
-
-export function samePersonWords(want: string[], have: string[]): boolean {
-  if (!want.length || !have.length || !sameWord(want[0]!, have[0]!)) return false;
-  for (let i = 1; i < Math.min(want.length, have.length, 3); i++) {
-    if (!sameWord(want[i]!, have[i]!)) return false;
-  }
-  return true;
-}
 
 /** «Фамилия Имя Отчество» → «Имя». Одно слово — им и обращаемся. */
 function firstNameOf(fio: string): string {
@@ -131,7 +107,7 @@ export class KnownPeople {
         // Один ник у двоих — узнавать по нему нельзя: выкидываем обоих, иначе
         // бот поздоровается чужим именем.
         if (map.has(handle)) dupes.add(handle);
-        map.set(handle, { name, firstName: firstNameOf(name), words: normName(name).split(" ").filter(Boolean) });
+        map.set(handle, { name, firstName: firstNameOf(name), words: nameWords(name) });
       }
       for (const h of dupes) map.delete(h);
       this.byHandle = map;
@@ -162,7 +138,7 @@ export class KnownPeople {
    */
   status(fio: string, botUsernames: Set<string>): KnownStatus {
     this.reloadIfChanged();
-    const want = normName(fio).split(" ").filter(Boolean);
+    const want = nameWords(fio);
     if (!want.length) return "no-handle";
     let found: string | null = null;
     let hits = 0;
