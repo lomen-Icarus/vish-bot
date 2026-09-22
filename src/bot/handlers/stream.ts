@@ -56,7 +56,7 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
   const photoMsg = !!opts.edit && isPhotoMessage(ctx);
   const editingText = !!opts.edit && !photoMsg;
   // «И так, и так» — это одно сообщение: постер с расписанием в подписи.
-  const withText = ctx.user.format === "both" && !opts.forceImage && !opts.edit;
+  const withText = ctx.user.format === "both" && !opts.forceImage;
   const wantImage = !!renderer && !editingText && (opts.forceImage || photoMsg || ctx.user.format === "image" || withText);
   if (opts.keyboard) {
     // A reply keyboard and an inline keyboard cannot share one message: send the mode keyboard first.
@@ -76,7 +76,7 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
       const kb = streamDayNav(date, todayMsk(), { image: false, groups: ctx.deps.service.stream(intake) });
       const fileName = `stream-${intake}-${date}.png`;
       const caption = withText && captionFits(text) ? text : undefined;
-      if (photoMsg && (await editPhoto(ctx, png, fileName, undefined, kb))) return;
+      if (photoMsg && (await editPhoto(ctx, png, fileName, caption, kb))) return;
       // Не влезло в подпись — текст идёт первым и молча, постер остаётся последним.
       if (withText && !caption) await ctx.reply(text, { parse_mode: "HTML", disable_notification: true });
       await ctx.replyWithPhoto(new InputFile(png, fileName), { caption, parse_mode: "HTML", reply_markup: kb });

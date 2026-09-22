@@ -382,6 +382,11 @@ async function teacherResults(deps: Deps, req: InlineRequest, q: string, today: 
   // Расписание тянем только у первого — каждая буква запроса не должна
   // превращаться в поход на портал. Остальные идут строкой «кто ещё похож».
   const best = local[0]!;
+  // По трём буквам в портал не ходим: это ещё не фамилия, а середина набора.
+  if (q.length < 4) {
+    out.push(note(`pt:pick:${q}`, `👨‍🏫 ${local.map((x) => x.ref.name.split(" ")[0]).join(", ")}`.slice(0, 60), `Допиши фамилию — покажу расписание. Похожи: ${local.map((x) => `${x.ref.name}${x.vish ? " (ВИШ)" : ""}`).join("; ")}.`));
+    return out;
+  }
   const monday = mondayOf(req.date);
   const [from, to] = req.mode === "week" ? [monday, addDays(monday, 6)] : [req.date, req.date];
   const loaded = await withTimeout(teachers.lessons(best.ref, from, to), 6000);

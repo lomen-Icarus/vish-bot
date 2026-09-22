@@ -17,6 +17,25 @@ import { logger } from "../../logger.js";
 export const miscHandlers = new Composer<BotContext>();
 
 /**
+ * Имя человека, если бот его узнаёт: по телеграм-нику из файла старост.
+ * «Усиленная анонимность» в настройках выключает узнавание целиком.
+ */
+function knownName(ctx: BotContext): string | null {
+  if (ctx.user.anon) return null;
+  return ctx.deps.known?.byUsername(ctx.from?.username ?? ctx.user.username)?.firstName ?? null;
+}
+
+/**
+ * Кнопки под приветствием. Расписание и так в нижней клавиатуре, а вот про
+ * «спросить своими словами» никто не догадывается — поэтому она здесь.
+ */
+function startActions(ctx: BotContext): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (ctx.deps.ask) kb.text("💬 Спросить?", "ask:open");
+  return kb.text("🧭 Что я умею", "feat:open");
+}
+
+/**
  * Гайд по inline-режиму: он же открывается кнопкой «❔ Как писать запрос»
  * над списком подсказок (Telegram присылает в личку «/start inline»).
  */
@@ -61,15 +80,23 @@ miscHandlers.command("start", async (ctx) => {
     });
     return;
   }
+  // Бот может узнать человека по телеграм-нику из файла старост. ФИО у людей
+  // нигде не спрашивают — регистрации в боте нет. Группу из файла не берём:
+  // он годичной давности, группа могла смениться, а имя — нет.
+  const hello = knownName(ctx);
   if (!group) {
     await ctx.reply(
-      "Привет! Я бот расписания Высшей инженерной школы ЧувГУ.\n\nПокажу пары на любой день, пришлю изменения в расписании и напомню о парах. Сначала выбери группу.",
-      { reply_markup: kb },
+      `${hello ? `Привет, ${esc(hello)}! ` : "Привет! "}Я бот расписания Высшей инженерной школы ЧувГУ.\n\nПокажу пары на любой день, пришлю изменения в расписании и напомню о парах. Сначала выбери группу.`,
+      { parse_mode: "HTML", reply_markup: kb },
     );
     await showGroupPicker(ctx);
     return;
   }
-  await ctx.reply(`С возвращением! Твоя группа: <b>${esc(group.title)}</b>.`, { parse_mode: "HTML", reply_markup: kb });
+  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.`, {
+    parse_mode: "HTML",
+    reply_markup: kb,
+  });
+  await ctx.reply(ctx.deps.ask ? "Можно просто спросить словами — «когда матан», «где Беляев», «как включить напоминания»." : "Что дальше?", { reply_markup: startActions(ctx) });
 });
 
 /** Карта функций приходит двумя сообщениями: одним она не влезает в лимит Telegram. */
@@ -175,6 +202,14 @@ async function startSearch(ctx: BotContext): Promise<void> {
   );
 }
 miscHandlers.hears(BTN.search, startSearch);
+miscHandlers.callbackQuery("ask:open", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await startSearch(ctx);
+});
+miscHandlers.callbackQuery("feat:open", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showFeatures(ctx);
+});
 miscHandlers.command("search", async (ctx) => {
   const q = (ctx.match ?? "").trim();
   if (!q) return startSearch(ctx);

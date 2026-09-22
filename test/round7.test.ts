@@ -13,6 +13,12 @@ import type { Renderer } from "../src/render/image.js";
 import type { ScheduleFormat } from "../src/db/repo.js";
 import { addDays, todayMsk } from "../src/time.js";
 import { buildPeopleResults, parseInlineQuery } from "../src/bot/inline.js";
+import { KnownPeople, normalizeHandle } from "../src/students/known.js";
+import { miscHandlers } from "../src/bot/handlers/misc.js";
+import { settingsHandlers } from "../src/bot/handlers/settings.js";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { User } from "../src/db/repo.js";
 
 const group: LogicalGroup = { key: "виш-12-23", title: "ВИШ-12-23", prefix: "ВИШ", number: 12, intake: 23, course: 4, portalIds: [8524], portalNames: ["ВИШ-12-23"] };
@@ -49,23 +55,26 @@ const renderer = { renderDay: async () => Buffer.from("png"), renderWeek: async 
 function makeDeps(lessons: Occurrence[]): Deps {
   const repo = new Repo(openDatabase(":memory:"));
   repo.touchUser(7, "u", "U");
-  return { config: { ADMIN_IDS: [], MEDIA_CHAT_IDS: [], PUBLIC_URL: undefined, HTTP_PORT: 0, POISK: false } as unknown as Deps["config"], repo, service: makeService(lessons), renderer, ask: null, teachers: null, webinars: null, students: null, news: null, http: null, inline: true, botUsername: "vish_bot", pending: new Map(), startedAt: new Date() };
+  return { config: { ADMIN_IDS: [], MEDIA_CHAT_IDS: [], PUBLIC_URL: undefined, HTTP_PORT: 0, POISK: false } as unknown as Deps["config"], repo, service: makeService(lessons), renderer, ask: null, teachers: null, webinars: null, students: null, known: null, news: null, http: null, inline: true, botUsername: "vish_bot", pending: new Map(), startedAt: new Date() };
 }
 
-async function press(label: string, deps: Deps): Promise<Call[]> {
+async function press(label: string, deps: Deps, username?: string, callback = false): Promise<Call[]> {
   const calls: Call[] = [];
   const api = new Api("123:FAKE");
   api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
     return { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never };
   });
-  const update: Update = { update_id: 1, message: { message_id: 10, date: 0, chat: { id: 7, type: "private", first_name: "U" }, from: { id: 7, is_bot: false, first_name: "U" }, text: label } };
+  const from = { id: 7, is_bot: false, first_name: "U", ...(username ? { username } : {}) };
+  const update: Update = callback
+    ? { update_id: 1, callback_query: { id: "1", from, chat_instance: "1", data: label, message: { message_id: 11, date: 0, chat: { id: 7, type: "private", first_name: "U" }, text: "настройки" } as never } }
+    : { update_id: 1, message: { message_id: 10, date: 0, chat: { id: 7, type: "private", first_name: "U" }, from, text: label, ...(label.startsWith("/") ? { entities: [{ type: "bot_command" as const, offset: 0, length: label.length }] } : {}) } };
   const ctx = new Context(update, api, ME) as BotContext;
   ctx.deps = deps;
-  ctx.user = deps.repo.touchUser(7, "u", "U");
+  ctx.user = deps.repo.touchUser(7, username ?? "u", "U");
   ctx.isAdmin = false;
   const composer = new Composer<BotContext>();
-  composer.use(scheduleHandlers);
+  composer.use(miscHandlers, settingsHandlers, scheduleHandlers);
   await composer.middleware()(ctx, async () => undefined);
   return calls;
 }
@@ -161,5 +170,59 @@ describe("inline про людей", () => {
     const req = parseInlineQuery(d, "студент Бе", user);
     const res = await buildPeopleResults(d, req, user);
     expect(res[0]!.title).toMatch(/фамилию/i);
+  });
+});
+
+describe("бот узнаёт своих", () => {
+  const file = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "known-"));
+    const f = join(dir, "known.csv");
+    writeFileSync(f, "ФИО;Телеграм\nАлбуткин Данил Иванович;nortch\nИванов Андрей Иванович;https://t.me/@Shiish\nПетров Иван;dubl\nСидоров Иван;dubl\n", "utf8");
+    return f;
+  };
+
+  it("ник читается в любом виде, включая «https://t.me/@ник»", () => {
+    expect(normalizeHandle("https://t.me/nortch")).toBe("nortch");
+    expect(normalizeHandle("@Nortch")).toBe("nortch");
+    expect(normalizeHandle("https://t.me/@Shiish")).toBe("shiish");
+    expect(normalizeHandle("t.me/+79001234567")).toBeNull();
+    expect(normalizeHandle("")).toBeNull();
+  });
+
+  it("узнаёт по нику и зовёт по имени, а не по фамилии", () => {
+    const k = new KnownPeople(file());
+    expect(k.byUsername("NORTCH")?.firstName).toBe("Данил");
+    expect(k.byUsername("shiish")?.name).toBe("Иванов Андрей Иванович");
+    expect(k.byUsername("кто-то-другой")).toBeNull();
+  });
+
+  it("один ник на двоих не узнаётся вовсе: чужим именем не здороваемся", () => {
+    const k = new KnownPeople(file());
+    expect(k.byUsername("dubl")).toBeNull();
+    expect(k.count()).toBe(2);
+  });
+
+  it("/start здоровается по имени, а с анонимностью — нет", async () => {
+    const d = makeDeps([lesson("Физика", 2)]);
+    d.known = new KnownPeople(file());
+    d.repo.updateUser(7, { groupKey: group.key });
+    const hello = await press("/start", d, "nortch");
+    expect(hello.map((c) => String(c.payload.text ?? "")).join("\n")).toContain("Привет, Данил");
+
+    d.repo.updateUser(7, { anon: true });
+    const quiet = await press("/start", d, "nortch");
+    const text = quiet.map((c) => String(c.payload.text ?? "")).join("\n");
+    expect(text).not.toContain("Данил");
+    expect(text).toContain("С возвращением");
+  });
+
+  it("настройки переключают анонимность туда и обратно", async () => {
+    const d = makeDeps([lesson("Физика", 2)]);
+    d.known = new KnownPeople(file());
+    d.repo.updateUser(7, { groupKey: group.key });
+    await press("s:anon", d, "nortch", true);
+    expect(d.repo.getUser(7)?.anon).toBe(true);
+    await press("s:anon", d, "nortch", true);
+    expect(d.repo.getUser(7)?.anon).toBe(false);
   });
 });

@@ -15,3 +15,6 @@ students.csv
 students.json
 students.sqlite
 *.students.*
+# Файл «ФИО;телеграм-ник» для узнавания по имени — тоже только на сервере
+known.csv
+known.json
