@@ -5,7 +5,7 @@ import { BTN, intakePicker, mainKeyboard, streamDayNav, streamKeyboard } from ".
 import { editPhoto, isPhotoMessage, needGroup } from "../views.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, formatStreamWeek, mergeStream, shortGroupLabel, type StreamRow } from "../../schedule/stream.js";
 import type { Occurrence } from "../../schedule/model.js";
-import { filterSubgroup } from "../../schedule/format.js";
+import { captionFits, filterSubgroup } from "../../schedule/format.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../../time.js";
 import { logger } from "../../logger.js";
 
@@ -54,7 +54,10 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
   const renderer = ctx.deps.renderer;
   // Navigating from a poster keeps the poster: the image is replaced in place.
   const photoMsg = !!opts.edit && isPhotoMessage(ctx);
-  const wantImage = !!renderer && (opts.forceImage || photoMsg || ctx.user.format === "image" || (ctx.user.format === "both" && !opts.edit));
+  const editingText = !!opts.edit && !photoMsg;
+  // «И так, и так» — это одно сообщение: постер с расписанием в подписи.
+  const withText = ctx.user.format === "both" && !opts.forceImage && !opts.edit;
+  const wantImage = !!renderer && !editingText && (opts.forceImage || photoMsg || ctx.user.format === "image" || withText);
   if (opts.keyboard) {
     // A reply keyboard and an inline keyboard cannot share one message: send the mode keyboard first.
     await ctx.reply("Поток открыт. Вернуться: «◀️ В меню».", { reply_markup: streamKeyboard({ poisk: ctx.deps.config.POISK && !!ctx.deps.students }) });
@@ -72,14 +75,17 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
       });
       const kb = streamDayNav(date, todayMsk(), { image: false, groups: ctx.deps.service.stream(intake) });
       const fileName = `stream-${intake}-${date}.png`;
+      const caption = withText && captionFits(text) ? text : undefined;
       if (photoMsg && (await editPhoto(ctx, png, fileName, undefined, kb))) return;
-      await ctx.replyWithPhoto(new InputFile(png, fileName), { reply_markup: kb });
-      if (ctx.user.format !== "both" || opts.edit) return;
+      // Не влезло в подпись — текст идёт первым и молча, постер остаётся последним.
+      if (withText && !caption) await ctx.reply(text, { parse_mode: "HTML", disable_notification: true });
+      await ctx.replyWithPhoto(new InputFile(png, fileName), { caption, parse_mode: "HTML", reply_markup: kb });
+      return;
     } catch (err) {
       logger.warn({ err: String(err) }, "stream poster failed");
     }
   }
-  if (opts.edit && ctx.callbackQuery?.message && !photoMsg) {
+  if (editingText && ctx.callbackQuery?.message) {
     try {
       await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: streamDayNav(date, todayMsk(), { image: !!renderer, groups: ctx.deps.service.stream(intake) }) });
       return;
@@ -156,9 +162,9 @@ streamHandlers.hears(BTN.streamCommon, async (ctx) => {
   if (wantImage) {
     try {
       const png = await renderCommonWeek(ctx, intake, monday, shared, ownInStream);
-      await ctx.replyWithPhoto(new InputFile(png, `common-${intake}-${monday}.png`), { caption: text.length <= 1000 ? text : undefined, parse_mode: "HTML" });
-      if (ctx.user.format === "image") return;
-      if (text.length > 1000) await ctx.reply(text, { parse_mode: "HTML", disable_notification: true });
+      const caption = ctx.user.format !== "image" && captionFits(text) ? text : undefined;
+      if (!caption && ctx.user.format !== "image") await ctx.reply(text, { parse_mode: "HTML", disable_notification: true });
+      await ctx.replyWithPhoto(new InputFile(png, `common-${intake}-${monday}.png`), { caption, parse_mode: "HTML" });
       return;
     } catch (err) {
       logger.warn({ err: String(err) }, "common lessons poster failed");
