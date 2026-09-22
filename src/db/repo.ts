@@ -841,7 +841,9 @@ export class Repo {
    * Люди с «усиленной анонимностью» не попадают сюда вовсе.
    */
   botUsernames(): Set<string> {
-    const rows = this.db.prepare("SELECT username FROM users WHERE username IS NOT NULL AND username <> '' AND anon = 0").all() as Array<{ username: string }>;
+    // blocked = 0, как и во всех остальных отчётных запросах: человек, который
+    // забанил бота, «пользователем» не считается, иначе его не позовут обратно.
+    const rows = this.db.prepare("SELECT username FROM users WHERE username IS NOT NULL AND username <> '' AND anon = 0 AND blocked = 0").all() as Array<{ username: string }>;
     return new Set(rows.map((r) => r.username.toLowerCase()));
   }
 
