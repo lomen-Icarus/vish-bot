@@ -1,4 +1,5 @@
 import type { LocalDate } from "../time.js";
+import { sameTeacher } from "./format.js";
 import { contentHash, positionKey, type Occurrence } from "./model.js";
 
 export type ChangeKind = "added" | "removed" | "changed" | "moved";
@@ -17,7 +18,14 @@ export interface ChangeEvent {
 function changedFields(a: Occurrence, b: Occurrence): string[] {
   const f: string[] = [];
   if (a.room !== b.room) f.push("room");
-  if (a.teacher !== b.teacher) f.push("teacher");
+  // Преподаватель ПОЯВИЛСЯ или ПРОПАЛ — это не замена, а смена источника.
+  // Фамилии портал отдаёт только авторизованным: как только учётка входит,
+  // они появляются у всех пар разом, а если учётка отвалится — так же разом
+  // исчезнут. Рассылать по такому поводу «изменение в расписании» каждому
+  // подписчику — спам на пустом месте. Настоящую замену (один человек на
+  // другого) по-прежнему показываем; разное написание одного и того же
+  // человека заменой не считается.
+  if (a.teacher && b.teacher && !sameTeacher(a.teacher, b.teacher)) f.push("teacher");
   if (a.start !== b.start || a.end !== b.end) f.push("time");
   if (a.isDistance !== b.isDistance) f.push("distance");
   if (a.status !== b.status) f.push("status");

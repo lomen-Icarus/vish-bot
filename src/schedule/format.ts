@@ -125,14 +125,22 @@ function stripTitles(raw: string): string {
  */
 export function shortTeacher(raw: string): string {
   const clean = stripTitles(raw).replace(/\s+/g, " ").trim();
-  const parts = clean.split(" ").filter(Boolean);
+  // «Иванова И.И.» и «Иванова И. И.» — одна и та же запись: точка не склеивает
+  // инициалы в одно слово, поэтому перед разбором она становится пробелом.
+  const parts = clean.replace(/\./g, " ").split(/\s+/).filter(Boolean);
   if (parts.length < 2) return clean;
-  const initials = parts
-    .slice(1, 3)
-    .map((w) => (w.length === 1 || w.endsWith(".") ? w.replace(".", "") : w[0]))
-    .filter(Boolean)
-    .map((w) => `${w!.toUpperCase()}.`);
+  const initials = parts.slice(1, 3).map((w) => `${w[0]!.toUpperCase()}.`);
   return [parts[0], ...initials].join(" ");
+}
+
+/**
+ * Один и тот же человек? Сравниваем по короткой форме: портал в разных местах
+ * пишет то «доц. к.х.н. Иванова Ирина Ивановна», то «Иванова И. И.», и считать
+ * это заменой преподавателя нельзя.
+ */
+export function sameTeacher(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return a === b || (!a && !b);
+  return shortTeacher(a).toLowerCase().replace(/ё/g, "е") === shortTeacher(b).toLowerCase().replace(/ё/g, "е");
 }
 
 /** Подпись преподавателя на постере: коротко, либо ничего, если выключено. */
