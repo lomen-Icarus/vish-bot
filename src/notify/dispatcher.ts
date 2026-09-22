@@ -488,7 +488,7 @@ export class Notifier {
   private async maybeRenderDay(user: User, group: ReturnType<ScheduleService["group"]>, date: LocalDate, lessons: Occurrence[], now: WallClock): Promise<Buffer | undefined> {
     if (!this.renderer || !group || user.format === "text") return undefined;
     try {
-      return await this.renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: todayMsk(), now, theme: user.posterTheme ?? undefined });
+      return await this.renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: todayMsk(), now, theme: user.posterTheme ?? undefined, teacherView: user.teacherView });
     } catch (err) {
       logger.warn({ err }, "reminder image render failed");
       return undefined;

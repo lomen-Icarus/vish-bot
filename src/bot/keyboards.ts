@@ -194,6 +194,13 @@ export function minutesLabel(min: number | null): string {
   return `${min} мин`;
 }
 
+/** Подписи для пункта «Преподаватели» в настройках. */
+export const TEACHER_VIEW_LABELS: Record<string, string> = {
+  bold: "с выделением",
+  plain: "без выделения",
+  off: "не показывать",
+};
+
 export function formatPicker(): InlineKeyboard {
   return new InlineKeyboard().text("📝 Текстом", "fmt:text").text("🖼 Картинкой", "fmt:image").row().text("📝🖼 И так, и так", "fmt:both");
 }
@@ -209,6 +216,7 @@ export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: {
     const theme = isTheme(user.posterTheme) ? user.posterTheme : isTheme(opts.defaultTheme) ? opts.defaultTheme : "midnight";
     kb.text(`🎨 Оформление картинок: ${THEME_LABELS[theme] ?? THEME_LABELS.midnight}`, "s:theme").row();
   }
+  kb.text(`👨‍🏫 Преподаватели: ${TEACHER_VIEW_LABELS[user.teacherView]}`, "s:teacher").row();
   kb.text(`🔔 Изменения: ${onoff(user.notifyChanges)}`, "s:changes").text(`🎓 Сессия: ${onoff(user.notifySession)}`, "s:session").row();
   if (opts.slides) kb.text(`📎 Слайды записанных пар: ${onoff(user.wantSlides)}`, "s:slides").row();
   kb.text(`⏰ До первой пары: ${minutesLabel(user.remindFirstMin)}`, "s:first").row();

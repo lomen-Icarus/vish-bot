@@ -45,33 +45,72 @@ export interface PortalCredentials {
   password: string;
 }
 
+/** Сколько ждать, прежде чем снова пробовать учётку после падения на гостя. */
+const ACCOUNT_RETRY_MS = 30 * 60_000;
+
 export class PortalClient {
   readonly http: PortalHttp;
   private loggedIn = false;
   private loginPromise: Promise<void> | null = null;
   private readonly credentials: PortalCredentials | undefined;
+  /** Учётка задана, но не сработала — сидим гостем и периодически пробуем снова. */
+  private degraded = false;
+  private degradedAt = 0;
+  private lastError: string | null = null;
 
   constructor(opts: PortalHttpOptions & { credentials?: PortalCredentials } = {}) {
     this.http = new PortalHttp(opts);
     this.credentials = opts.credentials;
   }
 
+  /** Сейчас мы правда под учёткой (а не свалились на гостя). */
   get authenticated(): boolean {
-    return !!this.credentials;
+    return !!this.credentials && !this.degraded;
   }
 
-  /** Guest session, or the configured account when credentials were given. */
+  /** Что показывать в /health: как бот сейчас ходит на портал. */
+  mode(): { mode: "guest" | "account" | "degraded"; error: string | null } {
+    if (!this.credentials) return { mode: "guest", error: null };
+    return this.degraded ? { mode: "degraded", error: this.lastError } : { mode: "account", error: null };
+  }
+
+  private async loginAs(useAccount: boolean): Promise<void> {
+    this.http.clearCookies();
+    const form: Record<string, string> = useAccount && this.credentials
+      ? { wname: this.credentials.login, wpass: this.credentials.password, wauto: "1", auth: "Войти", hfac: "0", pertt: "1" }
+      : { guest: "Войти гостем", hfac: "0", pertt: "1" };
+    const res = await this.http.post(`${PORTAL_BASE}/auth`, form);
+    if (res.status !== 302) throw new PortalAuthError(`${useAccount ? "Account" : "Guest"} login failed: HTTP ${res.status}`);
+    this.loggedIn = true;
+  }
+
+  /**
+   * Вход. Если учётка задана, идём под ней: только она видит преподавателей.
+   * Не пустила — не падаем, а садимся гостем: расписание групп открыто всем, и
+   * лучше показать его без фамилий, чем не показать вовсе. Учётку пробуем
+   * снова каждые полчаса, и как только она оживёт, фамилии вернутся сами.
+   */
   async login(): Promise<void> {
     if (this.loginPromise) return this.loginPromise;
     this.loginPromise = (async () => {
-      this.http.clearCookies();
-      const form: Record<string, string> = this.credentials
-        ? { wname: this.credentials.login, wpass: this.credentials.password, wauto: "1", auth: "Войти", hfac: "0", pertt: "1" }
-        : { guest: "Войти гостем", hfac: "0", pertt: "1" };
-      const res = await this.http.post(`${PORTAL_BASE}/auth`, form);
-      if (res.status !== 302) throw new PortalAuthError(`${this.credentials ? "Account" : "Guest"} login failed: HTTP ${res.status}`);
-      this.loggedIn = true;
-      logger.info({ mode: this.credentials ? "account" : "guest" }, "portal: session established");
+      const tryAccount = !!this.credentials && (!this.degraded || Date.now() - this.degradedAt > ACCOUNT_RETRY_MS);
+      if (tryAccount) {
+        try {
+          await this.loginAs(true);
+          if (this.degraded) logger.info("portal: учётка снова работает, преподаватели вернулись");
+          this.degraded = false;
+          this.lastError = null;
+          logger.info({ mode: "account" }, "portal: session established");
+          return;
+        } catch (err) {
+          this.degraded = true;
+          this.degradedAt = Date.now();
+          this.lastError = String(err).slice(0, 200);
+          logger.error({ err: String(err) }, "portal: вход под учёткой не удался — работаем гостем, расписание без преподавателей");
+        }
+      }
+      await this.loginAs(false);
+      logger.info({ mode: this.credentials ? "guest (degraded)" : "guest" }, "portal: session established");
     })();
     try {
       await this.loginPromise;

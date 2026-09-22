@@ -50,7 +50,7 @@ async function enterStream(ctx: BotContext): Promise<void> {
 async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, opts: { edit?: boolean; keyboard?: boolean; forceImage?: boolean } = {}): Promise<void> {
   const rows = rowsFor(ctx, intake, date, date);
   const ownKey = ownKeyIn(ctx, intake);
-  const text = formatStreamDay(intake, date, rows, ctx.deps.service.weekInfo(date), todayMsk(), ownKey);
+  const text = formatStreamDay(intake, date, rows, ctx.deps.service.weekInfo(date), todayMsk(), ownKey, ctx.user.teacherView);
   const renderer = ctx.deps.renderer;
   // Navigating from a poster keeps the poster: the image is replaced in place.
   const photoMsg = !!opts.edit && isPhotoMessage(ctx);
@@ -70,6 +70,7 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
         date,
         rows: rows.filter((r) => r.date === date).map((r) => ({ ...r, mine: ownKey !== null && r.groupKeys.includes(ownKey) })),
         weekInfo: ctx.deps.service.weekInfo(date),
+        teacherView: ctx.user.teacherView,
         today: todayMsk(),
         now: wallClock(),
         theme: ctx.user.posterTheme ?? undefined,
@@ -150,7 +151,7 @@ streamHandlers.hears(BTN.streamWeek, async (ctx) => {
   if (intake === null) return;
   const monday = mondayOf(todayMsk());
   const rows = rowsFor(ctx, intake, monday, addDays(monday, 6));
-  for (const chunk of formatStreamWeek(intake, monday, rows, ctx.deps.service.weekInfo(monday), todayMsk(), ownKeyIn(ctx, intake))) {
+  for (const chunk of formatStreamWeek(intake, monday, rows, ctx.deps.service.weekInfo(monday), todayMsk(), ownKeyIn(ctx, intake), ctx.user.teacherView)) {
     await ctx.reply(chunk, { parse_mode: "HTML" });
   }
 });
@@ -162,7 +163,7 @@ streamHandlers.hears(BTN.streamCommon, async (ctx) => {
   const rows = rowsFor(ctx, intake, monday, addDays(monday, 6));
   const own = needGroup(ctx);
   const ownInStream = own && own.intake === intake ? own : null;
-  const text = formatCommonLessons(intake, monday, rows, ownInStream);
+  const text = formatCommonLessons(intake, monday, rows, ownInStream, ctx.user.teacherView);
   const shared = commonLessons(rows, ownInStream?.key ?? null);
   const wantImage = !!ctx.deps.renderer && shared.length > 0 && ctx.user.format !== "text";
   let textSent = false;
@@ -213,7 +214,7 @@ async function renderCommonWeek(ctx: BotContext, intake: number, monday: LocalDa
   }
   // A full group title with a qualifier would run off the edge of the widest theme.
   const pseudo: LogicalGroup = { key: `stream:${intake}`, title: own ? `Общие · ${shortGroupLabel(own)}` : `Общие · поток 20${intake}`, prefix: "ВИШ", number: 0, intake, course: 0, portalIds: [], portalNames: [] };
-  return ctx.deps.renderer!.renderWeek({ group: pseudo, monday, byDate, weekInfo: ctx.deps.service.weekInfo(monday), today: todayMsk(), subgroup: null, theme: ctx.user.posterTheme ?? undefined });
+  return ctx.deps.renderer!.renderWeek({ group: pseudo, monday, byDate, weekInfo: ctx.deps.service.weekInfo(monday), today: todayMsk(), subgroup: null, theme: ctx.user.posterTheme ?? undefined, teacherView: ctx.user.teacherView });
 }
 
 streamHandlers.hears(BTN.backToMenu, async (ctx) => {

@@ -4,7 +4,7 @@
  */
 import type { LogicalGroup } from "./groups.js";
 import { lessonTypeLabel, type Occurrence } from "./model.js";
-import { esc, parityLine } from "./format.js";
+import { esc, parityLine, teacherLabel, type TeacherView } from "./format.js";
 import type { WeekInfo } from "./service.js";
 import { addDays, fmtDDMM, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate } from "../time.js";
 
@@ -21,6 +21,8 @@ export interface StreamRow {
   isDistance: boolean;
   subgroup: number | null;
   status: Occurrence["status"];
+  /** Кто ведёт: портал называет преподавателя только авторизованным. */
+  teacher: string | null;
   /** Short labels of groups attending this exact lesson, in stream order. */
   groups: string[];
   groupKeys: string[];
@@ -45,9 +47,11 @@ export function mergeStream(groups: LogicalGroup[], byGroup: Map<string, Occurre
       const key = rowKey(o);
       let row = rows.get(key);
       if (!row) {
-        row = { date: o.date, slot: o.slot, start: o.start, end: o.end, subject: o.subject, type: o.type, room: o.room, isDistance: o.isDistance, subgroup: o.subgroup, status: o.status, groups: [], groupKeys: [], minNumber: g.number };
+        row = { date: o.date, slot: o.slot, start: o.start, end: o.end, subject: o.subject, type: o.type, room: o.room, isDistance: o.isDistance, subgroup: o.subgroup, status: o.status, teacher: o.teacher, groups: [], groupKeys: [], minNumber: g.number };
         rows.set(key, row);
       }
+      // Одну и ту же пару портал мог назвать по имени только у одной группы.
+      row.teacher ??= o.teacher;
       if (!row.groupKeys.includes(g.key)) {
         row.groups.push(shortGroupLabel(g));
         row.groupKeys.push(g.key);
@@ -60,13 +64,14 @@ export function mergeStream(groups: LogicalGroup[], byGroup: Map<string, Occurre
   );
 }
 
-function rowLine(r: StreamRow, ownKey: string | null): string {
+function rowLine(r: StreamRow, ownKey: string | null, view: TeacherView = "bold"): string {
   const mine = ownKey !== null && r.groupKeys.includes(ownKey);
   const who = r.groups.map((g, i) => (r.groupKeys[i] === ownKey ? `<b>${esc(g)}</b>` : esc(g))).join(", ");
   const where = r.isDistance ? "💻" : r.room ? esc(r.room) : "";
   const subj = r.status === "moved" ? `<s>${esc(r.subject)}</s>` : esc(r.subject);
   const sg = r.subgroup ? ` (${r.subgroup} п.)` : "";
-  return `   ${mine ? "★ " : ""}${who} · ${subj} <i>${lessonTypeLabel(r.type)}</i>${sg}${where ? ` · ${where}` : ""}`;
+  const who2 = teacherLabel(r.teacher, view);
+  return `   ${mine ? "★ " : ""}${who} · ${subj} <i>${lessonTypeLabel(r.type)}</i>${sg}${where ? ` · ${where}` : ""}${who2 ? ` · ${who2}` : ""}`;
 }
 
 function slotHeader(r: StreamRow): string {
@@ -86,18 +91,18 @@ function groupBySlot(rows: StreamRow[]): Array<{ header: string; rows: StreamRow
   return out;
 }
 
-export function formatStreamDay(intake: number, date: LocalDate, rows: StreamRow[], info: WeekInfo, today: LocalDate, ownKey: string | null): string {
+export function formatStreamDay(intake: number, date: LocalDate, rows: StreamRow[], info: WeekInfo, today: LocalDate, ownKey: string | null, view: TeacherView = "bold"): string {
   const rel = date === today ? "Сегодня · " : date === addDays(today, 1) ? "Завтра · " : date === addDays(today, -1) ? "Вчера · " : "";
   const pl = parityLine(info);
   const head = `<b>Поток 20${intake} · ${rel}${weekdayName(date)}, ${fmtDayMonth(date)}</b>${pl ? `\n${pl}` : ""}`;
   const dayRows = rows.filter((r) => r.date === date);
   if (!dayRows.length) return `${head}\n\n😴 У потока пар нет`;
-  const blocks = groupBySlot(dayRows).map((b) => `${b.header}\n${b.rows.map((r) => rowLine(r, ownKey)).join("\n")}`);
+  const blocks = groupBySlot(dayRows).map((b) => `${b.header}\n${b.rows.map((r) => rowLine(r, ownKey, view)).join("\n")}`);
   return `${head}\n\n${blocks.join("\n\n")}${ownKey ? "\n\n★ — твоя группа" : ""}`;
 }
 
 /** Week view split into day chunks; каждый чанк ≤ ~3900 символов. */
-export function formatStreamWeek(intake: number, monday: LocalDate, rows: StreamRow[], info: WeekInfo, today: LocalDate, ownKey: string | null): string[] {
+export function formatStreamWeek(intake: number, monday: LocalDate, rows: StreamRow[], info: WeekInfo, today: LocalDate, ownKey: string | null, view: TeacherView = "bold"): string[] {
   const pl = parityLine(info);
   const head = `<b>Поток 20${intake} · неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDays(monday, 6))}</b>${pl ? `\n${pl}` : ""}`;
   const chunks: string[] = [];
@@ -106,7 +111,7 @@ export function formatStreamWeek(intake: number, monday: LocalDate, rows: Stream
     const date = addDays(monday, i);
     const dayRows = rows.filter((r) => r.date === date);
     const title = `<b>${weekdayName(date)}</b> · <i>${fmtDDMM(date)}${date === today ? " · сегодня" : ""}</i>`;
-    const body = dayRows.length ? groupBySlot(dayRows).map((b) => `${b.header}\n${b.rows.map((r) => rowLine(r, ownKey)).join("\n")}`).join("\n") : "   — пар нет";
+    const body = dayRows.length ? groupBySlot(dayRows).map((b) => `${b.header}\n${b.rows.map((r) => rowLine(r, ownKey, view)).join("\n")}`).join("\n") : "   — пар нет";
     const section = `\n\n${title}\n${body}`;
     if (current.length + section.length > 3900) {
       chunks.push(current);
@@ -124,7 +129,7 @@ export function commonLessons(rows: StreamRow[], ownKey: string | null): StreamR
   return rows.filter((r) => r.groupKeys.length >= 2 && r.status === "scheduled" && (ownKey === null || r.groupKeys.includes(ownKey)));
 }
 
-export function formatCommonLessons(intake: number, monday: LocalDate, rows: StreamRow[], ownGroup: LogicalGroup | null): string {
+export function formatCommonLessons(intake: number, monday: LocalDate, rows: StreamRow[], ownGroup: LogicalGroup | null, view: TeacherView = "bold"): string {
   const ownKey = ownGroup?.key ?? null;
   const shared = commonLessons(rows, ownKey);
   const head = ownGroup

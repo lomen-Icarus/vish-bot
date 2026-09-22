@@ -20,6 +20,7 @@ const DISTANCE_OPTIONS = [null, 5, 10, 15] as const;
 const EVENING_OPTIONS = [null, "19:00", "20:00", "21:00", "22:00"] as const;
 const QUIET_OPTIONS = [null, "22:00-07:00", "23:00-07:00", "00:00-08:00"] as const;
 const FORMAT_OPTIONS = ["text", "image", "both"] as const;
+const TEACHER_VIEW_OPTIONS = ["bold", "plain", "off"] as const;
 
 function settingsText(ctx: BotContext): string {
   const group = needGroup(ctx);
@@ -27,6 +28,10 @@ function settingsText(ctx: BotContext): string {
   if (!group) lines.push("Группа не выбрана.");
   lines.push("", "Нажимай на пункт, чтобы переключить.");
   lines.push(
+    "",
+    "<b>👨‍🏫 Преподаватели</b>",
+    "Кто ведёт пару — в расписании дня, недели, потока и других групп, и на картинках тоже. «С выделением» — фамилия жирным, её видно с первого взгляда; «без выделения» — тем же шрифтом, что и аудитория; «не показывать» — строка короче.",
+    ...(ctx.deps.teachers ? [] : ["<i>Сейчас портал отдаёт фамилии только у дистанционных пар: для очных нужна учётка портала.</i>"]),
     "",
     "<b>Что за уведомления</b>",
     "🔔 Изменения — переносы, замены аудиторий, отмены и новые пары твоей группы.",
@@ -127,6 +132,12 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "changes":
       patch.notifyChanges = !user.notifyChanges;
       break;
+    case "teacher": {
+      const next = cycle(TEACHER_VIEW_OPTIONS, user.teacherView);
+      patch.teacherView = next;
+      toast = { bold: "Преподаватель — жирным", plain: "Преподаватель — обычным текстом", off: "Преподавателей не показываю" }[next];
+      break;
+    }
     case "anon":
       patch.anon = !user.anon;
       toast = patch.anon ? "Готово: больше не здороваюсь по имени и не связываю аккаунт с человеком из списка" : "Снова узнаю тебя по имени";

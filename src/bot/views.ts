@@ -1,7 +1,7 @@
 import { InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext, Deps } from "./context.js";
 import { BTN, dayNav, weekNav } from "./keyboards.js";
-import { captionFits, clampHtml, esc, filterSubgroup, formatDay, formatWeek } from "../schedule/format.js";
+import { captionFits, clampHtml, esc, filterSubgroup, formatDay, formatWeek, type TeacherView } from "../schedule/format.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
 import type { Occurrence } from "../schedule/model.js";
@@ -24,14 +24,14 @@ function withWebinars(deps: Deps, group: LogicalGroup, lessons: Occurrence[]): O
   }
 }
 
-export function dayView(deps: Deps, group: LogicalGroup, date: LocalDate, subgroup: number | null): { text: string; lessons: Occurrence[] } {
+export function dayView(deps: Deps, group: LogicalGroup, date: LocalDate, subgroup: number | null, teacherView: TeacherView = "bold"): { text: string; lessons: Occurrence[] } {
   const today = todayMsk();
   const lessons = withWebinars(deps, group, deps.service.lessonsOn(group, date));
-  const text = formatDay(group, date, lessons, deps.service.weekInfo(date), today, { subgroup, now: wallClock() });
+  const text = formatDay(group, date, lessons, deps.service.weekInfo(date), today, { subgroup, now: wallClock(), teacherView });
   return { text, lessons: filterSubgroup(lessons, subgroup) };
 }
 
-export function weekView(deps: Deps, group: LogicalGroup, anyDate: LocalDate, subgroup: number | null): { text: string; monday: LocalDate; byDate: Map<LocalDate, Occurrence[]> } {
+export function weekView(deps: Deps, group: LogicalGroup, anyDate: LocalDate, subgroup: number | null, teacherView: TeacherView = "bold"): { text: string; monday: LocalDate; byDate: Map<LocalDate, Occurrence[]> } {
   const monday = mondayOf(anyDate);
   const sunday = addDays(monday, 6);
   const all = withWebinars(deps, group, deps.service.materialize(group, monday, sunday));
@@ -41,7 +41,7 @@ export function weekView(deps: Deps, group: LogicalGroup, anyDate: LocalDate, su
     list.push(o);
     byDate.set(o.date, list);
   }
-  const text = formatWeek(group, monday, byDate, deps.service.weekInfo(monday), todayMsk(), { subgroup });
+  const text = formatWeek(group, monday, byDate, deps.service.weekInfo(monday), todayMsk(), { subgroup, teacherView });
   return { text, monday, byDate };
 }
 
@@ -130,7 +130,7 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
   const own = group.key === ctx.user.groupKey;
   const subgroup = own ? ctx.user.subgroup : null;
   const peekKey = opts.peek || !own ? group.key : undefined;
-  const { text, lessons } = dayView(deps, group, date, subgroup);
+  const { text, lessons } = dayView(deps, group, date, subgroup, ctx.user.teacherView);
   const today = todayMsk();
   const hasImages = !!deps.renderer;
   const plan = posterPlan(ctx, opts, lessons.length > 0);
@@ -139,7 +139,7 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
   if (plan.image && deps.renderer) {
     let png: Buffer | null = null;
     try {
-      png = await deps.renderer.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock(), theme: ctx.user.posterTheme ?? undefined });
+      png = await deps.renderer.renderDay({ group, date, lessons, weekInfo: deps.service.weekInfo(date), today, now: wallClock(), theme: ctx.user.posterTheme ?? undefined, teacherView: ctx.user.teacherView });
     } catch (err) {
       logger.warn({ err: String(err) }, "day image render failed, falling back to text");
     }
@@ -165,14 +165,14 @@ export async function sendWeek(ctx: BotContext, group: LogicalGroup, anyDate: Lo
   const own = group.key === ctx.user.groupKey;
   const subgroup = own ? ctx.user.subgroup : null;
   const peekKey = opts.peek || !own ? group.key : undefined;
-  const { text, monday, byDate } = weekView(deps, group, anyDate, subgroup);
+  const { text, monday, byDate } = weekView(deps, group, anyDate, subgroup, ctx.user.teacherView);
   const hasImages = !!deps.renderer;
   const plan = posterPlan(ctx, opts, byDate.size > 0);
   const fileName = `${group.title}-week-${monday}.png`;
   if (plan.image && deps.renderer) {
     let png: Buffer | null = null;
     try {
-      png = await deps.renderer.renderWeek({ group, monday, byDate, weekInfo: deps.service.weekInfo(monday), today: todayMsk(), subgroup, theme: ctx.user.posterTheme ?? undefined });
+      png = await deps.renderer.renderWeek({ group, monday, byDate, weekInfo: deps.service.weekInfo(monday), today: todayMsk(), subgroup, theme: ctx.user.posterTheme ?? undefined, teacherView: ctx.user.teacherView });
     } catch (err) {
       logger.warn({ err: String(err) }, "week image render failed, falling back to text");
     }
