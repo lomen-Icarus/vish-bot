@@ -189,15 +189,16 @@ export function buildInlineResults(deps: Deps, req: InlineRequest, user: User | 
   const today = todayMsk();
   const own = user?.groupKey ? deps.service.group(user.groupKey) : null;
   const subgroup = user?.subgroup ?? null;
+  const view = user?.teacherView ?? "bold";
   const out: InlineQueryResultArticle[] = [];
   const dayTitle = (g: LogicalGroup, date: LocalDate): string => `${g.title} · ${date === today ? "сегодня" : date === addDays(today, 1) ? "завтра" : `${weekdayShort(date)} ${fmtDDMM(date)}`}`;
 
   const addDay = (g: LogicalGroup): void => {
-    const { text } = dayView(deps, g, req.date, own && g.key === own.key ? subgroup : null);
+    const { text } = dayView(deps, g, req.date, own && g.key === own.key ? subgroup : null, view);
     out.push(article(`d:${g.key}:${req.date}`, `📅 ${dayTitle(g, req.date)}`, text));
   };
   const addWeek = (g: LogicalGroup): void => {
-    const { text, monday } = weekView(deps, g, req.date, own && g.key === own.key ? subgroup : null);
+    const { text, monday } = weekView(deps, g, req.date, own && g.key === own.key ? subgroup : null, view);
     out.push(article(`w:${g.key}:${monday}`, `🗓 ${g.title} · неделя ${fmtDDMM(monday)}–${fmtDDMM(addDays(monday, 6))}`, text));
   };
   // Поток за день и общие пары за неделю читают одни и те же группы, а день
@@ -215,14 +216,14 @@ export function buildInlineResults(deps: Deps, req: InlineRequest, user: User | 
   };
   const addStream = (intake: number): void => {
     const { rows } = streamWeek(intake, mondayOf(req.date));
-    const text = formatStreamDay(intake, req.date, rows, deps.service.weekInfo(req.date), today, own?.intake === intake ? own.key : null);
+    const text = formatStreamDay(intake, req.date, rows, deps.service.weekInfo(req.date), today, own?.intake === intake ? own.key : null, view);
     out.push(article(`s:${intake}:${req.date}`, `🎓 Поток 20${intake} · ${req.date === today ? "сегодня" : fmtDDMM(req.date)}`, text));
   };
   const addCommon = (intake: number): void => {
     const monday = mondayOf(req.date);
     const { rows } = streamWeek(intake, monday);
     const ownInStream = own && own.intake === intake ? own : null;
-    const text = formatCommonLessons(intake, monday, rows, ownInStream);
+    const text = formatCommonLessons(intake, monday, rows, ownInStream, view);
     if (!commonLessons(rows, ownInStream?.key ?? null).length && !ownInStream) return;
     out.push(article(`c:${intake}:${monday}`, `🤝 Общие пары · поток 20${intake}`, text));
   };
@@ -345,11 +346,11 @@ function studentResults(deps: Deps, req: InlineRequest, user: User | null, q: st
       continue;
     }
     if (req.mode === "week") {
-      const { text, monday } = weekView(deps, group, req.date, st.subgroup);
+      const { text, monday } = weekView(deps, group, req.date, st.subgroup, user?.teacherView ?? "bold");
       out.push(article(`psw:${st.id}:${monday}`, `🕵️ ${st.name} · неделя ${fmtDDMM(monday)}`, `${head}\n\n${text}`));
       continue;
     }
-    const { text, lessons } = dayView(deps, group, req.date, st.subgroup);
+    const { text, lessons } = dayView(deps, group, req.date, st.subgroup, user?.teacherView ?? "bold");
     const where = whereNowText(lessons, req.date, today, st.subgroup);
     out.push(article(`ps:${st.id}:${req.date}`, `🕵️ ${st.name} · ${st.groupTitle}`, `${head}\n\n${where}\n\n${text}`));
   }

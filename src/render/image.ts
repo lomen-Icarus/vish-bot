@@ -5,13 +5,15 @@
 import type { LogicalGroup } from "../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import type { WeekInfo } from "../schedule/service.js";
-import { filterSubgroup } from "../schedule/format.js";
+import { filterSubgroup, posterTeacher, type TeacherView } from "../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallClock } from "../time.js";
 import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El } from "./core.js";
 
 export interface DayRenderInput {
   /** Poster look for this one render; the bot default when absent. */
   theme?: string;
+  /** Показывать ли преподавателя и выделять ли его; по умолчанию с выделением. */
+  teacherView?: TeacherView;
   group: LogicalGroup;
   date: LocalDate;
   lessons: Occurrence[];
@@ -23,6 +25,7 @@ export interface DayRenderInput {
 export interface WeekRenderInput {
   /** Poster look for this one render; the bot default when absent. */
   theme?: string;
+  teacherView?: TeacherView;
   group: LogicalGroup;
   monday: LocalDate;
   byDate: Map<LocalDate, Occurrence[]>;
@@ -42,6 +45,7 @@ export interface StreamRenderRow {
   subgroup: number | null;
   status: Occurrence["status"];
   groups: string[];
+  teacher: string | null;
   /** Whether the viewer's own group attends this row. */
   mine: boolean;
 }
@@ -49,6 +53,7 @@ export interface StreamRenderRow {
 export interface StreamRenderInput {
   /** Poster look for this one render; the bot default when absent. */
   theme?: string;
+  teacherView?: TeacherView;
   intake: number;
   date: LocalDate;
   rows: StreamRenderRow[];
@@ -123,14 +128,15 @@ function header(title: string, subtitle: string, group: LogicalGroup, accent: st
   );
 }
 
-function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number }): El {
+function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number; teacherView?: TeacherView }): El {
   const color = typeColor(o.type);
   const moved = o.status === "moved";
   const time = o.start != null && o.end != null ? [fmtHHMM(o.start), fmtHHMM(o.end)] : ["—", ""];
   const meta: string[] = [lessonTypeLabel(o.type)];
   if (o.isDistance) meta.push("дистанционно");
   else if (o.room) meta.push(`ауд. ${o.room}`);
-  if (o.teacher) meta.push(o.teacher);
+  const teacher = posterTeacher(o.teacher, opts.teacherView);
+
   if (o.subgroup) meta.push(`${o.subgroup} подгруппа`);
   const badges: Array<{ label: string; color: string }> = [];
   if (moved && o.movedTo) badges.push({ label: `перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, color: "#fb7185" });
@@ -156,6 +162,16 @@ function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number
       { display: "flex", flexDirection: "column", flex: 1 },
       text(o.subject, { fontSize: 34, fontWeight: 700, color: THEME.fg, lineHeight: 1.2, textDecoration: moved ? "line-through" : "none" }),
       text(meta.join("  ·  "), { fontSize: 24, fontWeight: 500, color: THEME.muted, marginTop: 10 }),
+      // Преподаватель — отдельной строкой: его ищут глазами, и выделение
+      // (или его отсутствие) человек выбирает в настройках.
+      teacher
+        ? text(teacher, {
+            fontSize: 24,
+            fontWeight: opts.teacherView === "plain" ? 500 : 700,
+            color: opts.teacherView === "plain" ? THEME.muted : THEME.fg,
+            marginTop: 8,
+          })
+        : null,
       badges.length
         ? h(
             "div",
@@ -212,7 +228,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       for (const o of list) {
         if (prevEnd != null && o.start != null && o.start - prevEnd >= 20) rows.push(gapRow(o.start - prevEnd));
         const ongoing = !!now && now.date === date && o.start != null && o.end != null && now.minutes >= o.start && now.minutes < o.end && o.status === "scheduled";
-        rows.push(h("div", { display: "flex", width: "100%", marginTop: 14 }, lessonRow(o, { ongoing, variantCount: group.portalIds.length })));
+        rows.push(h("div", { display: "flex", width: "100%", marginTop: 14 }, lessonRow(o, { ongoing, variantCount: group.portalIds.length, teacherView: input.teacherView })));
         if (o.status === "scheduled" && o.end != null) prevEnd = o.end;
       }
       const active = list.filter((o) => o.status === "scheduled");
@@ -276,7 +292,14 @@ export async function createRenderer(): Promise<Renderer | null> {
                     ),
                   ),
                   text(r.subject, { fontSize: 28, fontWeight: 700, color: THEME.fg, lineHeight: 1.2, textDecoration: r.status === "moved" ? "line-through" : "none" }),
-                  text([lessonTypeLabel(r.type), r.isDistance ? "дистанционно" : r.room ? `ауд. ${r.room}` : "", r.subgroup ? `${r.subgroup} подгруппа` : ""].filter(Boolean).join("  ·  "), { fontSize: 22, fontWeight: 500, color: THEME.muted, marginTop: 4 }),
+                  h(
+                    "div",
+                    { display: "flex", flexDirection: "row", alignItems: "baseline", marginTop: 4 },
+                    text([lessonTypeLabel(r.type), r.isDistance ? "дистанционно" : r.room ? `ауд. ${r.room}` : "", r.subgroup ? `${r.subgroup} подгруппа` : ""].filter(Boolean).join("  ·  "), { fontSize: 22, fontWeight: 500, color: THEME.muted }),
+                    posterTeacher(r.teacher, input.teacherView)
+                      ? text(`· ${posterTeacher(r.teacher, input.teacherView)}`, { marginLeft: 8, fontSize: 22, fontWeight: input.teacherView === "plain" ? 500 : 700, color: input.teacherView === "plain" ? THEME.muted : THEME.fg })
+                      : null,
+                  ),
                 ),
               ),
             ),
@@ -316,7 +339,19 @@ export async function createRenderer(): Promise<Renderer | null> {
                   "div",
                   { display: "flex", flexDirection: "column", flex: 1 },
                   text(o.subject, { fontSize: 27, fontWeight: 600, color: o.status === "moved" ? THEME.dim : THEME.fg, textDecoration: o.status === "moved" ? "line-through" : "none", lineHeight: 1.15 }),
-                  text([lessonTypeLabel(o.type), o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "перенос" : "", o.substituted ? "замена" : ""].filter(Boolean).join("  ·  "), { fontSize: 21, color: THEME.muted, marginTop: 4 }),
+                  h(
+                    "div",
+                    { display: "flex", flexDirection: "row", alignItems: "baseline", marginTop: 4 },
+                    text([lessonTypeLabel(o.type), o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "перенос" : "", o.substituted ? "замена" : ""].filter(Boolean).join("  ·  "), { fontSize: 21, color: THEME.muted }),
+                    posterTeacher(o.teacher, input.teacherView)
+                      ? text(`· ${posterTeacher(o.teacher, input.teacherView)}`, {
+                          marginLeft: 8,
+                          fontSize: 21,
+                          fontWeight: input.teacherView === "plain" ? 400 : 700,
+                          color: input.teacherView === "plain" ? THEME.muted : THEME.fg,
+                        })
+                      : null,
+                  ),
                 ),
               ),
             )

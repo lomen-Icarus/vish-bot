@@ -121,7 +121,7 @@ async function showStudentDay(ctx: BotContext, student: StudentRecord, date: Loc
     await ctx.reply(`${studentTitle(student)}\n\n${why}`, { parse_mode: "HTML", reply_markup: kb });
     return;
   }
-  const { text, lessons } = dayView(ctx.deps, group, date, student.subgroup);
+  const { text, lessons } = dayView(ctx.deps, group, date, student.subgroup, ctx.user.teacherView);
   const body = clampHtml(`${studentTitle(student)}\n\n${whereNowText(lessons, date, todayMsk(), student.subgroup)}\n\n${text}`);
   const kb = studentDayNav(student, date);
   if (edit) {
@@ -139,7 +139,7 @@ async function showStudentWeek(ctx: BotContext, student: StudentRecord, anyDate:
   const { group } = resolveStudentGroup(ctx.deps.service.groups(), student);
   if (!group) return void (await ctx.reply("Группа этого человека не найдена в расписании ВИШ.", { reply_markup: new InlineKeyboard().text("🔎 Другой человек", "poisk:menu") }));
   const monday = mondayOf(anyDate);
-  const { text } = weekView(ctx.deps, group, monday, student.subgroup);
+  const { text } = weekView(ctx.deps, group, monday, student.subgroup, ctx.user.teacherView);
   const body = clampHtml(`${studentTitle(student)}\n\n${text}`);
   const kb = new InlineKeyboard()
     .text("◀️ пред.", `posw:${student.id}:${addDays(monday, -7)}`)

@@ -24,6 +24,8 @@ export interface FormatOptions {
   subgroup?: number | null;
   /** Current wall clock, to mark the ongoing lesson. */
   now?: WallClock;
+  /** Как показывать преподавателя: с выделением, обычным текстом или никак. */
+  teacherView?: TeacherView;
 }
 
 export function filterSubgroup(list: Occurrence[], subgroup: number | null | undefined): Occurrence[] {
@@ -95,6 +97,57 @@ export function captionFits(html: string): boolean {
   return html.replace(/<[^>]+>/g, "").length <= CAPTION_MAX;
 }
 
+/**
+ * Как показывать преподавателя: жирным, обычным текстом или не показывать.
+ * Выбирается в настройках; по умолчанию с выделением — фамилию ищут глазами.
+ */
+export type TeacherView = "bold" | "plain" | "off";
+
+// Должность («доц.», «зав.каф.») и степень («к.пед.н.») идут до фамилии и
+// снимаются по одной: у одного человека их бывает сразу две.
+const POSITION_RE = /^(?:проф|доц|ст\.?\s?преп|преп|асс|зав\.?\s?каф|дир|зам)\.?\s+/iu;
+const DEGREE_RE = /^[кд]\.[а-яё.-]*н\.\s*/iu;
+
+function stripTitles(raw: string): string {
+  let out = raw.trim();
+  for (let i = 0; i < 4; i++) {
+    const next = out.replace(POSITION_RE, "").replace(DEGREE_RE, "");
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+/**
+ * «доц. к.пед.н. Ярдухина Светлана Александровна» → «Ярдухина С. А.».
+ * Должность и степень портал иногда вклеивает прямо в имя; в расписании они
+ * только занимают строку, а полностью человек подписан в своей карточке.
+ */
+export function shortTeacher(raw: string): string {
+  const clean = stripTitles(raw).replace(/\s+/g, " ").trim();
+  const parts = clean.split(" ").filter(Boolean);
+  if (parts.length < 2) return clean;
+  const initials = parts
+    .slice(1, 3)
+    .map((w) => (w.length === 1 || w.endsWith(".") ? w.replace(".", "") : w[0]))
+    .filter(Boolean)
+    .map((w) => `${w!.toUpperCase()}.`);
+  return [parts[0], ...initials].join(" ");
+}
+
+/** Подпись преподавателя на постере: коротко, либо ничего, если выключено. */
+export function posterTeacher(name: string | null | undefined, view: TeacherView | undefined): string | null {
+  if (!name || view === "off") return null;
+  return shortTeacher(name);
+}
+
+/** Подпись преподавателя в строке расписания с учётом настройки. */
+export function teacherLabel(name: string | null | undefined, view: TeacherView = "bold"): string {
+  if (!name || view === "off") return "";
+  const short = esc(shortTeacher(name));
+  return view === "bold" ? `<b>${short}</b>` : short;
+}
+
 export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   const lines: string[] = [];
   const ongoing = opts.now && opts.now.date === o.date && o.start != null && o.end != null && opts.now.minutes >= o.start && opts.now.minutes < o.end;
@@ -105,7 +158,8 @@ export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   meta.push(esc(lessonTypeLabel(o.type)));
   if (o.isDistance) meta.push("💻 дистанционно");
   else if (o.room) meta.push(`ауд. ${esc(o.room)}`);
-  if (o.teacher) meta.push(esc(o.teacher));
+  const teacher = teacherLabel(o.teacher, opts.teacherView);
+  if (teacher) meta.push(teacher);
   if (o.subgroup) meta.push(`${o.subgroup} подгр.`);
   if (o.groups?.length) meta.push(o.groups.map(esc).join(", "));
   lines.push(`     ${meta.join(" · ")}`);
@@ -159,16 +213,17 @@ export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<L
       parts.push(`${title}\n   — пар нет`);
       continue;
     }
+    // Две строки на пару: сверху время и предмет, снизу — что это за пара,
+    // где и кто ведёт. Так глаз находит нужное, не разбирая одну длинную строку.
     const rows = list.map((o) => {
       const moved = o.status === "moved";
-      const subj = moved ? `<s>${esc(o.subject)}</s>` : esc(o.subject);
-      const where = o.isDistance ? "💻" : o.room ? esc(o.room) : "";
-      const sg = o.subgroup ? ` (${o.subgroup} п.)` : "";
-      const flags = `${o.movedFrom ? " ↩️" : ""}${o.substituted ? " 🔁" : ""}`;
+      const subj = moved ? `<s>${esc(o.subject)}</s>` : `<b>${esc(o.subject)}</b>`;
+      const where = o.isDistance ? "💻 дистанционно" : o.room ? `ауд. ${esc(o.room)}` : "";
+      const meta = [esc(lessonTypeLabel(o.type)), where, teacherLabel(o.teacher, opts.teacherView), o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "↩️ перенос" : "", o.substituted ? "🔁 замена" : ""].filter(Boolean);
       // Показываем и конец пары: «когда освобожусь» спрашивают не реже, чем «когда начало».
-      return `   ${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subj} <i>${esc(lessonTypeLabel(o.type))}</i>${where ? ` · ${where}` : ""}${sg}${flags}`;
+      return `   ${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subj}\n        <i>${meta.join(" · ")}</i>`;
     });
-    parts.push(`${title}\n${rows.join("\n")}`);
+    parts.push(`${title}\n${rows.join("\n\n")}`);
   }
   return parts.join("\n\n");
 }
