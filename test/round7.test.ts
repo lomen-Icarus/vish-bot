@@ -15,6 +15,9 @@ import { addDays, todayMsk } from "../src/time.js";
 import { buildPeopleResults, parseInlineQuery } from "../src/bot/inline.js";
 import { KnownPeople, normalizeHandle } from "../src/students/known.js";
 import { StudentDirectory } from "../src/students/directory.js";
+import { tildaDate, tildaFeeds } from "../src/news/fetchers.js";
+import { openDatabase } from "../src/db/index.js";
+import { Repo } from "../src/db/repo.js";
 import { miscHandlers } from "../src/bot/handlers/misc.js";
 import { settingsHandlers } from "../src/bot/handlers/settings.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -282,5 +285,34 @@ describe("бот узнаёт своих", () => {
     expect(d.repo.getUser(7)?.anon).toBe(true);
     await press("s:anon", d, "nortch", true);
     expect(d.repo.getUser(7)?.anon).toBe(false);
+  });
+});
+
+describe("разбор лент Tilda", () => {
+  it("находит все ленты страницы парами recid+feeduid, а не первые попавшиеся", () => {
+    const html = `var options={recid:'1304571431',feeduid:'625661625801',previewmode:'yes'};
+                  var options={recid:'1863632681',feeduid:'244426457331',previewmode:'yes'};`;
+    expect(tildaFeeds(html)).toEqual([
+      { recid: "1304571431", feeduid: "625661625801" },
+      { recid: "1863632681", feeduid: "244426457331" },
+    ]);
+  });
+
+  it("свежесть считается по дате публикации, а не по дате в карточке", () => {
+    // Редакторы ставят дату задним числом: пост от «18.09», выложенный 22.09,
+    // по старой логике сразу считался протухшим и не доходил вообще никогда.
+    // Секунды для свежести не нужны, главное — что «published» вообще разбирается.
+    expect(tildaDate("2026-09-22 09:59:14")).toBe(new Date("2026-09-22T09:59:00+03:00").toISOString());
+    expect(tildaDate("2026-09-18 16:00")).toBe(new Date("2026-09-18T16:00:00+03:00").toISOString());
+  });
+});
+
+describe("журнал поисков", () => {
+  it("один человек через чат и через inline — один поиск, а не два", () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(7, "u", "U");
+    repo.logPoisk(7, today, "поиск: Беляев Иван Петрович", "id1");
+    repo.logPoisk(7, today, "поиск: Беляев Иван Петрович", "id1");
+    expect(repo.poiskUsage(7, today)).toBe(1);
   });
 });

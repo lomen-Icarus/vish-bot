@@ -4,7 +4,7 @@ import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { BTN, isMenuText, teacherDayNav, teacherWeekNav } from "../keyboards.js";
 import { clampHtml, esc, formatDay, formatWebinarTeacher, formatWeek } from "../../schedule/format.js";
-import type { LogicalGroup } from "../../schedule/groups.js";
+import { personGroup, type LogicalGroup } from "../../schedule/groups.js";
 import type { Occurrence } from "../../schedule/model.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../../time.js";
 import { teacherMapKey, type TeacherRef } from "../../portal/teachers.js";
@@ -111,7 +111,7 @@ async function sendTeacherPhoto(ctx: BotContext, t: TeacherRef, fullName: string
 }
 
 function pseudoGroup(t: TeacherRef, fullName: string | null): LogicalGroup {
-  return { key: `teacher:${t.id}`, title: fullName ?? t.name, prefix: "", number: 0, intake: 0, course: 0, portalIds: [], portalNames: [] };
+  return personGroup(fullName ?? t.name, `teacher:${t.id}`);
 }
 
 async function askName(ctx: BotContext): Promise<void> {

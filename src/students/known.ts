@@ -37,10 +37,14 @@ export function normalizeHandle(raw: string | null | undefined): string | null {
   return m ? m[1]!.toLowerCase() : null;
 }
 
+/** Как часто заглядывать, не подменили ли файл на сервере. */
+const CHECK_EVERY_MS = 5000;
+
 export class KnownPeople {
   private byHandle = new Map<string, KnownPerson>();
   private mtimeMs = -1;
   private size = -1;
+  private checkedAt = 0;
   private error: string | null = null;
 
   constructor(private readonly file: string) {
@@ -48,10 +52,20 @@ export class KnownPeople {
   }
 
   private reloadIfChanged(): void {
+    // statSync на каждый вызов — это сисколл на каждое открытие настроек и
+    // каждый /start. Файл меняют раз в год, секунды проверки хватает с лихвой.
+    if (Date.now() - this.checkedAt < CHECK_EVERY_MS) return;
+    this.checkedAt = Date.now();
     try {
       const st = statSync(this.file);
       if (st.mtimeMs !== this.mtimeMs || st.size !== this.size) this.reload();
     } catch {
+      // Файл убрали с сервера — значит, узнавание выключили. Продолжать
+      // здороваться по имени из памяти было бы ровно обратным тому, чего хотел
+      // админ, когда его удалял.
+      if (this.byHandle.size) logger.warn({ file: this.file }, "known people file disappeared: узнавание выключено");
+      this.byHandle = new Map();
+      this.error = "файла нет";
       this.mtimeMs = -1;
       this.size = -1;
     }
@@ -84,6 +98,11 @@ export class KnownPeople {
       this.error = null;
       logger.info({ count: map.size, file: this.file }, "known people loaded");
     } catch (err) {
+      // Не запоминаем размер и время: иначе следующая проверка решит, что файл
+      // «не менялся», и битая загрузка застынет навсегда.
+      this.mtimeMs = -1;
+      this.size = -1;
+      this.byHandle = new Map();
       this.error = String(err).slice(0, 200);
       logger.warn({ err: String(err), file: this.file }, "known people load failed");
     }

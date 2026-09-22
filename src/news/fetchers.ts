@@ -86,6 +86,10 @@ export async function fetchTelegram(username: string): Promise<FetchedPost[]> {
   const html = await getText(`https://t.me/s/${username}`);
   const posts: FetchedPost[] = [];
   const blocks = html.split(/<div class="tgme_widget_message_wrap/).slice(1);
+  // Страница отдалась, но сообщений на ней нет вовсе: у канала закрыт
+  // публичный предпросмотр. Молча вернуть пусто — значит вечно показывать
+  // «✅ просканирован» по источнику, который никогда ничего не принесёт.
+  if (!blocks.length) throw new Error(`У @${username} нет публичного превью (t.me/s/${username} пуст)`);
   for (const block of blocks) {
     const post = /data-post="([^"]+)"/.exec(block)?.[1];
     const time = /<time[^>]*datetime="([^"]+)"/.exec(block)?.[1];
@@ -141,11 +145,19 @@ interface TildaPost {
   descr?: string;
   text?: string;
   date?: string;
+  /** Когда пост реально выложили; «date» редактор ставит руками. */
+  published?: string;
   url?: string;
   image?: string;
 }
 
-/** Tilda gives "2026-09-09 15:00" in the site's timezone (Moscow for us). */
+/**
+ * Tilda gives "2026-09-09 15:00" in the site's timezone (Moscow for us).
+ * Полей с датой два: «date» — та, что редактор поставил в карточке (её часто
+ * ставят задним числом), «published» — когда пост реально появился. Свежесть
+ * считается по второй, иначе задним числом опубликованная новость сразу
+ * считается протухшей и не доходит вообще никогда.
+ */
 export function tildaDate(raw: string | undefined): string {
   if (!raw) return new Date().toISOString();
   const m = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2})(?::\d{2})?)?$/.exec(raw.trim());
@@ -154,29 +166,63 @@ export function tildaDate(raw: string | undefined): string {
   return Number.isFinite(t) ? new Date(t).toISOString() : new Date().toISOString();
 }
 
+/**
+ * Ленты Tilda на странице: их бывает несколько (на сайте ВИШ — «Новости» и
+ * «Анонсы»). Берём пары recid+feeduid как они записаны рядом в настройках
+ * блока: если выдёргивать их по отдельности, можно склеить recid одной ленты
+ * с feeduid другой, а вторая лента потеряется целиком.
+ */
+export function tildaFeeds(html: string): Array<{ recid: string; feeduid: string }> {
+  const out: Array<{ recid: string; feeduid: string }> = [];
+  const seen = new Set<string>();
+  for (const m of html.matchAll(/recid:\s*'([0-9]+)'\s*,\s*feeduid:\s*'([0-9]+)'/g)) {
+    const key = `${m[1]}:${m[2]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ recid: m[1]!, feeduid: m[2]! });
+  }
+  if (out.length) return out;
+  // Запасной вариант для старой вёрстки, где атрибуты лежат порознь.
+  const feeduid = /feeduid[=:]\s*'?([0-9]+)'?/.exec(html)?.[1];
+  const recid = /(?:data-feed-)?recid[=:]"?'?([0-9]+)'?/.exec(html)?.[1];
+  return feeduid && recid ? [{ recid, feeduid }] : [];
+}
+
 async function fetchTildaFeed(pageUrl: string, html: string): Promise<FetchedPost[] | null> {
-  const feeduid = /feeduid:\s*'([^']+)'/.exec(html)?.[1] ?? /feeduid=([0-9]+)/.exec(html)?.[1];
-  const recid = /recid:\s*'([^']+)'/.exec(html)?.[1] ?? /data-feed-recid="([^"]+)"/.exec(html)?.[1];
-  if (!feeduid || !recid) return null;
-  const api = `https://feeds.tildacdn.com/api/getfeed/?feeduid=${feeduid}&recid=${recid}&c=${Date.now()}&size=20&slice=1&getparts=true&sort%5Bdate%5D=desc&filters%5Bdate%5D=all`;
-  const data = JSON.parse(await getText(api)) as { posts?: TildaPost[] };
+  const feeds = tildaFeeds(html);
+  if (!feeds.length) return null;
   const origin = new URL(pageUrl).origin;
-  return (data.posts ?? []).map((p) => {
-    const link = p.url ? (p.url.startsWith("http") ? p.url : `${origin}${p.url.startsWith("/") ? "" : "/"}${p.url}`) : pageUrl;
-    const body = [htmlToText(p.descr ?? ""), htmlToText(p.text ?? "")].filter((x) => x.trim()).join("\n\n");
-    const title = p.title?.trim() ?? "";
-    const text = title && !body.startsWith(title) ? `${title}\n\n${body}` : body || title;
-    return { externalId: `tilda:${p.uid}`, url: link, publishedAt: tildaDate(p.date), text, photoUrl: p.image ?? null };
-  });
+  const out: FetchedPost[] = [];
+  const seen = new Set<string>();
+  for (const feed of feeds.slice(0, 4)) {
+    const api = `https://feeds.tildacdn.com/api/getfeed/?feeduid=${feed.feeduid}&recid=${feed.recid}&c=${Date.now()}&size=20&slice=1&getparts=true&sort%5Bdate%5D=desc&filters%5Bdate%5D=all`;
+    const data = JSON.parse(await getText(api)) as { posts?: TildaPost[] };
+    for (const p of data.posts ?? []) {
+      const id = `tilda:${p.uid}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const link = p.url ? (p.url.startsWith("http") ? p.url : `${origin}${p.url.startsWith("/") ? "" : "/"}${p.url}`) : pageUrl;
+      const body = [htmlToText(p.descr ?? ""), htmlToText(p.text ?? "")].filter((x) => x.trim()).join("\n\n");
+      const title = p.title?.trim() ?? "";
+      const text = title && !body.startsWith(title) ? `${title}\n\n${body}` : body || title;
+      out.push({ externalId: id, url: link, publishedAt: tildaDate(p.published ?? p.date), text, photoUrl: p.image ?? null });
+    }
+  }
+  return out;
 }
 
 export async function fetchWeb(pageUrl: string): Promise<FetchedPost[]> {
   const html = await getText(pageUrl);
+  const hasFeed = tildaFeeds(html).length > 0;
   const tilda = await fetchTildaFeed(pageUrl, html).catch((err) => {
     logger.warn({ err: String(err), pageUrl }, "tilda feed failed");
     return null;
   });
   if (tilda) return tilda;
+  // Лента на странице есть, но не отдалась. Свалиться на «вся страница —
+  // одна новость» тут нельзя: подписчики получат кусок меню и шапки сайта,
+  // а источник будет отмечен как успешно просканированный.
+  if (hasFeed) throw new Error(`Лента Tilda на ${safeUrl(pageUrl)} не ответила`);
   // Generic fallback: the whole page as one "post" dated now; the classifier decides.
   const text = htmlToText(html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, ""));
   return [{ externalId: `page:${new Date().toISOString().slice(0, 10)}`, url: pageUrl, publishedAt: new Date().toISOString(), text: text.slice(0, 6000), photoUrl: null }];

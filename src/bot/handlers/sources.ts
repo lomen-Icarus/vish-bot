@@ -2,12 +2,32 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { parseSourceRef } from "../../news/fetchers.js";
-import { esc } from "../../schedule/format.js";
+import { clampHtml, esc } from "../../schedule/format.js";
 import { TOPIC_LABELS } from "../keyboards.js";
 import { logger } from "../../logger.js";
 
 export const sourceHandlers = new Composer<BotContext>();
 const adminOnly = sourceHandlers.filter((ctx) => ctx.isAdmin);
+
+/**
+ * Подсказка «как добавить источник» — одна на оба места, где она нужна:
+ * раньше их было две, и они успели разойтись (одна звала на /news/, другая
+ * на корень сайта; это один и тот же фид, но два разных источника, и новости
+ * приходили бы дважды).
+ *
+ * В примерах нарочно нет ссылок-заглушек вроде «t.me/канал»: такую строку
+ * копируют целиком, а кириллица в адресе не проходит разбор как Telegram или
+ * VK и молча заводит нерабочий веб-источник.
+ */
+const SOURCE_HELP = [
+  "Добавить источник: <code>/source_add</code> и ссылка.",
+  "• Telegram — <code>/source_add https://t.me/vish_chuvsu</code> (нужен публичный канал)",
+  "• Сайт — <code>/source_add https://vish.chuvsu.ru/</code> (Tilda: бот берёт ленты новостей и анонсов с датами и фото)",
+  "• VK — <code>/source_add https://vk.com/vish_chuvsu</code>",
+  "Telegram и сайт читаются без ключей.",
+];
+
+const VK_HINT = "VK пока не подключён: нужен <code>VK_SERVICE_TOKEN</code> в .env — сервисный ключ приложения из VK ID (id.vk.ru → «Мои приложения»). Без него источники VK падают с ошибкой на каждом скане.";
 
 function sourcesText(ctx: BotContext): { text: string; kb: InlineKeyboard } {
   const list = ctx.deps.repo.listNewsSources(false);
@@ -19,15 +39,12 @@ function sourcesText(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     lines.push(`#${s.id} <b>${esc(s.title ?? s.ref)}</b> (${s.kind}) — ${status}`);
     kb.text(`🗑 #${s.id} ${(s.title ?? s.ref).slice(0, 24)}`, `src:del:${s.id}`).row();
   }
-  lines.push("", "Добавить: <code>/source_add https://t.me/канал</code>, <code>/source_add https://vish.chuvsu.ru/</code>, <code>/source_add https://vk.com/группа</code>");
-  lines.push("Telegram и сайт читаются без ключей. Сайт ВИШ сделан на Tilda — бот берёт оттуда ленту новостей с датами и фото.");
-  if (!ctx.deps.config.VK_SERVICE_TOKEN) {
-    // VK без ключа не отдаёт даже открытые стены, а ключ теперь выдают только
-    // через профиль VK Бизнес ID — честнее сказать это сразу, чем «⚠️ ошибка».
-    lines.push("VK пока не подключён: нужен <code>VK_SERVICE_TOKEN</code> в .env — сервисный ключ приложения из VK ID (id.vk.ru, раздел «Мои приложения»). Без него источники VK будут падать с ошибкой.");
-  }
+  lines.push("", ...SOURCE_HELP);
+  if (!ctx.deps.config.VK_SERVICE_TOKEN) lines.push(VK_HINT);
   kb.text("🔎 Сканировать сейчас", "src:scan");
-  return { text: lines.join("\n"), kb };
+  // Список растёт с каждым источником, а лимит сообщения — 4096: без обрезки
+  // экран однажды просто перестал бы открываться.
+  return { text: clampHtml(lines.join("\n")), kb };
 }
 
 adminOnly.command("sources", async (ctx) => {
@@ -37,9 +54,12 @@ adminOnly.command("sources", async (ctx) => {
 
 adminOnly.command("source_add", async (ctx) => {
   const parsed = parseSourceRef(ctx.match ?? "");
-  if (!parsed) return void (await ctx.reply("Не понял ссылку. Примеры: https://t.me/vish_chuvsu, https://vk.com/vish_chuvsu, https://vish.chuvsu.ru/news/"));
+  if (!parsed) return void (await ctx.reply(["Не понял ссылку.", "", ...SOURCE_HELP].join("\n"), { parse_mode: "HTML" }));
   const s = ctx.deps.repo.addNewsSource(parsed.kind, parsed.ref, parsed.title);
-  await ctx.reply(`Добавил источник #${s.id}: ${esc(s.title ?? s.ref)} (${s.kind}). Проверить: /sources → «Сканировать сейчас».`, { parse_mode: "HTML" });
+  // Источник VK без ключа гарантированно упадёт на первом же скане: сказать
+  // об этом надо здесь, а не только на экране, с которого админ уже ушёл.
+  const warn = parsed.kind === "vk" && !ctx.deps.config.VK_SERVICE_TOKEN ? `\n\n⚠️ ${VK_HINT}` : "";
+  await ctx.reply(`Добавил источник #${s.id}: ${esc(s.title ?? s.ref)} (${s.kind}). Проверить: /sources → «Сканировать сейчас».${warn}`, { parse_mode: "HTML" });
 });
 
 adminOnly.command("source_del", async (ctx) => {
