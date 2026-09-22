@@ -815,6 +815,25 @@ export class Repo {
     return rows.map(rowToTeacherMap);
   }
 
+  /**
+   * Пометить преподавателя как «ведёт у ВИШ», не трогая checked_at: пометка
+   * приходит из его расписания, а не из полного обхода карточки. Если
+   * записать сюда время проверки, ночной обход сочтёт человека проверенным и
+   * кафедра, степень и фото у него так и останутся пустыми.
+   */
+  markTeacherVish(key: string, teacherId: number | null, name: string, groups: string[]): void {
+    this.db
+      .prepare(
+        `INSERT INTO teacher_map (key, teacher_id, name, vish, groups_json, subjects_json, source, checked_at)
+         VALUES (?, ?, ?, 1, ?, '[]', 'portal', NULL)
+         ON CONFLICT(key) DO UPDATE SET
+           teacher_id = COALESCE(excluded.teacher_id, teacher_map.teacher_id),
+           vish = 1,
+           groups_json = excluded.groups_json`,
+      )
+      .run(key, teacherId, name, JSON.stringify(groups.slice(0, 40)));
+  }
+
   /** Сколько человек включили «усиленную анонимность» (для /health). */
   anonCount(): number {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE anon = 1").get() as { n: number }).n;

@@ -88,10 +88,16 @@ export class PortalHttp {
    */
   async getBytesFollow(url: string, maxBytes = 5 * 1024 * 1024): Promise<{ status: number; bytes: Buffer; contentType: string } | null> {
     let current = url;
+    const home = new URL(url).host;
+    // Кука сессии портала уходит с каждым запросом. Редирект может увести на
+    // чужой хост (CDN или открытый редирект) — туда идём уже без куки, и
+    // Set-Cookie оттуда в банку не кладём.
+    let anonymous = false;
     for (let i = 0; i < 4; i++) {
-      const res = await this.request(current, { method: "GET", binary: true, maxBytes });
+      const res = await this.request(current, { method: "GET", binary: true, maxBytes, anonymous });
       if (res.status >= 300 && res.status < 400 && res.location) {
         current = new URL(res.location, current).toString();
+        anonymous = anonymous || new URL(current).host !== home;
         continue;
       }
       if (res.status !== 200 || !res.bytes) return null;
@@ -131,7 +137,7 @@ export class PortalHttp {
     return res;
   }
 
-  private request(url: string, init: { method: string; headers?: Record<string, string>; body?: string; binary?: boolean; maxBytes?: number }): Promise<HttpResponse> {
+  private request(url: string, init: { method: string; headers?: Record<string, string>; body?: string; binary?: boolean; maxBytes?: number; anonymous?: boolean }): Promise<HttpResponse> {
     const run = async (): Promise<HttpResponse> => {
       const wait = this.lastRequestAt + this.minGapMs - Date.now();
       if (wait > 0) await sleep(wait);
@@ -144,7 +150,7 @@ export class PortalHttp {
             method: init.method,
             headers: {
               ...(init.headers ?? {}),
-              Cookie: this.cookieHeader(),
+              ...(init.anonymous ? {} : { Cookie: this.cookieHeader() }),
               "User-Agent": this.userAgent,
               "Accept-Language": "ru,en;q=0.5",
             },
@@ -153,7 +159,7 @@ export class PortalHttp {
             dispatcher: this.dispatcher,
             signal: AbortSignal.timeout(this.timeoutMs),
           });
-          this.storeCookies(res.headers);
+          if (!init.anonymous) this.storeCookies(res.headers);
           if (res.status >= 500 || res.status === 403 || res.status === 429) {
             throw new PortalHttpError(`HTTP ${res.status} from ${url}`, res.status);
           }

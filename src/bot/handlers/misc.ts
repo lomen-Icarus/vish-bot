@@ -73,7 +73,6 @@ miscHandlers.command("start", async (ctx) => {
   // Кнопка над inline-списком открывает личку с «/start inline» — значит,
   // человек спрашивает именно про inline, и отвечать надо про него.
   if ((ctx.match ?? "").trim() === "inline") {
-    const bot = ctx.deps.botUsername ?? "бот";
     await ctx.reply(inlineGuide(ctx), { parse_mode: "HTML", reply_markup: kb, link_preview_options: { is_disabled: true } });
     await ctx.reply("Можно попробовать прямо сейчас — кнопка откроет выбор чата:", {
       reply_markup: new InlineKeyboard().switchInline("💬 Попробовать в чате", "неделя"),

@@ -54,10 +54,11 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
   const renderer = ctx.deps.renderer;
   // Navigating from a poster keeps the poster: the image is replaced in place.
   const photoMsg = !!opts.edit && isPhotoMessage(ctx);
-  const editingText = !!opts.edit && !photoMsg;
+  const editingText = !!opts.edit && !!ctx.callbackQuery?.message && !photoMsg;
   // «И так, и так» — это одно сообщение: постер с расписанием в подписи.
   const withText = ctx.user.format === "both" && !opts.forceImage;
   const wantImage = !!renderer && !editingText && (opts.forceImage || photoMsg || ctx.user.format === "image" || withText);
+  let textSent = false;
   if (opts.keyboard) {
     // A reply keyboard and an inline keyboard cannot share one message: send the mode keyboard first.
     await ctx.reply("Поток открыт. Вернуться: «◀️ В меню».", { reply_markup: streamKeyboard({ poisk: ctx.deps.config.POISK && !!ctx.deps.students }) });
@@ -78,11 +79,16 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
       const caption = withText && captionFits(text) ? text : undefined;
       if (photoMsg && (await editPhoto(ctx, png, fileName, caption, kb))) return;
       // Не влезло в подпись — текст идёт первым и молча, постер остаётся последним.
-      if (withText && !caption) await ctx.reply(text, { parse_mode: "HTML", disable_notification: true });
+      if (withText && !caption) {
+        await ctx.reply(text, { parse_mode: "HTML", disable_notification: true });
+        textSent = true;
+      }
       await ctx.replyWithPhoto(new InputFile(png, fileName), { caption, parse_mode: "HTML", reply_markup: kb });
       return;
     } catch (err) {
       logger.warn({ err: String(err) }, "stream poster failed");
+      // Текст уже ушёл перед постером — второй раз его слать нельзя.
+      if (textSent) return;
     }
   }
   if (editingText && ctx.callbackQuery?.message) {
@@ -159,15 +165,20 @@ streamHandlers.hears(BTN.streamCommon, async (ctx) => {
   const text = formatCommonLessons(intake, monday, rows, ownInStream);
   const shared = commonLessons(rows, ownInStream?.key ?? null);
   const wantImage = !!ctx.deps.renderer && shared.length > 0 && ctx.user.format !== "text";
+  let textSent = false;
   if (wantImage) {
     try {
       const png = await renderCommonWeek(ctx, intake, monday, shared, ownInStream);
       const caption = ctx.user.format !== "image" && captionFits(text) ? text : undefined;
-      if (!caption && ctx.user.format !== "image") await ctx.reply(text, { parse_mode: "HTML", disable_notification: true });
+      if (!caption && ctx.user.format !== "image") {
+        await ctx.reply(text, { parse_mode: "HTML", disable_notification: true });
+        textSent = true;
+      }
       await ctx.replyWithPhoto(new InputFile(png, `common-${intake}-${monday}.png`), { caption, parse_mode: "HTML" });
       return;
     } catch (err) {
       logger.warn({ err: String(err) }, "common lessons poster failed");
+      if (textSent) return;
     }
   }
   await ctx.reply(shared.length ? text : `${text}\n\n<i>Общей считается пара с одинаковым временем, предметом и аудиторией у двух и более групп потока.</i>`, { parse_mode: "HTML" });

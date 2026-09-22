@@ -278,6 +278,7 @@ export class TeacherService {
         source: "portal",
         checkedAt: new Date().toISOString(),
       });
+      this.mapCache = null;
       return this.repo.teacherMapByKey(key);
     } catch (err) {
       // Отмечаем попытку, иначе «битый» id вечно первый в очереди обхода
@@ -298,6 +299,7 @@ export class TeacherService {
         source: "portal",
         checkedAt: new Date().toISOString(),
       });
+      this.mapCache = null;
       logger.debug({ err: String(err), teacherId }, "teacher map refresh failed");
       return null;
     }
@@ -344,20 +346,8 @@ export class TeacherService {
     // Пар ВИШ в этом окне нет — это не «не наш»: окно маленькое. Молчим.
     if (!vishGroups.length) return;
     const prev = this.repo.teacherMapById(teacherId);
-    this.repo.upsertTeacherMap({
-      key: prev?.key ?? teacherMapKey(teacherId, name),
-      teacherId,
-      name: prev?.name ?? name,
-      vish: true,
-      groups: [...new Set([...(prev?.groups ?? []), ...vishGroups])].slice(0, 40),
-      subjects: prev?.subjects ?? [],
-      department: prev?.department ?? null,
-      degree: prev?.degree ?? null,
-      photoUrl: prev?.photoUrl ?? null,
-      photoFileId: prev?.photoFileId ?? null,
-      source: "portal",
-      checkedAt: prev?.checkedAt ?? new Date().toISOString(),
-    });
+    this.repo.markTeacherVish(prev?.key ?? teacherMapKey(teacherId, name), teacherId, prev?.name ?? name, [...new Set([...(prev?.groups ?? []), ...vishGroups])]);
+    this.mapCache = null;
   }
 
   /**
@@ -384,6 +374,7 @@ export class TeacherService {
   async crawlMap(limit = 40): Promise<{ checked: number; vish: number }> {
     const dir = await this.directory();
     for (const t of dir) this.repo.seedTeacherMap(teacherMapKey(t.id, t.name), t.id, t.name);
+    this.mapCache = null;
     const ids = this.repo.teacherMapStale(limit);
     const nameById = new Map(dir.map((t) => [t.id, t.name]));
     let checked = 0;
