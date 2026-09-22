@@ -8,7 +8,7 @@
  */
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
-import { filterSubgroup } from "../../schedule/format.js";
+import { filterSubgroup, posterTeacher, type TeacherView } from "../../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallClock } from "../../time.js";
 import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El, type Style } from "../core.js";
 import type { DayRenderInput, Renderer, StreamRenderInput, StreamRenderRow, WeekRenderInput } from "../image.js";
@@ -183,13 +183,13 @@ function metaSpans(parts: string[], color: string): El[] {
   return parts.map((m, i) => text(i ? `·  ${m}` : m, { fontSize: 23, fontWeight: 500, color, marginTop: 6, paddingRight: 14, lineHeight: 1.3 }));
 }
 
-function dayLesson(o: Occurrence, accent: string, ongoing: boolean): El {
+function dayLesson(o: Occurrence, accent: string, ongoing: boolean, view: TeacherView | undefined): El {
   const moved = o.status === "moved";
   const meta: string[] = [];
   if (o.slot != null) meta.push(`${o.slot} пара`);
   if (o.isDistance) meta.push("дистанционно");
   else if (o.room) meta.push(`ауд. ${o.room}`);
-  if (o.teacher) meta.push(o.teacher);
+
   if (o.subgroup) meta.push(`${o.subgroup} подгруппа`);
   const badges: El[] = [];
   if (moved && o.movedTo) badges.push(badge(`перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, "#e0a3ad"));
@@ -205,6 +205,7 @@ function dayLesson(o: Occurrence, accent: string, ongoing: boolean): El {
       { flex: 1, minWidth: 0, paddingLeft: 16, paddingRight: 12 },
       text(o.subject, { fontSize: 34, fontWeight: 700, color: FG, lineHeight: 1.18, letterSpacing: -0.5, textDecoration: moved ? "line-through" : "none", marginTop: 6 }),
       row({ flexWrap: "wrap", alignItems: "center", marginTop: 8 }, capsule(lessonTypeLabel(o.type), typeTint(o.type)), ...metaSpans(meta, SOFT)),
+      posterTeacher(o.teacher, view) ? text(posterTeacher(o.teacher, view)!, { fontSize: 24, fontWeight: view === "plain" ? 400 : 700, color: view === "plain" ? SOFT : FG, marginTop: 6 }) : null,
       badges.length ? row({ flexWrap: "wrap", marginTop: 4 }, ...badges) : null,
     ),
   );
@@ -224,9 +225,10 @@ const WK_TIME_W = 110;
 const WK_RAIL_W = 36;
 const WK_RAIL_X = WK_TIME_W + WK_RAIL_W / 2;
 
-function weekLesson(o: Occurrence, accent: string, last: boolean): El {
+function weekLesson(o: Occurrence, accent: string, last: boolean, view: TeacherView | undefined): El {
   const moved = o.status === "moved";
   const meta = [lessonTypeLabel(o.type), o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "перенос" : "", o.substituted ? "замена" : ""].filter(Boolean).join("  ·  ");
+  const who = posterTeacher(o.teacher, view);
   return row(
     { width: "100%", padding: "14px 0", borderBottom: last ? "none" : `1px solid ${RULE}`, opacity: moved ? 0.5 : 1 },
     col(
@@ -238,14 +240,18 @@ function weekLesson(o: Occurrence, accent: string, last: boolean): El {
     col(
       { flex: 1, minWidth: 0, paddingLeft: 12 },
       text(o.subject, { fontSize: 26, fontWeight: 700, color: FG, lineHeight: 1.18, letterSpacing: -0.3, textDecoration: moved ? "line-through" : "none" }),
-      text(meta, { fontSize: MIN_TYPE, fontWeight: 500, color: MUTED, marginTop: 5, lineHeight: 1.3 }),
+      row(
+        { flexWrap: "wrap", alignItems: "baseline", marginTop: 5 },
+        text(meta, { fontSize: MIN_TYPE, fontWeight: 500, color: MUTED, lineHeight: 1.3 }),
+        who ? text(`· ${who}`, { marginLeft: 8, fontSize: MIN_TYPE, fontWeight: view === "plain" ? 500 : 700, color: view === "plain" ? MUTED : FG, lineHeight: 1.3 }) : null,
+      ),
     ),
   );
 }
 
-function weekSection(date: LocalDate, list: Occurrence[], accent: string, isToday: boolean): El {
+function weekSection(date: LocalDate, list: Occurrence[], accent: string, isToday: boolean, view: TeacherView | undefined): El {
   const scheduled = list.filter((o) => o.status === "scheduled").length;
-  const rows = list.map((o, i) => weekLesson(o, accent, i === list.length - 1));
+  const rows = list.map((o, i) => weekLesson(o, accent, i === list.length - 1, view));
   const head = row(
     { width: "100%", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
     row(
@@ -302,7 +308,7 @@ function groupChips(groups: string[], mine: boolean, accent: string): El {
  * only for the viewer's group) and its own tick in the time gutter, so a slot
  * with five groups still reads as five points on the rail.
  */
-function streamSlot(s: Slot, accent: string, ongoing: boolean): El {
+function streamSlot(s: Slot, accent: string, ongoing: boolean, view: TeacherView | undefined): El {
   return col(
     { width: "100%", padding: "24px 0", borderBottom: `1px solid ${RULE}` },
     ...s.rows.map((r, i) => {
@@ -319,7 +325,12 @@ function streamSlot(s: Slot, accent: string, ongoing: boolean): El {
           { flex: 1, minWidth: 0, paddingLeft: 16, paddingRight: 12, paddingTop: first ? 0 : 2 },
           groupChips(r.groups, r.mine, accent),
           text(r.subject, { fontSize: r.mine ? 30 : 26, fontWeight: 700, color: r.mine ? FG : SOFT, lineHeight: 1.18, letterSpacing: -0.4, marginTop: 4, textDecoration: moved ? "line-through" : "none" }),
-          row({ flexWrap: "wrap", alignItems: "center", marginTop: 4 }, capsule(lessonTypeLabel(r.type), typeTint(r.type)), ...metaSpans(meta, r.mine ? SOFT : MUTED)),
+          row(
+            { flexWrap: "wrap", alignItems: "center", marginTop: 4 },
+            capsule(lessonTypeLabel(r.type), typeTint(r.type)),
+            ...metaSpans(meta, r.mine ? SOFT : MUTED),
+            posterTeacher(r.teacher, view) ? text(`· ${posterTeacher(r.teacher, view)}`, { marginLeft: 8, fontSize: MIN_TYPE, fontWeight: view === "plain" ? 500 : 700, color: view === "plain" ? MUTED : FG }) : null,
+          ),
         ),
       );
     }),
@@ -357,7 +368,7 @@ export async function createRenderer(): Promise<Renderer | null> {
           markerPlaced = true;
         }
         if (ongoing) markerPlaced = true;
-        items.push(dayLesson(o, accent.color, ongoing));
+        items.push(dayLesson(o, accent.color, ongoing, input.teacherView));
         if (o.status === "scheduled" && o.end != null) prevEnd = o.end;
       }
       if (isToday && !markerPlaced && lessons.length) items.push(marker());
@@ -387,7 +398,7 @@ export async function createRenderer(): Promise<Renderer | null> {
         const date = addDays(monday, i);
         const list = filterSubgroup(byDate.get(date) ?? [], subgroup);
         if (i === 6 && !list.length) continue;
-        sections.push(weekSection(date, list, accent.color, date === today));
+        sections.push(weekSection(date, list, accent.color, date === today, input.teacherView));
       }
       const subtitle = `${group.title}  ·  ${fmtDayMonth(monday)} – ${fmtDayMonth(addDays(monday, 6))}`;
       const tree = page(accent.color, [header("Неделя", subtitle, weekInfo, accent), col({ width: "100%", marginTop: 26 }, ...sections), footer(`${group.title}${weekTotal ? ` · ${weekTotal} ${pluralPairs(weekTotal)} за неделю` : ""}`, "tt.chuvsu.ru")]);
@@ -414,7 +425,7 @@ export async function createRenderer(): Promise<Renderer | null> {
           markerPlaced = true;
         }
         if (ongoing) markerPlaced = true;
-        items.push(streamSlot(s, accent.color, ongoing));
+        items.push(streamSlot(s, accent.color, ongoing, input.teacherView));
       }
       if (isToday && !markerPlaced && slots.length) items.push(nowMarker(accent.color, ST_TIME_W, ST_RAIL_W, now!.minutes));
       const subtitle = [`Поток 20${intake}`, fmtDayMonth(date), relDay(date, today)].filter(Boolean).join("  ·  ");

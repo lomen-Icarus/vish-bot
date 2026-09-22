@@ -16,6 +16,8 @@ import { buildPeopleResults, parseInlineQuery } from "../src/bot/inline.js";
 import { KnownPeople, normalizeHandle } from "../src/students/known.js";
 import { StudentDirectory } from "../src/students/directory.js";
 import { tildaDate, tildaFeeds } from "../src/news/fetchers.js";
+import { formatDay, formatWeek, shortTeacher } from "../src/schedule/format.js";
+import { mondayOf } from "../src/time.js";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
 import { miscHandlers } from "../src/bot/handlers/misc.js";
@@ -408,5 +410,43 @@ describe("/whois разбирает вставленную таблицу", () =
     expect(out).toContain("▫️ Назаров Алексей Андреевич");
     expect(out).toContain("❔ Иванов Иван Иванович");
     expect(out).not.toContain("ВИШ-14-25");
+  });
+});
+
+describe("преподаватель в расписании", () => {
+  const g = group;
+  const lsn = (slot: number, subject: string, teacher: string | null): Occurrence => ({ ...lesson(subject, slot), teacher });
+  const info = { week: 3, parity: "odd" as const, semester: 1 as const };
+
+  it("должность и степень в расписании не печатаются, фамилия — с инициалами", () => {
+    expect(shortTeacher("доц. к.пед.н. Ярдухина Светлана Александровна")).toBe("Ярдухина С. А.");
+    expect(shortTeacher("зав.каф. к.э.н. Трукова А. И.")).toBe("Трукова А. И.");
+    expect(shortTeacher("Смирнов")).toBe("Смирнов");
+  });
+
+  it("настройка управляет и текстом, и выделением", () => {
+    const byDate = new Map([[today, [lsn(1, "Физика", "Иванов Иван Иванович")]]]);
+    const bold = formatWeek(g, mondayOf(today), byDate, info, today, { teacherView: "bold" });
+    const plain = formatWeek(g, mondayOf(today), byDate, info, today, { teacherView: "plain" });
+    const off = formatWeek(g, mondayOf(today), byDate, info, today, { teacherView: "off" });
+    expect(bold).toContain("<b>Иванов И. И.</b>");
+    expect(plain).toContain("Иванов И. И.");
+    expect(plain).not.toContain("<b>Иванов И. И.</b>");
+    expect(off).not.toContain("Иванов");
+  });
+
+  it("неделя — две строки на пару: предмет, под ним тип, аудитория и препод", () => {
+    const byDate = new Map([[today, [lsn(1, "Физика", "Иванов Иван Иванович")]]]);
+    const lines = formatWeek(g, mondayOf(today), byDate, info, today, {}).split("\n");
+    const subj = lines.findIndex((l) => l.includes("Физика"));
+    expect(lines[subj]).not.toContain("лекция");
+    expect(lines[subj + 1]).toContain("лекция");
+    expect(lines[subj + 1]).toContain("Иванов И. И.");
+  });
+
+  it("день показывает препода там же, где аудиторию", () => {
+    const text = formatDay(g, today, [lsn(1, "Физика", "Иванов Иван Иванович")], info, today, { teacherView: "bold" });
+    expect(text).toContain("<b>Иванов И. И.</b>");
+    expect(formatDay(g, today, [lsn(1, "Физика", "Иванов Иван Иванович")], info, today, { teacherView: "off" })).not.toContain("Иванов");
   });
 });
