@@ -89,8 +89,11 @@ function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentio
     items.push([label.slice(0, 40), data]);
   };
   // «Наши» — ниже остальных, ближе к полю ввода: туда и смотрят, и жмут.
-  const byVish = [...mentions.teachers].sort((a, b) => Number(!!teacherVishTag(ctx.deps.repo, a.id, a.name)) - Number(!!teacherVishTag(ctx.deps.repo, b.id, b.name)));
-  for (const t of byVish) add(`👨‍🏫 ${t.name}${teacherVishTag(ctx.deps.repo, t.id, t.name)}`, `t:${t.id}`, t.name);
+  // Пометку считаем по разу на человека: внутри сравнения это были бы десятки
+  // одинаковых запросов в базу на каждую перестановку.
+  const tagged = mentions.teachers.map((t) => ({ t, tag: teacherVishTag(ctx.deps.repo, t.id, t.name) }));
+  tagged.sort((a, b) => Number(!!a.tag) - Number(!!b.tag));
+  for (const { t, tag } of tagged) add(`👨‍🏫 ${t.name}${tag}`, `t:${t.id}`, t.name);
   // Преподаватель онлайн-пары ВИШ — всегда наш, карта для этого не нужна.
   for (const name of mentions.webinarTeachers) add(`👨‍🏫 ${name} (ВИШ)`, webinarKey(name), name);
   for (const st of mentions.students) add(`🕵️ ${st.name} · ${st.groupTitle}`, `pop:${st.id}`, st.name, "student");
