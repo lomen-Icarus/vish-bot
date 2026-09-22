@@ -36,6 +36,14 @@ function settingsText(ctx: BotContext): string {
     ...TOPICS.map((t) => `🏷 ${TOPIC_LABELS[t]} — ${TOPIC_HINTS[t]}.`),
     "Темы — это рассылки от ВИШ, включи те, что хочешь получать.",
   );
+  if ((ctx.deps.known?.count() ?? 0) > 0) {
+    lines.push(
+      "",
+      "<b>🕶 Усиленная анонимность</b>",
+      "Бот может узнать тебя по телеграм-нику из списка старост и поздороваться по имени. ФИО он ни у кого не спрашивает — регистрации тут нет.",
+      "Включишь анонимность — бот перестанет связывать этот аккаунт с человеком из списка: ни имени, ни «Привет, Вася». Выключишь обратно — всё вернётся.",
+    );
+  }
   const watch = ctx.deps.repo.watchGroups(ctx.user.id);
   if (watch.length) lines.push("", `Слежу за: ${watch.map((k) => esc(ctx.deps.service.group(k)?.title ?? k)).join(", ")}`);
   return lines.join("\n");
@@ -51,6 +59,7 @@ async function renderSettings(ctx: BotContext, edit: boolean): Promise<void> {
     defaultTheme: ctx.deps.config.POSTER_THEME,
     teacherCount: ctx.deps.repo.watchedTeachers(user.id).length,
     slides: !!ctx.deps.config.SLIDES_TOKEN,
+    known: (ctx.deps.known?.count() ?? 0) > 0,
   });
   const text = settingsText({ ...ctx, user } as BotContext);
   if (edit) {
@@ -117,6 +126,10 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     }
     case "changes":
       patch.notifyChanges = !user.notifyChanges;
+      break;
+    case "anon":
+      patch.anon = !user.anon;
+      toast = patch.anon ? "Готово: больше не здороваюсь по имени и не связываю аккаунт с человеком из списка" : "Снова узнаю тебя по имени";
       break;
     case "slides":
       patch.wantSlides = !user.wantSlides;

@@ -8,6 +8,7 @@ import type { TeacherService } from "../portal/teachers.js";
 import type { NewsScanner } from "../news/scanner.js";
 import type { WebinarService } from "../portal/webinars.js";
 import type { StudentDirectory } from "../students/directory.js";
+import type { KnownPeople } from "../students/known.js";
 import type { Server } from "node:http";
 
 /** Short-lived per-user conversational state (single process, in memory). */
@@ -36,6 +37,11 @@ export interface Deps {
   webinars: WebinarService | null;
   /** Справочник студентов для «сыска»; null, когда POISK=FALSE. */
   students: StudentDirectory | null;
+  /**
+   * «Бот узнаёт своих»: ник → имя, только для приветствия. Ники никуда не
+   * показываются и в поиск студентов не попадают.
+   */
+  known: KnownPeople | null;
   /** Calendar-feed server; subscription links are offered only while it listens. */
   http: Server | null;
   /**

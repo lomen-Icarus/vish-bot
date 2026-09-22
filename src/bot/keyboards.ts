@@ -198,7 +198,7 @@ export function formatPicker(): InlineKeyboard {
   return new InlineKeyboard().text("📝 Текстом", "fmt:text").text("🖼 Картинкой", "fmt:image").row().text("📝🖼 И так, и так", "fmt:both");
 }
 
-export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: { topics: string[]; hasImages: boolean; watchCount: number; defaultTheme: string; teacherCount?: number; slides?: boolean }): InlineKeyboard {
+export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: { topics: string[]; hasImages: boolean; watchCount: number; defaultTheme: string; teacherCount?: number; slides?: boolean; known?: boolean }): InlineKeyboard {
   const kb = new InlineKeyboard();
   kb.text(`👥 Группа: ${group?.title ?? "не выбрана"}`, "s:group").row();
   kb.text(`🔢 Подгруппа: ${user.subgroup ? `${user.subgroup}` : "все"}`, "s:subgroup");
@@ -219,6 +219,9 @@ export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: {
   for (const t of opts.topics) kb.text(`${user.topics.includes(t) ? "✅" : "▫️"} ${TOPIC_LABELS[t] ?? t}`, `s:topic:${t}`);
   if (opts.topics.length) kb.row();
   kb.text(`👀 Следить за другими группами${opts.watchCount ? ` (${opts.watchCount})` : ""}`, "s:watch").row();
+  // Пункт показываем только там, где узнавание вообще возможно: иначе это
+  // тумблер от несуществующей лампочки.
+  if (opts.known) kb.text(`🕶 Усиленная анонимность: ${onoff(user.anon)}`, "s:anon").row();
   if (opts.teacherCount) kb.text(`👨‍🏫 Слежу за преподавателями (${opts.teacherCount})`, "s:teachers").row();
   kb.text("✖️ Закрыть", "s:close");
   return kb;

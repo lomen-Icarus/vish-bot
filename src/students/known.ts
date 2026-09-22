@@ -1,0 +1,107 @@
+/**
+ * «Бот узнаёт своих» — сопоставление телеграм-ника с именем человека.
+ *
+ * Зачем: на /start приятно получить «Привет, Данил» вместо «С возвращением».
+ * Регистрации в боте нет и не будет: ФИО у людей не спрашивают нигде, имя
+ * берётся из файла старост, который лежит ТОЛЬКО на хостинге (KNOWN_DB).
+ *
+ * Почему отдельный файл, а не столбец в реестре поиска: ник не должен попасть
+ * в поиск студентов ни при каких обстоятельствах. Поиск читает POISK_DB и про
+ * этот файл не знает; здесь нет ни поиска по имени, ни выдачи ников наружу —
+ * только «этот ник → это имя».
+ *
+ * Группу из файла бот никогда не навязывает: файл годичной давности, группы
+ * успевают поменяться, а ФИО — нет.
+ */
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { logger } from "../logger.js";
+
+export interface KnownPerson {
+  /** Полное ФИО из файла. */
+  name: string;
+  /** Имя для обращения: «Албуткин Данил Иванович» → «Данил». */
+  firstName: string;
+}
+
+/** «Фамилия Имя Отчество» → «Имя». Одно слово — им и обращаемся. */
+function firstNameOf(fio: string): string {
+  const parts = fio.split(/\s+/).filter(Boolean);
+  return parts[1] ?? parts[0] ?? fio;
+}
+
+/** Ник без «@» и адреса, в нижнем регистре: ровно так он хранится и сравнивается. */
+export function normalizeHandle(raw: string | null | undefined): string | null {
+  const v = String(raw ?? "").trim();
+  if (!v) return null;
+  const m = /^(?:https?:\/\/)?(?:t(?:elegram)?\.me\/)?@?([A-Za-z0-9_]{4,32})\/?$/.exec(v);
+  return m ? m[1]!.toLowerCase() : null;
+}
+
+export class KnownPeople {
+  private byHandle = new Map<string, KnownPerson>();
+  private mtimeMs = -1;
+  private size = -1;
+  private error: string | null = null;
+
+  constructor(private readonly file: string) {
+    this.reload();
+  }
+
+  private reloadIfChanged(): void {
+    try {
+      const st = statSync(this.file);
+      if (st.mtimeMs !== this.mtimeMs || st.size !== this.size) this.reload();
+    } catch {
+      this.mtimeMs = -1;
+      this.size = -1;
+    }
+  }
+
+  private reload(): void {
+    if (!existsSync(this.file)) {
+      this.byHandle = new Map();
+      this.error = "файла нет";
+      return;
+    }
+    const st = statSync(this.file);
+    this.mtimeMs = st.mtimeMs;
+    this.size = st.size;
+    try {
+      const map = new Map<string, KnownPerson>();
+      const dupes = new Set<string>();
+      for (const line of readFileSync(this.file, "utf8").split(/\r?\n/)) {
+        const [rawName, rawHandle] = line.split(/[;,\t]/);
+        const name = (rawName ?? "").trim();
+        const handle = normalizeHandle(rawHandle);
+        if (!name || !handle || !/\s/.test(name)) continue;
+        // Один ник у двоих — узнавать по нему нельзя: выкидываем обоих, иначе
+        // бот поздоровается чужим именем.
+        if (map.has(handle)) dupes.add(handle);
+        map.set(handle, { name, firstName: firstNameOf(name) });
+      }
+      for (const h of dupes) map.delete(h);
+      this.byHandle = map;
+      this.error = null;
+      logger.info({ count: map.size, file: this.file }, "known people loaded");
+    } catch (err) {
+      this.error = String(err).slice(0, 200);
+      logger.warn({ err: String(err), file: this.file }, "known people load failed");
+    }
+  }
+
+  /** Кто это, если ник есть в файле. Ник наружу не отдаётся никогда. */
+  byUsername(username: string | null | undefined): KnownPerson | null {
+    this.reloadIfChanged();
+    const handle = normalizeHandle(username);
+    return handle ? (this.byHandle.get(handle) ?? null) : null;
+  }
+
+  count(): number {
+    this.reloadIfChanged();
+    return this.byHandle.size;
+  }
+
+  stats(): { count: number; file: string; error: string | null } {
+    return { count: this.count(), file: this.file, error: this.error };
+  }
+}

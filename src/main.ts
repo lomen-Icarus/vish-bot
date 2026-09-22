@@ -16,6 +16,7 @@ import { NewsScanner } from "./news/scanner.js";
 import type { Deps } from "./bot/context.js";
 import { createHttpServer } from "./http/server.js";
 import { StudentDirectory } from "./students/directory.js";
+import { KnownPeople } from "./students/known.js";
 import { resolveStudentGroup, whereNowText } from "./students/locate.js";
 import { filterSubgroup } from "./schedule/format.js";
 import { todayMsk } from "./time.js";
@@ -49,6 +50,10 @@ async function main(): Promise<void> {
   const webinars = new WebinarService(portal, repo, config.FACULTY_ID);
   // «Сыск»: файл со студентами лежит только на хостинге и в репозиторий не попадает.
   const students = config.POISK ? new StudentDirectory(config.POISK_DB) : null;
+  // Узнавание по нику — отдельный файл и отдельный модуль: ники не должны
+  // попасть в поиск студентов даже по ошибке. Нет файла — никого не узнаём.
+  const known = new KnownPeople(config.KNOWN_DB);
+  logger.info({ count: known.count(), file: config.KNOWN_DB }, known.count() ? "known people loaded" : "known people file is empty or missing: бот никого не узнаёт по имени");
   if (students) {
     const st = students.stats();
     // POISK=TRUE с ненайденным файлом — это мёртвый раздел у всех: это ошибка, а не «info».
@@ -84,7 +89,7 @@ async function main(): Promise<void> {
     : null;
   const ask = config.ANTHROPIC_API_KEY ? new AskService(config.ANTHROPIC_API_KEY, service, { model: config.AI_MODEL }, teachers, webinars, studentLookup) : null;
 
-  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
+  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, known, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
   const bot = createBot(deps);
   await bot.init();
   deps.news = config.ANTHROPIC_API_KEY

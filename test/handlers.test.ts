@@ -72,7 +72,7 @@ async function run(update: Update, deps: Deps, userId = 7): Promise<{ calls: Cal
 function makeDeps(userId = 7): Deps {
   const repo = new Repo(openDatabase(":memory:"));
   repo.touchUser(userId, "u", "U");
-  return { config: { ADMIN_IDS: [], MEDIA_CHAT_IDS: [], PUBLIC_URL: undefined, HTTP_PORT: 0, POISK: false, POISK_DAILY_LIMIT: 30, AI_DAILY_LIMIT_PER_USER: 10, AI_DAILY_LIMIT_GLOBAL: 300 } as unknown as Deps["config"], repo, service: makeService(), renderer: null, ask: null, teachers: null, webinars: null, students: null, news: null, http: null, inline: true, botUsername: "vish_bot", pending: new Map(), startedAt: new Date() };
+  return { config: { ADMIN_IDS: [], MEDIA_CHAT_IDS: [], PUBLIC_URL: undefined, HTTP_PORT: 0, POISK: false, POISK_DAILY_LIMIT: 30, AI_DAILY_LIMIT_PER_USER: 10, AI_DAILY_LIMIT_GLOBAL: 300 } as unknown as Deps["config"], repo, service: makeService(), renderer: null, ask: null, teachers: null, webinars: null, students: null, known: null, news: null, http: null, inline: true, botUsername: "vish_bot", pending: new Map(), startedAt: new Date() };
 }
 
 const textUpdate = (text: string, userId = 7): Update => ({
