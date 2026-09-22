@@ -20,6 +20,7 @@ import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
 import { miscHandlers } from "../src/bot/handlers/misc.js";
 import { settingsHandlers } from "../src/bot/handlers/settings.js";
+import { adminHandlers } from "../src/bot/handlers/admin.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -314,5 +315,98 @@ describe("журнал поисков", () => {
     repo.logPoisk(7, today, "поиск: Беляев Иван Петрович", "id1");
     repo.logPoisk(7, today, "поиск: Беляев Иван Петрович", "id1");
     expect(repo.poiskUsage(7, today)).toBe(1);
+  });
+});
+
+describe("сверка списка ФИО с пользователями бота", () => {
+  const file = (rows: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), "whois-"));
+    const f = join(dir, "known.csv");
+    writeFileSync(f, `ФИО;Телеграм\n${rows}`, "utf8");
+    return f;
+  };
+  const seen = new Set(["petrov"]);
+
+  it("разные отчества — разные люди, а не «пользуется»", () => {
+    const k = new KnownPeople(file("Иванов Иван Петрович;petrov\n"));
+    // Тот, кого спрашивают, в списке не значится вовсе.
+    expect(k.status("Иванов Иван Сергеевич", seen)).toBe("no-handle");
+    expect(k.status("Иванов Иван Петрович", seen)).toBe("uses");
+  });
+
+  it("без отчества при двух тёзках — честное «не берусь», а не молчаливая догадка", () => {
+    const k = new KnownPeople(file("Иванов Иван Петрович;petrov\nИванов Иван Сергеевич;sergeev\n"));
+    expect(k.status("Иванов Иван", seen)).toBe("ambiguous");
+    expect(k.status("Иванов Иван Сергеевич", seen)).toBe("not-seen");
+  });
+
+  it("два одинаковых ФИО в файле не дают вердикта по порядку строк", () => {
+    const k = new KnownPeople(file("Иванов Иван Иванович;ivanovA\nИванов Иван Иванович;petrov\n"));
+    expect(k.status("Иванов Иван Иванович", seen)).toBe("ambiguous");
+  });
+
+  it("инициалы понимаются: «Иванов И.И.» — это Иванов Иван Иванович", () => {
+    const k = new KnownPeople(file("Иванов Иван Иванович;petrov\n"));
+    expect(k.status("Иванов И.И.", seen)).toBe("uses");
+    expect(k.status("Иванов И. С.", seen)).toBe("no-handle");
+  });
+
+  it("без отчества, когда подходящий один — обычный ответ", () => {
+    const k = new KnownPeople(file("Беляев Василий Владимирович;belyaev\n"));
+    expect(k.status("Беляев Василий", seen)).toBe("not-seen");
+  });
+
+  it("опечатка в фамилии не выдаётся за совпадение", () => {
+    const k = new KnownPeople(file("Иванов Иван Петрович;petrov\n"));
+    expect(k.status("Иванав Иван Петрович", seen)).toBe("no-handle");
+  });
+
+  it("заблокировавшие бота не считаются пользователями", () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(1, "aktiv", "A");
+    repo.touchUser(2, "banned", "B");
+    repo.updateUser(2, { blocked: true });
+    repo.touchUser(3, "hidden", "H");
+    repo.updateUser(3, { anon: true });
+    const names = repo.botUsernames();
+    expect(names.has("aktiv")).toBe(true);
+    expect(names.has("banned")).toBe(false);
+    expect(names.has("hidden")).toBe(false);
+  });
+});
+
+describe("/whois разбирает вставленную таблицу", () => {
+  it("выкидывает номера, группы и хвост после «|», считает людей", async () => {
+    const d = makeDeps([lesson("Физика", 2)]);
+    const dir = mkdtempSync(join(tmpdir(), "whois-"));
+    const f = join(dir, "known.csv");
+    writeFileSync(f, "ФИО;Телеграм\nБеляев Василий Владимирович;belyaev\nНазаров Алексей Андреевич;nazarov\n", "utf8");
+    d.known = new KnownPeople(f);
+    d.repo.touchUser(77, "belyaev", "В");
+    const calls: Call[] = [];
+    const api = new Api("123:FAKE");
+    api.config.use(async (_prev, method, payload) => {
+      calls.push({ method, payload: payload as Record<string, unknown> });
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never };
+    });
+    const text = "/whois\n| Беляев Василий Владимирович | ВИШ-13-23 | обществ. |\n2. Назаров Алексей Андреевич\nВИШ-14-25\nИванов Иван Иванович";
+    const update: Update = {
+      update_id: 1,
+      message: { message_id: 10, date: 0, chat: { id: 7, type: "private", first_name: "U" }, from: { id: 7, is_bot: false, first_name: "U" }, text, entities: [{ type: "bot_command" as const, offset: 0, length: 6 }] },
+    };
+    const ctx = new Context(update, api, ME) as BotContext;
+    ctx.deps = d;
+    ctx.user = d.repo.touchUser(7, "admin", "A");
+    ctx.isAdmin = true;
+    const composer = new Composer<BotContext>();
+    composer.use(adminHandlers);
+    await composer.middleware()(ctx, async () => undefined);
+    const out = calls.map((c) => String(c.payload.text ?? "")).join("\n");
+    // Группа строкой — не человек, номер и «|» отброшены, проверено трое.
+    expect(out).toContain("Проверено 3 чел.");
+    expect(out).toContain("✅ Беляев Василий Владимирович");
+    expect(out).toContain("▫️ Назаров Алексей Андреевич");
+    expect(out).toContain("❔ Иванов Иван Иванович");
+    expect(out).not.toContain("ВИШ-14-25");
   });
 });
