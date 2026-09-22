@@ -157,8 +157,13 @@ teacherHandlers.on("message:text", async (ctx, next) => {
   if (!guess && found.length === 1 && !fromWebinars.length) return showTeacherDay(ctx, found[0]!, todayMsk());
   if (!guess && !found.length && fromWebinars.length === 1) return showWebinarTeacher(ctx, fromWebinars[0]!);
   // Пометку «(ВИШ)» ставит карта, а ночной обход портала до нужной фамилии
-  // мог ещё не дойти: проверяем тех, кого прямо сейчас показываем.
-  if (teachers) await teachers.ensureMapped(found);
+  // мог ещё не дойти: проверяем тех, кого прямо сейчас показываем. Портал
+  // медленный, поэтому не больше трёх — и «печатает…» заново, чтобы человек
+  // видел, что бот занят, а не завис.
+  if (teachers) {
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    await teachers.ensureMapped(found);
+  }
   const kb = new InlineKeyboard();
   // Тёзки встречаются, поэтому «наши» помечены — и идут в самом низу списка,
   // у поля ввода: до верхних кнопок палец не тянется, а нужны обычно наши.
