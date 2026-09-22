@@ -366,7 +366,7 @@ export class TeacherService {
    * а пометка «(ВИШ)» нужна в списке сразу. Страница кешируется на 15 минут,
    * поэтому открытие карточки следом уже не стоит ни одного запроса.
    */
-  async ensureMapped(refs: TeacherRef[], limit = 4): Promise<void> {
+  async ensureMapped(refs: TeacherRef[], limit = 3): Promise<void> {
     const todo = refs.filter((r) => !this.repo.teacherMapById(r.id)?.checkedAt).slice(0, limit);
     for (const r of todo) {
       try {
