@@ -274,4 +274,10 @@ export const MIGRATIONS: string[] = [
   -- человеком из файла старост и не здоровается по имени. Выключается обратно.
   ALTER TABLE users ADD COLUMN anon INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- Разовая уборка: до правки в тексте ошибки VK лежал полный адрес запроса
+  -- вместе с сервисным токеном, и он оседал здесь (а оттуда шёл админу в
+  -- /news_scan). Код больше так не делает, но старые строки надо стереть.
+  UPDATE news_sources SET last_error = 'ошибка скрыта: в ней был токен, подробности в логах' WHERE last_error LIKE '%access_token%';
+  `,
 ];
