@@ -20,6 +20,7 @@ import { formatDay, formatWeek, shortTeacher } from "../src/schedule/format.js";
 import { mondayOf } from "../src/time.js";
 import { diffOccurrences } from "../src/schedule/diff.js";
 import { samePerson } from "../src/text/match.js";
+import { pruneFalseChangeEvents } from "../src/db/cleanup.js";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
 import { miscHandlers } from "../src/bot/handlers/misc.js";
@@ -524,5 +525,40 @@ describe("мнимая замена преподавателя", () => {
     const base: Occurrence = { ...swap, teacher: "Петров П. П.", substituted: { room: swap.room, teacher: "Иванова Ирина Ивановна", distance: false } };
     const text = formatDay(group, today, [base], { week: 3, parity: "odd", semester: 1 }, today, {});
     expect(text).toContain("Иванова И. И. → Петров П. П.");
+  });
+});
+
+describe("уборка ложных изменений", () => {
+  const ev = (before: Partial<Occurrence>, after: Partial<Occurrence>, fields: string[]) => ({
+    groupKey: group.key,
+    date: today,
+    period: 1 as const,
+    kind: "changed" as const,
+    payload: { before: { ...lesson("Физика", 1), ...before }, after: { ...lesson("Физика", 1), ...after }, fields },
+  });
+
+  it("выносит появление преподавателя и оставляет настоящие изменения", () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.insertChangeEvents([
+      ev({ teacher: null }, { teacher: "доц. Иванова Ирина Ивановна" }, ["teacher"]),
+      ev({ teacher: "Иванова И. И." }, { teacher: null }, ["teacher"]),
+      ev({ teacher: "доц. к.х.н. Иванова Ирина Ивановна" }, { teacher: "Иванова И.И." }, ["teacher"]),
+      ev({ room: "Г-316" }, { room: "Т-310" }, ["room"]),
+      ev({ teacher: "Иванова И. И." }, { teacher: "Петров П. П." }, ["teacher"]),
+    ]);
+    expect(pruneFalseChangeEvents(repo)).toBe(3);
+    const left = repo.recentEvents(group.key, 20);
+    expect(left).toHaveLength(2);
+    expect(JSON.stringify(left)).toContain("Петров");
+    expect(JSON.stringify(left)).toContain("Т-310");
+  });
+
+  it("второй раз не перебирает базу: отметка стоит", () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.insertChangeEvents([ev({ teacher: null }, { teacher: "Иванова И. И." }, ["teacher"])]);
+    expect(pruneFalseChangeEvents(repo)).toBe(1);
+    repo.insertChangeEvents([ev({ teacher: null }, { teacher: "Петров П. П." }, ["teacher"])]);
+    expect(pruneFalseChangeEvents(repo)).toBe(0);
+    expect(repo.recentEvents(group.key, 20)).toHaveLength(1);
   });
 });

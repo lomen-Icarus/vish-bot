@@ -15,7 +15,7 @@ export interface ChangeEvent {
   fields?: string[];
 }
 
-function changedFields(a: Occurrence, b: Occurrence): string[] {
+export function changedFields(a: Occurrence, b: Occurrence): string[] {
   const f: string[] = [];
   if (a.room !== b.room) f.push("room");
   // Преподаватель ПОЯВИЛСЯ или ПРОПАЛ — это не замена, а смена источника.
