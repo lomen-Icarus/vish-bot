@@ -336,7 +336,7 @@ function studentResults(deps: Deps, req: InlineRequest, user: User | null, q: st
   }
   const hits = dir.search(q, 5);
   if (!hits.length) {
-    return [note(`p:nf:${q}`, "🤷 Никого не нашёл", `В реестре ВИШ никого похожего на «${q}» нет. Первокурсников в реестре нет вовсе.`)];
+    return [note(`p:nf:${q}`, "🤷 Никого не нашёл", `В реестре ВИШ никого похожего на «${esc(q)}» нет. Первокурсников в реестре нет вовсе.`)];
   }
   // В журнал пишем найденного, а не набранный текст: иначе каждая буква
   // «Б», «Бе», «Бел» съедала бы отдельный поиск из дневного лимита.
@@ -371,12 +371,12 @@ async function teacherResults(deps: Deps, req: InlineRequest, q: string, today: 
   }
   const teachers = deps.teachers;
   if (!teachers) {
-    if (!out.length) out.push(note(`pt:nf:${q}`, "🤷 Не нашёл", `Полное расписание преподавателей портал показывает только авторизованным, а у бота нет учётки. Про «${q}» в онлайн-парах ВИШ ничего нет.`));
+    if (!out.length) out.push(note(`pt:nf:${q}`, "🤷 Не нашёл", `Полное расписание преподавателей портал показывает только авторизованным, а у бота нет учётки. Про «${esc(q)}» в онлайн-парах ВИШ ничего нет.`));
     return out;
   }
   const local = teachers.searchLocal(q, 5);
   if (!local.length) {
-    if (!out.length) out.push(note(`pt:nf:${q}`, "🤷 Не нашёл", `В карте преподавателей «${q}» нет. Попробуй одну фамилию без имени — или открой бота и поищи там: он спросит портал.`));
+    if (!out.length) out.push(note(`pt:nf:${q}`, "🤷 Не нашёл", `В карте преподавателей «${esc(q)}» нет. Попробуй одну фамилию без имени — или открой бота и поищи там: он спросит портал.`));
     return out;
   }
   // Расписание тянем только у первого — каждая буква запроса не должна
@@ -384,7 +384,7 @@ async function teacherResults(deps: Deps, req: InlineRequest, q: string, today: 
   const best = local[0]!;
   // По трём буквам в портал не ходим: это ещё не фамилия, а середина набора.
   if (q.length < 4) {
-    out.push(note(`pt:pick:${q}`, `👨‍🏫 ${local.map((x) => x.ref.name.split(" ")[0]).join(", ")}`.slice(0, 60), `Допиши фамилию — покажу расписание. Похожи: ${local.map((x) => `${x.ref.name}${x.vish ? " (ВИШ)" : ""}`).join("; ")}.`));
+    out.push(note(`pt:pick:${q}`, `👨‍🏫 ${local.map((x) => x.ref.name.split(" ")[0]).join(", ")}`.slice(0, 60), `Допиши фамилию — покажу расписание. Похожи: ${esc(local.map((x) => `${x.ref.name}${x.vish ? " (ВИШ)" : ""}`).join("; "))}.`));
     return out;
   }
   const monday = mondayOf(req.date);
@@ -392,7 +392,7 @@ async function teacherResults(deps: Deps, req: InlineRequest, q: string, today: 
   const loaded = await withTimeout(teachers.lessons(best.ref, from, to), 6000);
   const title = `${loaded?.fullName ?? best.ref.name}${best.vish ? " (ВИШ)" : ""}`;
   if (!loaded) {
-    out.push(note(`pt:wait:${best.ref.id}`, `👨‍🏫 ${title} · расписание грузится`, `Портал отвечает медленно. Набери запрос ещё раз через пару секунд — расписание ${title} уже будет готово.`));
+    out.push(note(`pt:wait:${best.ref.id}`, `👨‍🏫 ${title} · расписание грузится`, `Портал отвечает медленно. Набери запрос ещё раз через пару секунд — расписание ${esc(title)} уже будет готово.`));
   } else if (req.mode === "week") {
     const byDate = new Map<LocalDate, Occurrence[]>();
     for (const o of loaded.lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
@@ -402,7 +402,7 @@ async function teacherResults(deps: Deps, req: InlineRequest, q: string, today: 
   }
   if (local.length > 1) {
     const others = local.slice(1).map((x) => `${x.ref.name}${x.vish ? " (ВИШ)" : ""}`);
-    out.push(note(`pt:more:${q}`, `👥 Похожие: ${others.join(", ")}`.slice(0, 60), `По «${q}» похожи ещё: ${others.join("; ")}. Напиши фамилию точнее — покажу расписание нужного.`));
+    out.push(note(`pt:more:${q}`, `👥 Похожие: ${others.join(", ")}`.slice(0, 60), `По «${esc(q)}» похожи ещё: ${esc(others.join("; "))}. Напиши фамилию точнее — покажу расписание нужного.`));
   }
   return out;
 }

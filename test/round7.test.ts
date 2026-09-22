@@ -14,6 +14,7 @@ import type { ScheduleFormat } from "../src/db/repo.js";
 import { addDays, todayMsk } from "../src/time.js";
 import { buildPeopleResults, parseInlineQuery } from "../src/bot/inline.js";
 import { KnownPeople, normalizeHandle } from "../src/students/known.js";
+import { StudentDirectory } from "../src/students/directory.js";
 import { miscHandlers } from "../src/bot/handlers/misc.js";
 import { settingsHandlers } from "../src/bot/handlers/settings.js";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -117,6 +118,27 @@ describe("формат «картинка» и «и так, и так»", () => 
     expect(calls[1]!.payload.reply_markup).toBeTruthy();
   });
 
+  it("постер не отправился — человек всё равно получит текст", async () => {
+    const d = withFormat(short, "image");
+    const calls: Call[] = [];
+    const api = new Api("123:FAKE");
+    api.config.use(async (_prev, method, payload) => {
+      calls.push({ method, payload: payload as Record<string, unknown> });
+      if (method === "sendPhoto") throw new Error("Bad Request: PHOTO_INVALID_DIMENSIONS");
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never };
+    });
+    const update: Update = { update_id: 1, message: { message_id: 10, date: 0, chat: { id: 7, type: "private", first_name: "U" }, from: { id: 7, is_bot: false, first_name: "U" }, text: BTN.today } };
+    const ctx = new Context(update, api, ME) as BotContext;
+    ctx.deps = d;
+    ctx.user = d.repo.touchUser(7, "u", "U");
+    ctx.isAdmin = false;
+    const composer = new Composer<BotContext>();
+    composer.use(scheduleHandlers);
+    await composer.middleware()(ctx, async () => undefined);
+    expect(calls.map((c) => c.method)).toEqual(["sendPhoto", "sendMessage"]);
+    expect(String(calls[1]!.payload.text)).toContain("Физика");
+  });
+
   it("неделя в «и так, и так» больше не теряет постер", async () => {
     const calls = await press(BTN.week, withFormat(short, "both"));
     expect(calls.some((c) => c.method === "sendPhoto")).toBe(true);
@@ -124,9 +146,17 @@ describe("формат «картинка» и «и так, и так»", () => 
 });
 
 describe("inline про людей", () => {
-  const deps = (): Deps => {
+  // Реестр из двух выдуманных людей: настоящий в тестах не нужен и не лежит.
+  const registry = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "students-"));
+    const f = join(dir, "students.csv");
+    writeFileSync(f, "ФИО;Группа\nБеляев Иван Петрович;ВИШ-12-23\nБеляева Анна Ивановна;ВИШ-14-24\n", "utf8");
+    return f;
+  };
+  const deps = (poisk = true): Deps => {
     const d = makeDeps([lesson("Физика", 2)]);
     d.config = { ...d.config, POISK: true, POISK_DAILY_LIMIT: 30 } as Deps["config"];
+    if (poisk) d.students = new StudentDirectory(registry());
     return d;
   };
   const user = { id: 7, groupKey: group.key, subgroup: null } as unknown as User;
@@ -157,12 +187,40 @@ describe("inline про людей", () => {
     expect(req.groups[0]?.key).toBe(group.key);
   });
 
+  it("находит человека и показывает, где он должен быть", async () => {
+    const d = deps();
+    const req = parseInlineQuery(d, "студент Беляев", user);
+    const res = await buildPeopleResults(d, req, user);
+    expect(res.length).toBeGreaterThan(0);
+    const text = String(res[0]!.input_message_content && "message_text" in res[0]!.input_message_content ? res[0]!.input_message_content.message_text : "");
+    expect(text).toContain("Беляев Иван Петрович");
+    expect(text).toContain("ВИШ-12-23");
+    // Ник человека в inline-выдаче не участвует никогда.
+    expect(text).not.toMatch(/t\.me|@[a-z]/i);
+  });
+
+  it("лимит поисков действует и в inline", async () => {
+    const d = deps();
+    for (let i = 0; i < 30; i++) d.repo.logPoisk(7, today, `запрос ${i}`, null);
+    const res = await buildPeopleResults(d, parseInlineQuery(d, "студент Беляев", user), user);
+    expect(res[0]!.title).toMatch(/Лимит/i);
+  });
+
   it("без реестра поиск студента честно говорит, что выключен", async () => {
     const d = makeDeps([lesson("Физика", 2)]);
     const req = parseInlineQuery(d, "студент Беляев", user);
     const res = await buildPeopleResults(d, req, user);
     expect(res).toHaveLength(1);
     expect(res[0]!.title).toMatch(/выключен/i);
+  });
+
+  it("кривой ввод не ломает ответ: HTML экранируется", async () => {
+    const d = deps();
+    const req = parseInlineQuery(d, "студент <b>Беляев", user);
+    const res = await buildPeopleResults(d, req, user);
+    const text = String(res[0]!.input_message_content && "message_text" in res[0]!.input_message_content ? res[0]!.input_message_content.message_text : "");
+    expect(text).not.toContain("<b>Беляев");
+    expect(text).toContain("&lt;b&gt;");
   });
 
   it("короткий запрос отвечает подсказкой, а не пустотой", async () => {
