@@ -25,6 +25,7 @@ export interface TeacherRef {
 
 const DIRECTORY_TTL_MS = 24 * 60 * 60 * 1000;
 const PAGE_TTL_MS = 15 * 60 * 1000;
+const MAP_CACHE_TTL_MS = 5 * 60 * 1000;
 
 interface CachedPage {
   fetchedAt: number;
@@ -67,6 +68,7 @@ export function isVishGroupTitle(title: string): boolean {
 export class TeacherService {
   private readonly pages = new Map<string, CachedPage>();
   private directoryPromise: Promise<TeacherRef[]> | null = null;
+  private mapCache: { at: number; rows: TeacherMapRow[] } | null = null;
 
   constructor(
     private readonly portal: PortalClient,
@@ -298,6 +300,80 @@ export class TeacherService {
       });
       logger.debug({ err: String(err), teacherId }, "teacher map refresh failed");
       return null;
+    }
+  }
+
+  /**
+   * Поиск по своей карте преподавателей — без единого запроса к порталу.
+   * Нужен inline-режиму: там запрос прилетает на каждую нажатую букву, и ходить
+   * за каждую из них в портал нельзя.
+   */
+  searchLocal(query: string, limit = 5): Array<{ ref: TeacherRef; score: number; fuzzy: boolean; vish: boolean }> {
+    const q = query.trim();
+    if (q.length < 3) return [];
+    return this.mapRows()
+      .filter((r) => r.teacherId != null)
+      .map((r) => ({ ref: { id: r.teacherId!, name: r.name }, vish: r.vish, ...nameMatch(r.name, q) }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => Number(a.fuzzy) - Number(b.fuzzy) || Number(b.vish) - Number(a.vish) || b.score - a.score || a.ref.name.localeCompare(b.ref.name, "ru"))
+      .slice(0, limit);
+  }
+
+  /** Карта целиком, с коротким кешем: в inline-режиме её читают очень часто. */
+  private mapRows(): TeacherMapRow[] {
+    if (!this.mapCache || Date.now() - this.mapCache.at > MAP_CACHE_TTL_MS) {
+      this.mapCache = { at: Date.now(), rows: this.repo.teacherMapAll() };
+    }
+    return this.mapCache.rows;
+  }
+
+  /** Ведёт ли человек у ВИШ по карте: та самая пометка «(ВИШ)» рядом с фамилией. */
+  isVish(teacherId: number | null, name?: string): boolean {
+    const row = (teacherId != null ? this.repo.teacherMapById(teacherId) : null) ?? (name ? this.repo.teacherMapByKey(teacherMapKey(null, name)) : null);
+    return row?.vish === true;
+  }
+
+  /**
+   * Пометка «(ВИШ)» по уже загруженному расписанию преподавателя: его страница
+   * называет группы каждой пары, и лишний запрос к порталу не нужен. Так карточка
+   * человека, которого ночной обход ещё не дошёл проверить, помечается сразу.
+   */
+  noteFromLessons(teacherId: number, name: string, lessons: Occurrence[]): void {
+    const groups = [...new Set(lessons.flatMap((o) => o.groups ?? []))];
+    const vishGroups = groups.filter(isVishGroupTitle);
+    // Пар ВИШ в этом окне нет — это не «не наш»: окно маленькое. Молчим.
+    if (!vishGroups.length) return;
+    const prev = this.repo.teacherMapById(teacherId);
+    this.repo.upsertTeacherMap({
+      key: prev?.key ?? teacherMapKey(teacherId, name),
+      teacherId,
+      name: prev?.name ?? name,
+      vish: true,
+      groups: [...new Set([...(prev?.groups ?? []), ...vishGroups])].slice(0, 40),
+      subjects: prev?.subjects ?? [],
+      department: prev?.department ?? null,
+      degree: prev?.degree ?? null,
+      photoUrl: prev?.photoUrl ?? null,
+      photoFileId: prev?.photoFileId ?? null,
+      source: "portal",
+      checkedAt: prev?.checkedAt ?? new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Проверить по порталу тех, кого прямо сейчас показываем человеку: ночной
+   * обход идёт по всему ЧувГУ и до конкретной фамилии может дойти через неделю,
+   * а пометка «(ВИШ)» нужна в списке сразу. Страница кешируется на 15 минут,
+   * поэтому открытие карточки следом уже не стоит ни одного запроса.
+   */
+  async ensureMapped(refs: TeacherRef[], limit = 3): Promise<void> {
+    const todo = refs.filter((r) => !this.repo.teacherMapById(r.id)?.checkedAt).slice(0, limit);
+    for (const r of todo) {
+      try {
+        await this.refreshMapFor(r.id, r.name);
+      } catch (err) {
+        logger.debug({ err: String(err), teacher: r.id }, "ensureMapped failed");
+      }
     }
   }
 

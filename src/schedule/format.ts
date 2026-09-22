@@ -84,6 +84,17 @@ export function clampHtml(html: string, limit = 3900): string {
   return `${cut}${open.reverse().map((t) => `</${t}>`).join("")}\n…`;
 }
 
+/**
+ * Подпись у фото в Telegram — 1024 символа, и считаются они по видимому тексту,
+ * а не по разметке. Тегов не считаем, запас в 24 символа оставляем на всякий.
+ */
+export const CAPTION_MAX = 1000;
+
+/** Влезет ли расписание в подпись к постеру одним сообщением. */
+export function captionFits(html: string): boolean {
+  return html.replace(/<[^>]+>/g, "").length <= CAPTION_MAX;
+}
+
 export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   const lines: string[] = [];
   const ongoing = opts.now && opts.now.date === o.date && o.start != null && o.end != null && opts.now.minutes >= o.start && opts.now.minutes < o.end;

@@ -269,4 +269,9 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX slide_decks_date ON slide_decks (date);
   ALTER TABLE users ADD COLUMN want_slides INTEGER NOT NULL DEFAULT 1;
   `,
+  `
+  -- «Усиленная анонимность»: бот перестаёт связывать этот телеграм-аккаунт с
+  -- человеком из файла старост и не здоровается по имени. Выключается обратно.
+  ALTER TABLE users ADD COLUMN anon INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

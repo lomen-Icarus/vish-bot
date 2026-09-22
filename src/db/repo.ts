@@ -68,6 +68,8 @@ export interface User {
   notifySession: boolean;
   /** Присылать ли PDF со слайдами записанных вебинаров. */
   wantSlides: boolean;
+  /** «Усиленная анонимность»: не связывать этот аккаунт с человеком из файла старост. */
+  anon: boolean;
   notifyNotices: boolean;
   remindFirstMin: number | null;
   remindEachMin: number | null;
@@ -100,6 +102,7 @@ interface UserRow {
   notify_changes: number;
   notify_session: number;
   want_slides: number | null;
+  anon: number | null;
   notify_notices: number;
   remind_first_min: number | null;
   remind_each_min: number | null;
@@ -134,6 +137,7 @@ function rowToUser(r: UserRow): User {
     notifyChanges: r.notify_changes === 1,
     notifySession: r.notify_session === 1,
     wantSlides: r.want_slides == null ? true : r.want_slides === 1,
+    anon: r.anon === 1,
     notifyNotices: r.notify_notices === 1,
     remindFirstMin: r.remind_first_min,
     remindEachMin: r.remind_each_min,
@@ -360,6 +364,7 @@ export class Repo {
     if (patch.quietTo !== undefined) map.quiet_to = patch.quietTo;
     if (patch.topics !== undefined) map.topics = JSON.stringify(patch.topics);
     if (patch.wantSlides !== undefined) map.want_slides = patch.wantSlides ? 1 : 0;
+    if (patch.anon !== undefined) map.anon = patch.anon ? 1 : 0;
     if (patch.streamIntake !== undefined) map.stream_intake = patch.streamIntake;
     if (patch.calToken !== undefined) map.cal_token = patch.calToken;
     if (patch.calAlarmMin !== undefined) map.cal_alarm_min = patch.calAlarmMin;
@@ -808,6 +813,11 @@ export class Repo {
   teacherMapAll(onlyVish = false): TeacherMapRow[] {
     const rows = this.db.prepare(`SELECT * FROM teacher_map${onlyVish ? " WHERE vish = 1" : ""} ORDER BY name`).all() as Array<Record<string, unknown>>;
     return rows.map(rowToTeacherMap);
+  }
+
+  /** Сколько человек включили «усиленную анонимность» (для /health). */
+  anonCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE anon = 1").get() as { n: number }).n;
   }
 
   teacherMapStats(): { total: number; vish: number; checked: number } {

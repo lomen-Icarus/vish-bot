@@ -73,6 +73,13 @@ const schema = z.object({
   POISK_DB: z.string().default("./data/students.csv"),
   /** Сколько раз в сутки один человек может искать людей (защита от выкачивания базы). */
   POISK_DAILY_LIMIT: z.coerce.number().int().nonnegative().catch(30),
+  /**
+   * Файл «ФИО;телеграм-ник» — по нему бот здоровается по имени. Лежит ТОЛЬКО
+   * на хостинге, как и реестр поиска, и в поиск студентов не попадает: ники
+   * читает отдельный модуль (src/students/known.ts), поиску они не видны.
+   * Пустое значение или отсутствующий файл = бот никого не узнаёт.
+   */
+  KNOWN_DB: z.string().default("./data/known.csv"),
   /** Токен, которым сервер записи вебинаров подписывает загрузку слайдов (POST /slides). Пусто — приём выключен. */
   SLIDES_TOKEN: z.string().optional().transform((v) => (v && v.trim().length >= 16 ? v.trim() : undefined)),
   SLIDES_DIR: z.string().default("./data/slides"),
