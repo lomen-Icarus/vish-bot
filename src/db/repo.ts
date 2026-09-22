@@ -616,6 +616,19 @@ export class Repo {
     return this.db.prepare("DELETE FROM watch_groups WHERE user_id = ?").run(userId).changes;
   }
 
+  /** Все правки пар с их содержимым — для разовой уборки ложных событий. */
+  changedEventPayloads(): Array<{ id: number; payload: string }> {
+    return this.db.prepare("SELECT id, payload_json AS payload FROM change_events WHERE kind = 'changed'").all() as Array<{ id: number; payload: string }>;
+  }
+
+  deleteChangeEvents(ids: number[]): number {
+    if (!ids.length) return 0;
+    const stmt = this.db.prepare("DELETE FROM change_events WHERE id = ?");
+    let n = 0;
+    for (const id of ids) n += stmt.run(id).changes;
+    return n;
+  }
+
   recentEvents(groupKey: string, limit = 20): ChangeEventRow[] {
     const rows = this.db.prepare("SELECT * FROM change_events WHERE group_key = ? ORDER BY id DESC LIMIT ?").all(groupKey, limit) as Array<{
       id: number;
