@@ -81,10 +81,23 @@ export class PortalHttp {
   }
 
   /** GET, который возвращает байты (фото преподавателя), а не текст. */
-  async getBytes(url: string, maxBytes = 5 * 1024 * 1024): Promise<{ status: number; bytes: Buffer; contentType: string } | null> {
-    const res = await this.request(url, { method: "GET", binary: true, maxBytes });
-    if (res.status !== 200 || !res.bytes) return null;
-    return { status: res.status, bytes: res.bytes, contentType: res.contentType ?? "application/octet-stream" };
+  /**
+   * Бинарный GET, который идёт за редиректами. Портал на фото преподавателя
+   * отвечает 302 (на картинку или на страницу входа), а сам fetch у нас с
+   * redirect: "manual" — без этого фото просто не приходило.
+   */
+  async getBytesFollow(url: string, maxBytes = 5 * 1024 * 1024): Promise<{ status: number; bytes: Buffer; contentType: string } | null> {
+    let current = url;
+    for (let i = 0; i < 4; i++) {
+      const res = await this.request(current, { method: "GET", binary: true, maxBytes });
+      if (res.status >= 300 && res.status < 400 && res.location) {
+        current = new URL(res.location, current).toString();
+        continue;
+      }
+      if (res.status !== 200 || !res.bytes) return null;
+      return { status: res.status, bytes: res.bytes, contentType: res.contentType ?? "application/octet-stream" };
+    }
+    return null;
   }
 
   post(url: string, form: Record<string, string>): Promise<HttpResponse> {

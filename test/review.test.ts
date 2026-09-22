@@ -134,7 +134,7 @@ describe("inline", () => {
       ask: null,
       teachers: null,
       webinars: null,
-      students: null,
+      students: null, known: null,
       news: null,
       http: null,
       inline: true,

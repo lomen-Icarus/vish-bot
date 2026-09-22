@@ -144,11 +144,21 @@ export class PortalClient {
   async getTeacherPhoto(photoUrl: string): Promise<Buffer | null> {
     await this.ensureLogin();
     const url = new URL(photoUrl, PORTAL_BASE).toString();
-    const res = await this.http.getBytes(url);
-    if (!res || res.bytes.length < 1024) return null;
-    // Портал вместо картинки может отдать html-страницу входа.
-    if (!/^image\//i.test(res.contentType)) return null;
-    return res.bytes;
+    // Сессия портала живёт недолго. Расписание умеет перелогиниться (authPost
+    // видит страницу входа), а фото — нет: протухшая сессия молча отдавала
+    // редирект на вход, и фото не появлялось до перезапуска бота.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await this.http.getBytesFollow(url);
+      if (res && res.bytes.length >= 1024 && /^image\//i.test(res.contentType)) return res.bytes;
+      if (attempt === 0) {
+        logger.info({ url }, "portal: photo came back without an image, re-authenticating");
+        this.loggedIn = false;
+        await this.login();
+        continue;
+      }
+      logger.warn({ url, status: res?.status ?? null, contentType: res?.contentType ?? null }, "portal: teacher photo unavailable");
+    }
+    return null;
   }
 
   async getWebinars(date: LocalDate, facultyId: number): Promise<Webinar[]> {

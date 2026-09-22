@@ -8,13 +8,64 @@ import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
 import { teacherVishTag, webinarKey } from "./teachers.js";
 import { clampHtml, esc } from "../../schedule/format.js";
-import { buildInlineResults, INLINE_HINT, parseInlineQuery } from "../inline.js";
+import { buildInlineResults, buildPeopleResults, parseInlineQuery } from "../inline.js";
 import { findGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import { addDays, fmtDDMM, fmtHHMM, parseRuDate, todayMsk, weekdayName } from "../../time.js";
 import { logger } from "../../logger.js";
 
 export const miscHandlers = new Composer<BotContext>();
+
+/**
+ * Имя человека, если бот его узнаёт: по телеграм-нику из файла старост.
+ * «Усиленная анонимность» в настройках выключает узнавание целиком.
+ */
+function knownName(ctx: BotContext): string | null {
+  if (ctx.user.anon) return null;
+  return ctx.deps.known?.byUsername(ctx.from?.username ?? ctx.user.username)?.firstName ?? null;
+}
+
+/**
+ * Кнопки под приветствием. Расписание и так в нижней клавиатуре, а вот про
+ * «спросить своими словами» никто не догадывается — поэтому она здесь.
+ */
+function startActions(ctx: BotContext): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  if (ctx.deps.ask) kb.text("💬 Спросить?", "ask:open");
+  return kb.text("🧭 Что я умею", "feat:open");
+}
+
+/**
+ * Гайд по inline-режиму: он же открывается кнопкой «❔ Как писать запрос»
+ * над списком подсказок (Telegram присылает в личку «/start inline»).
+ */
+export function inlineGuide(ctx: BotContext): string {
+  const bot = ctx.deps.botUsername ?? "бот";
+  const poisk = ctx.deps.config.POISK && !!ctx.deps.students;
+  return [
+    "<b>💬 Расписание в любом чате</b>",
+    "",
+    `Напиши в любом чате <code>@${bot}</code>, пробел — и дальше запрос. Появится список: выбираешь нужное, и сообщение отправляешь <b>ты сам</b>. Бота в чат добавлять не надо.`,
+    "",
+    "<b>📅 Группы</b>",
+    `• <code>@${bot} 12-23</code> — день группы (можно «виш 12 23»)`,
+    `• <code>@${bot} 12-23 завтра</code> — другой день`,
+    `• <code>@${bot} неделя</code> — своя неделя, <code>неделя след</code> — следующая`,
+    `• <code>@${bot} поток 24</code> — весь поток, <code>общие</code> — общие пары`,
+    "",
+    "<b>👨‍🏫 Преподаватели</b>",
+    `• <code>@${bot} преподаватель Петров</code> — его день`,
+    `• <code>@${bot} завтра препод Петров</code> · <code>@${bot} неделя препод Петров</code>`,
+    ...(poisk ? ["", "<b>🕵️ Студенты</b>", `• <code>@${bot} студент Беляев</code> — группа человека и где он должен быть сейчас`] : []),
+    "",
+    "<b>🗓 Даты</b>",
+    "• словом: <code>сегодня</code>, <code>завтра</code>, <code>вчера</code>, <code>послезавтра</code>, <code>позавчера</code>",
+    "• каждое «после» — плюс день: <code>послепослезавтра</code> = +3 дня",
+    "• числом: <code>25.09</code>, <code>25.09.2026</code>",
+    "",
+    "<i>Слова можно в любом порядке: «неделя 12-23» и «12-23 неделя» — одно и то же.</i>",
+  ].join("\n");
+}
 
 miscHandlers.command("start", async (ctx) => {
   const kb = mainKeyboard();
@@ -23,32 +74,29 @@ miscHandlers.command("start", async (ctx) => {
   // человек спрашивает именно про inline, и отвечать надо про него.
   if ((ctx.match ?? "").trim() === "inline") {
     const bot = ctx.deps.botUsername ?? "бот";
-    await ctx.reply(
-      [
-        "<b>💬 Как писать в любом чате</b>",
-        "",
-        `Набери <code>@${bot}</code> и дальше что нужно:`,
-        `• <code>@${bot} 12-23 завтра</code> — день группы`,
-        `• <code>@${bot} неделя</code> — своя неделя`,
-        `• <code>@${bot} поток 24</code> — весь поток`,
-        `• <code>@${bot} общие</code> — общие пары`,
-        `• <code>@${bot} послепослезавтра</code> — любая дата словом или числом (<code>25.09</code>)`,
-        "",
-        "Бот добавлять в чат не нужно: сообщение отправляешь ты сам.",
-      ].join("\n"),
-      { parse_mode: "HTML", reply_markup: kb },
-    );
+    await ctx.reply(inlineGuide(ctx), { parse_mode: "HTML", reply_markup: kb, link_preview_options: { is_disabled: true } });
+    await ctx.reply("Можно попробовать прямо сейчас — кнопка откроет выбор чата:", {
+      reply_markup: new InlineKeyboard().switchInline("💬 Попробовать в чате", "неделя"),
+    });
     return;
   }
+  // Бот может узнать человека по телеграм-нику из файла старост. ФИО у людей
+  // нигде не спрашивают — регистрации в боте нет. Группу из файла не берём:
+  // он годичной давности, группа могла смениться, а имя — нет.
+  const hello = knownName(ctx);
   if (!group) {
     await ctx.reply(
-      "Привет! Я бот расписания Высшей инженерной школы ЧувГУ.\n\nПокажу пары на любой день, пришлю изменения в расписании и напомню о парах. Сначала выбери группу.",
-      { reply_markup: kb },
+      `${hello ? `Привет, ${esc(hello)}! ` : "Привет! "}Я бот расписания Высшей инженерной школы ЧувГУ.\n\nПокажу пары на любой день, пришлю изменения в расписании и напомню о парах. Сначала выбери группу.`,
+      { parse_mode: "HTML", reply_markup: kb },
     );
     await showGroupPicker(ctx);
     return;
   }
-  await ctx.reply(`С возвращением! Твоя группа: <b>${esc(group.title)}</b>.`, { parse_mode: "HTML", reply_markup: kb });
+  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.`, {
+    parse_mode: "HTML",
+    reply_markup: kb,
+  });
+  await ctx.reply(ctx.deps.ask ? "Можно просто спросить словами — «когда матан», «где Беляев», «как включить напоминания»." : "Что дальше?", { reply_markup: startActions(ctx) });
 });
 
 /** Карта функций приходит двумя сообщениями: одним она не влезает в лимит Telegram. */
@@ -154,6 +202,14 @@ async function startSearch(ctx: BotContext): Promise<void> {
   );
 }
 miscHandlers.hears(BTN.search, startSearch);
+miscHandlers.callbackQuery("ask:open", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await startSearch(ctx);
+});
+miscHandlers.callbackQuery("feat:open", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showFeatures(ctx);
+});
 miscHandlers.command("search", async (ctx) => {
   const q = (ctx.match ?? "").trim();
   if (!q) return startSearch(ctx);
@@ -331,7 +387,9 @@ miscHandlers.on("message:text", async (ctx, next) => {
 // Разбор запроса и сборка вариантов живут в src/bot/inline.ts.
 miscHandlers.on("inline_query", async (ctx) => {
   const req = parseInlineQuery(ctx.deps, ctx.inlineQuery.query, ctx.user ?? null);
-  const results = buildInlineResults(ctx.deps, req, ctx.user ?? null);
+  const results = req.person
+    ? await buildPeopleResults(ctx.deps, req, ctx.user ?? null, { isAdmin: ctx.isAdmin })
+    : buildInlineResults(ctx.deps, req, ctx.user ?? null);
   await ctx.answerInlineQuery(results, {
     cache_time: 60,
     is_personal: true,

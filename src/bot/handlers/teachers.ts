@@ -156,9 +156,18 @@ teacherHandlers.on("message:text", async (ctx, next) => {
   const guess = [...scored, ...webinarHits].every((x) => x.fuzzy);
   if (!guess && found.length === 1 && !fromWebinars.length) return showTeacherDay(ctx, found[0]!, todayMsk());
   if (!guess && !found.length && fromWebinars.length === 1) return showWebinarTeacher(ctx, fromWebinars[0]!);
+  // Пометку «(ВИШ)» ставит карта, а ночной обход портала до нужной фамилии
+  // мог ещё не дойти: проверяем тех, кого прямо сейчас показываем. Портал
+  // медленный, поэтому не больше трёх — и «печатает…» заново, чтобы человек
+  // видел, что бот занят, а не завис.
+  if (teachers) {
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
+    await teachers.ensureMapped(found);
+  }
   const kb = new InlineKeyboard();
-  // Тёзки встречаются, поэтому «наши» помечены и идут первыми.
-  const ranked = [...found].sort((a, b) => Number(!!vishTag(ctx, b.id, b.name)) - Number(!!vishTag(ctx, a.id, a.name)));
+  // Тёзки встречаются, поэтому «наши» помечены — и идут в самом низу списка,
+  // у поля ввода: до верхних кнопок палец не тянется, а нужны обычно наши.
+  const ranked = [...found].sort((a, b) => Number(!!vishTag(ctx, a.id, a.name)) - Number(!!vishTag(ctx, b.id, b.name)));
   for (const t of ranked) kb.text(`${t.name}${vishTag(ctx, t.id, t.name)}`, `t:${t.id}`).row();
   for (const t of fromWebinars) kb.text(`${t.name} (ВИШ, дистант)`, webinarKey(t.name)).row();
   kb.text("🔎 Искать другого", "t:search");
@@ -233,6 +242,9 @@ async function showTeacherDay(ctx: BotContext, t: TeacherRef, date: LocalDate, e
   }
   {
     const { lessons, fullName } = loaded;
+    // Страница преподавателя называет группы его пар: отмечаем «нашего» сразу,
+    // не дожидаясь ночного обхода справочника.
+    teachers.noteFromLessons(t.id, fullName ?? t.name, lessons);
     const title = `${fullName ?? t.name}${vishTag(ctx, t.id, fullName ?? t.name)}`;
     const text = formatDay(pseudoGroup(t, title), date, lessons, ctx.deps.service.weekInfo(date), todayMsk(), { now: wallClock() });
     const kb = teacherDayNav(t.id, date, { following: ctx.deps.repo.watchesTeacher(ctx.user.id, t.id) });
@@ -262,6 +274,7 @@ async function showTeacherWeek(ctx: BotContext, t: TeacherRef, anyDate: LocalDat
   }
   {
     const { lessons, fullName } = loaded;
+    teachers.noteFromLessons(t.id, fullName ?? t.name, lessons);
     const byDate = new Map<LocalDate, Occurrence[]>();
     for (const o of lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
     const text = formatWeek(pseudoGroup(t, `${fullName ?? t.name}${vishTag(ctx, t.id, fullName ?? t.name)}`), monday, byDate, ctx.deps.service.weekInfo(monday), todayMsk());

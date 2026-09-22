@@ -50,7 +50,7 @@ function makeDeps(repo = new Repo(openDatabase(":memory:"))): Deps {
     ask: null,
     teachers: null,
     webinars: null,
-    students: null,
+    students: null, known: null,
     news: null,
     http: null,
     inline: true,

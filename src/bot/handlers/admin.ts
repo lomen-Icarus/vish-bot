@@ -74,6 +74,18 @@ function poiskState(ctx: BotContext): string {
   return `${s.count} чел. из ${esc(s.file)}${s.error ? ` · ошибка: ${esc(s.error)}` : ""} · сегодня ${used.searches} поисков от ${used.users} чел.`;
 }
 
+/**
+ * «Бот узнаёт своих» для /health: сколько ников в файле и сколько человек
+ * попросили их не узнавать. Сами ники и имена нигде не печатаются.
+ */
+function knownState(ctx: BotContext): string {
+  const k = ctx.deps.known;
+  if (!k) return "выключено";
+  const s = k.stats();
+  if (!s.count) return `файл не прочитан (${esc(s.file)})${s.error ? `: ${esc(s.error)}` : ""}`;
+  return `${s.count} чел. из ${esc(s.file)} · анонимность включили ${ctx.deps.repo.anonCount()} чел.`;
+}
+
 function healthText(ctx: BotContext): string {
   const deps = ctx.deps;
   const p = deps.repo.lastPollRun();
@@ -98,6 +110,7 @@ function healthText(ctx: BotContext): string {
     `Лимиты ИИ: ${aiLimits(deps.repo, deps.config, todayMsk()).perUser}/чел, ${aiLimits(deps.repo, deps.config, todayMsk()).global} общих · потрачено сегодня ${deps.repo.aiUsageGlobal(todayMsk())}`,
     `Inline-режим: ${deps.inline ? "включён" : "ВЫКЛЮЧЕН — включи в @BotFather: /setinline, затем /setinlinefeedback"}`,
     `Сыск (поиск студентов): ${poiskState(ctx)}`,
+    `Узнавание по нику: ${knownState(ctx)}`,
     `Карта преподавателей: ${(() => {
       const m = deps.repo.teacherMapStats();
       return `${m.vish} из ${m.total} помечены как ВИШ, проверено ${m.checked}`;
