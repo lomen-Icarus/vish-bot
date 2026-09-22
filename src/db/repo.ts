@@ -834,6 +834,19 @@ export class Repo {
       .run(key, teacherId, name, JSON.stringify(groups.slice(0, 40)));
   }
 
+  /**
+   * Ники тех, кто писал боту, в нижнем регистре. Нужны только для сверки со
+   * списком старост («кто из этих людей уже пользуется ботом») — наружу из
+   * процесса не отдаются: обработчик печатает ФИО и статус, но не ники.
+   * Люди с «усиленной анонимностью» не попадают сюда вовсе.
+   */
+  botUsernames(): Set<string> {
+    // blocked = 0, как и во всех остальных отчётных запросах: человек, который
+    // забанил бота, «пользователем» не считается, иначе его не позовут обратно.
+    const rows = this.db.prepare("SELECT username FROM users WHERE username IS NOT NULL AND username <> '' AND anon = 0 AND blocked = 0").all() as Array<{ username: string }>;
+    return new Set(rows.map((r) => r.username.toLowerCase()));
+  }
+
   /** Сколько человек включили «усиленную анонимность» (для /health). */
   anonCount(): number {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE anon = 1").get() as { n: number }).n;
