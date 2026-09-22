@@ -115,3 +115,12 @@ export function findGroup(groups: LogicalGroup[], query: string): LogicalGroup[]
   if (!prefix && matches.length > 1 && matches.some((g) => g.prefix === "ВИШ")) return matches.filter((g) => g.prefix === "ВИШ");
   return matches;
 }
+
+/**
+ * Псевдогруппа для экранов, где расписание принадлежит человеку, а не группе:
+ * карточка преподавателя, inline-ответ про студента. formatDay/formatWeek
+ * печатают её title как заголовок.
+ */
+export function personGroup(title: string, key: string): LogicalGroup {
+  return { key, title, prefix: "", number: 0, intake: 0, course: 0, portalIds: [], portalNames: [] };
+}
