@@ -29,7 +29,16 @@ async function main(): Promise<void> {
 
   const db = openDatabase(config.DB_PATH);
   const repo = new Repo(db);
-  const portal = new PortalClient({ insecureTls: config.PORTAL_TLS_INSECURE, proxyUrl: config.HTTPS_PROXY });
+  // Один клиент портала на всё. Если учётка задана, он ходит под ней — только
+  // она видит преподавателей в расписании групп; не пустила — сам садится
+  // гостем, и расписание продолжает работать, просто без фамилий. Двух
+  // параллельных систем нет нарочно: две очереди запросов к порталу — это
+  // двойная нагрузка и два разных ответа на один и тот же вопрос.
+  const portal = new PortalClient({
+    insecureTls: config.PORTAL_TLS_INSECURE,
+    proxyUrl: config.HTTPS_PROXY,
+    ...(config.PORTAL_LOGIN && config.PORTAL_PASSWORD ? { credentials: { login: config.PORTAL_LOGIN, password: config.PORTAL_PASSWORD } } : {}),
+  });
   const service = new ScheduleService(repo, portal, { facultyId: config.FACULTY_ID, hiddenPrefixes: config.HIDDEN_GROUP_PREFIXES });
   // Posters are drawn in a child process that is recycled: resvg never frees a
   // rendered pixmap, so the memory only comes back when that process ends.
@@ -37,14 +46,7 @@ async function main(): Promise<void> {
     logger.warn({ err: String(err) }, "image renderer unavailable, text only");
     return null;
   });
-  const teachers =
-    config.PORTAL_LOGIN && config.PORTAL_PASSWORD
-      ? new TeacherService(
-          new PortalClient({ insecureTls: config.PORTAL_TLS_INSECURE, proxyUrl: config.HTTPS_PROXY, credentials: { login: config.PORTAL_LOGIN, password: config.PORTAL_PASSWORD } }),
-          repo,
-          service,
-        )
-      : null;
+  const teachers = config.PORTAL_LOGIN && config.PORTAL_PASSWORD ? new TeacherService(portal, repo, service) : null;
   if (!teachers) logger.info("teacher schedules disabled: PORTAL_LOGIN/PORTAL_PASSWORD not set");
   // The webinar page is guest-readable and is the only source of teacher names without an account.
   const webinars = new WebinarService(portal, repo, config.FACULTY_ID);

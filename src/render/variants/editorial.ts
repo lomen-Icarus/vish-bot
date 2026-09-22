@@ -8,7 +8,7 @@
 import type { LogicalGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
-import { filterSubgroup } from "../../schedule/format.js";
+import { filterSubgroup, posterTeacher, type TeacherView } from "../../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, weekdayOf, type LocalDate, type WallClock } from "../../time.js";
 import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El, type Style } from "../core.js";
 import type { DayRenderInput, Renderer, StreamRenderInput, StreamRenderRow, WeekRenderInput } from "../image.js";
@@ -155,7 +155,7 @@ function timeColumn(start: number | null, end: number | null, slot: number | nul
   );
 }
 
-function lessonRow(o: Occurrence, accent: string, ongoing: boolean): El {
+function lessonRow(o: Occurrence, accent: string, ongoing: boolean, view: TeacherView | undefined): El {
   const moved = o.status === "moved";
   const badges: El[] = [];
   if (moved && o.movedTo) badges.push(tag(`перенесена на ${ddmm(o.movedTo.date)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, MUTED));
@@ -174,7 +174,7 @@ function lessonRow(o: Occurrence, accent: string, ongoing: boolean): El {
       { flex: 1, minWidth: 0 },
       text(o.subject, { fontSize: 36, fontWeight: 700, color: INK, lineHeight: 1.15, letterSpacing: -0.8, textDecoration: moved ? "line-through" : "none" }),
       row({ flexWrap: "wrap", alignItems: "center", marginTop: 12 }, ...meta),
-      o.teacher ? text(o.teacher, { fontSize: 24, fontWeight: 400, color: MUTED, marginTop: 6 }) : null,
+      posterTeacher(o.teacher, view) ? text(posterTeacher(o.teacher, view)!, { fontSize: 24, fontWeight: view === "plain" ? 400 : 700, color: view === "plain" ? MUTED : INK, marginTop: 6 }) : null,
       badges.length ? row({ flexWrap: "wrap", marginTop: 4 }, ...badges) : null,
     ),
   );
@@ -213,7 +213,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       for (const o of list) {
         if (prevEnd != null && o.start != null && o.start - prevEnd >= 20) rows.push(gapRow(o.start - prevEnd));
         const ongoing = !!now && now.date === date && o.start != null && o.end != null && now.minutes >= o.start && now.minutes < o.end && o.status === "scheduled";
-        rows.push(lessonRow(o, accent, ongoing));
+        rows.push(lessonRow(o, accent, ongoing, input.teacherView));
         if (o.status === "scheduled" && o.end != null) prevEnd = o.end;
       }
       const active = list.filter((o) => o.status === "scheduled");
@@ -259,7 +259,12 @@ export async function createRenderer(): Promise<Renderer | null> {
                 col(
                   { flex: 1, minWidth: 0 },
                   text(o.subject, { fontSize: 27, fontWeight: 600, color: INK, lineHeight: 1.2, letterSpacing: -0.4, textDecoration: moved ? "line-through" : "none" }),
-                  row({ flexWrap: "wrap", alignItems: "center", marginTop: 6 }, typeMark(o.type, 23, MUTED), text(extra.join(" · "), { fontSize: 23, fontWeight: 500, color: INK2 })),
+                  row(
+                    { flexWrap: "wrap", alignItems: "center", marginTop: 6 },
+                    typeMark(o.type, 23, MUTED),
+                    text(extra.join(" · "), { fontSize: 23, fontWeight: 500, color: INK2 }),
+                    posterTeacher(o.teacher, input.teacherView) ? text(`${extra.length ? "· " : ""}${posterTeacher(o.teacher, input.teacherView)}`, { marginLeft: extra.length ? 8 : 0, fontSize: 23, fontWeight: input.teacherView === "plain" ? 500 : 700, color: input.teacherView === "plain" ? INK2 : INK }) : null,
+                  ),
                 ),
               );
             })
@@ -333,7 +338,12 @@ export async function createRenderer(): Promise<Renderer | null> {
                   ),
                 ),
                 text(r.subject, { fontSize: 30, fontWeight: r.mine ? 700 : 500, color: r.mine ? INK : INK2, lineHeight: 1.15, letterSpacing: -0.5, marginTop: 4, textDecoration: moved ? "line-through" : "none" }),
-                row({ flexWrap: "wrap", alignItems: "center", marginTop: 8 }, typeMark(r.type, 22, r.mine ? INK : INK2), text(extra, { fontSize: 22, fontWeight: 400, color: MUTED })),
+                row(
+                  { flexWrap: "wrap", alignItems: "center", marginTop: 8 },
+                  typeMark(r.type, 22, r.mine ? INK : INK2),
+                  text(extra, { fontSize: 22, fontWeight: 400, color: MUTED }),
+                  posterTeacher(r.teacher, input.teacherView) ? text(`${extra ? "· " : ""}${posterTeacher(r.teacher, input.teacherView)}`, { marginLeft: extra ? 8 : 0, fontSize: 22, fontWeight: input.teacherView === "plain" ? 400 : 700, color: input.teacherView === "plain" ? MUTED : INK }) : null,
+                ),
               );
             }),
           ),

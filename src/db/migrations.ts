@@ -280,4 +280,9 @@ export const MIGRATIONS: string[] = [
   -- /news_scan). Код больше так не делает, но старые строки надо стереть.
   UPDATE news_sources SET last_error = 'ошибка скрыта: в ней был токен, подробности в логах' WHERE last_error LIKE '%access_token%';
   `,
+  `
+  -- Как показывать преподавателя в расписании: bold (с выделением), plain
+  -- (обычным текстом), off (не показывать вовсе).
+  ALTER TABLE users ADD COLUMN teacher_view TEXT NOT NULL DEFAULT 'bold';
+  `,
 ];

@@ -5,7 +5,10 @@ import type { Occurrence, Period } from "../schedule/model.js";
 import { contentHash, positionKey } from "../schedule/model.js";
 import type { LocalDate } from "../time.js";
 
+import type { TeacherView } from "../schedule/format.js";
+
 export type ScheduleFormat = "text" | "image" | "both";
+export type { TeacherView };
 
 export interface NewsSource {
   id: number;
@@ -70,6 +73,8 @@ export interface User {
   wantSlides: boolean;
   /** «Усиленная анонимность»: не связывать этот аккаунт с человеком из файла старост. */
   anon: boolean;
+  /** Показывать ли преподавателя в расписании и выделять ли его. */
+  teacherView: TeacherView;
   notifyNotices: boolean;
   remindFirstMin: number | null;
   remindEachMin: number | null;
@@ -103,6 +108,7 @@ interface UserRow {
   notify_session: number;
   want_slides: number | null;
   anon: number | null;
+  teacher_view: string | null;
   notify_notices: number;
   remind_first_min: number | null;
   remind_each_min: number | null;
@@ -138,6 +144,7 @@ function rowToUser(r: UserRow): User {
     notifySession: r.notify_session === 1,
     wantSlides: r.want_slides == null ? true : r.want_slides === 1,
     anon: r.anon === 1,
+    teacherView: (r.teacher_view as TeacherView) ?? "bold",
     notifyNotices: r.notify_notices === 1,
     remindFirstMin: r.remind_first_min,
     remindEachMin: r.remind_each_min,
@@ -365,6 +372,7 @@ export class Repo {
     if (patch.topics !== undefined) map.topics = JSON.stringify(patch.topics);
     if (patch.wantSlides !== undefined) map.want_slides = patch.wantSlides ? 1 : 0;
     if (patch.anon !== undefined) map.anon = patch.anon ? 1 : 0;
+    if (patch.teacherView !== undefined) map.teacher_view = patch.teacherView;
     if (patch.streamIntake !== undefined) map.stream_intake = patch.streamIntake;
     if (patch.calToken !== undefined) map.cal_token = patch.calToken;
     if (patch.calAlarmMin !== undefined) map.cal_alarm_min = patch.calAlarmMin;
