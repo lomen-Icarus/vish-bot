@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { esc } from "../../schedule/format.js";
+import { clampHtml, esc } from "../../schedule/format.js";
 import { isMenuText, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
 import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
@@ -168,6 +168,45 @@ async function showAiLimits(ctx: BotContext, edit = false): Promise<void> {
   }
   await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
 }
+
+/**
+ * «Кто из этих людей уже пользуется ботом» — сверка списка ФИО (актив, кружок,
+ * группа) с теми, кто боту писал. Считается на сервере по файлу узнавания;
+ * телеграм-ники в ответ не печатаются, только ФИО и вердикт.
+ *
+ * Честно разделяет «не пользуется» и «сказать нечего»: если телеграма человека
+ * в списке старост не было, бот про него не знает ничего.
+ */
+adminOnly.command("whois", async (ctx) => {
+  const known = ctx.deps.known;
+  if (!known?.count()) return void (await ctx.reply("Файл узнавания не загружен (KNOWN_DB) — сверять не с чем."));
+  const names = (ctx.match ?? "")
+    .split(/[\n;]+/)
+    .map((x) => x.replace(/^[\s\d.)|-]+/, "").replace(/\|.*$/, "").trim())
+    .filter((x) => /\p{L}/u.test(x) && x.split(/\s+/).length >= 2)
+    .slice(0, 100);
+  if (!names.length) {
+    return void (await ctx.reply("Пришли список ФИО после команды, по одному в строке:\n<code>/whois\nИванов Иван Иванович\nПетрова Анна Сергеевна</code>", { parse_mode: "HTML" }));
+  }
+  const usernames = ctx.deps.repo.botUsernames();
+  const marks = { uses: "✅", "not-seen": "▫️", "no-handle": "❔" } as const;
+  const tally = { uses: 0, "not-seen": 0, "no-handle": 0 };
+  const lines: string[] = [];
+  for (const name of names) {
+    const status = known.status(name, usernames);
+    tally[status]++;
+    lines.push(`${marks[status]} ${esc(name)}`);
+  }
+  const text = [
+    "<b>👥 Кто из списка пользуется ботом</b>",
+    `Проверено ${names.length} чел. · ✅ пользуются: <b>${tally.uses}</b> · ▫️ не заходили: ${tally["not-seen"]} · ❔ нет телеграма в списке старост: ${tally["no-handle"]}`,
+    "",
+    ...lines,
+    "",
+    "<i>❔ — про человека сказать нечего: телеграма не было в списке. ▫️ — ник известен, но с него боту не писали: мог сменить ник или включить «усиленную анонимность».</i>",
+  ].join("\n");
+  await ctx.reply(clampHtml(text), { parse_mode: "HTML" });
+});
 
 adminOnly.callbackQuery(/^ail:(user|global):(up|down)$/, async (ctx) => {
   const kind = ctx.match[1] as "user" | "global";

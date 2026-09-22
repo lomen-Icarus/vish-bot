@@ -14,6 +14,7 @@
  * успевают поменяться, а ФИО — нет.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { normName } from "../text/match.js";
 import { logger } from "../logger.js";
 
 export interface KnownPerson {
@@ -113,6 +114,39 @@ export class KnownPeople {
     this.reloadIfChanged();
     const handle = normalizeHandle(username);
     return handle ? (this.byHandle.get(handle) ?? null) : null;
+  }
+
+  /**
+   * Пользуется ли этот человек ботом. Сверка идёт внутри модуля, чтобы ник
+   * нигде не всплыл: наружу уходит только вердикт.
+   *   uses      — ник из списка старост встречался боту;
+   *   not-seen  — ник известен, но такой человек боту не писал;
+   *   no-handle — ника нет в списке, сказать нечего.
+   */
+  status(fio: string, botUsernames: Set<string>): "uses" | "not-seen" | "no-handle" {
+    this.reloadIfChanged();
+    const handle = this.handleOf(fio);
+    if (!handle) return "no-handle";
+    return botUsernames.has(handle) ? "uses" : "not-seen";
+  }
+
+  /** Ник по ФИО: точное совпадение, иначе «фамилия + имя» (отчество могли не дописать). */
+  private handleOf(fio: string): string | null {
+    const want = normName(fio);
+    if (!want) return null;
+    const short = want.split(" ").slice(0, 2).join(" ");
+    let byShort: string | null = null;
+    let shortHits = 0;
+    for (const [handle, person] of this.byHandle) {
+      const have = normName(person.name);
+      if (have === want) return handle;
+      if (have.split(" ").slice(0, 2).join(" ") === short) {
+        byShort = handle;
+        shortHits++;
+      }
+    }
+    // Двое с одинаковыми фамилией и именем — угадывать нельзя.
+    return shortHits === 1 ? byShort : null;
   }
 
   count(): number {
