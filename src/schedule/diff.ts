@@ -1,5 +1,5 @@
 import type { LocalDate } from "../time.js";
-import { sameTeacher } from "./format.js";
+import { samePerson } from "../text/match.js";
 import { contentHash, positionKey, type Occurrence } from "./model.js";
 
 export type ChangeKind = "added" | "removed" | "changed" | "moved";
@@ -25,7 +25,7 @@ function changedFields(a: Occurrence, b: Occurrence): string[] {
   // подписчику — спам на пустом месте. Настоящую замену (один человек на
   // другого) по-прежнему показываем; разное написание одного и того же
   // человека заменой не считается.
-  if (a.teacher && b.teacher && !sameTeacher(a.teacher, b.teacher)) f.push("teacher");
+  if (a.teacher && b.teacher && !samePerson(a.teacher, b.teacher)) f.push("teacher");
   if (a.start !== b.start || a.end !== b.end) f.push("time");
   if (a.isDistance !== b.isDistance) f.push("distance");
   if (a.status !== b.status) f.push("status");

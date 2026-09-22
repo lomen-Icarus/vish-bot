@@ -1,5 +1,6 @@
 import type { LocalDate } from "../time.js";
 import { addDays, mondayOf, weekdayOf, WEEKDAY_NAMES } from "../time.js";
+import { samePerson } from "../text/match.js";
 import type { Occurrence, Period } from "./model.js";
 import type { SourcedDay, SourcedLesson } from "./merge.js";
 
@@ -76,10 +77,16 @@ export function expandDays(days: SourcedDay[], opts: ExpandOptions): Occurrence[
           const occ = makeOccurrence(lesson, date, block, opts);
           const sub = lesson.substitutions?.find((s) => s.date === date);
           if (sub) {
-            occ.substituted = { room: occ.room, teacher: occ.teacher, distance: occ.isDistance };
+            const before = { room: occ.room, teacher: occ.teacher, distance: occ.isDistance };
             if (sub.room) occ.room = sub.room;
             if (sub.teacher?.name && sub.teacher.name !== "---") occ.teacher = sub.teacher.name;
             if (sub.isDistance) occ.isDistance = true;
+            // Замена — это когда что-то правда поменялось. Портал в таблице
+            // замен пишет того же человека короче («Иванова И.И.» против
+            // «доц. Иванова Ирина Ивановна»), и без этой проверки бот рисовал
+            // бы «🔁 замена: преп. Иванова → Иванова» и вешал значок замены.
+            const real = before.room !== occ.room || before.distance !== occ.isDistance || !samePerson(before.teacher, occ.teacher);
+            if (real) occ.substituted = before;
           }
           out.push(occ);
         }

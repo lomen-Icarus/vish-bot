@@ -7,7 +7,7 @@ import { buildLogicalGroups, logicalKeyFor, type LogicalGroup } from "./groups.j
 import { mergeVariants } from "./merge.js";
 import { expandDays } from "./expand.js";
 import { diffOccurrences, type ChangeEvent } from "./diff.js";
-import { isSessionPeriod, type Occurrence, type Period } from "./model.js";
+import { isSessionPeriod, positionKey, type Occurrence, type Period } from "./model.js";
 
 export interface PollResult {
   groupsTotal: number;
@@ -38,6 +38,17 @@ export interface ScheduleServiceOptions {
   facultyId: number;
   /** Upper-cased group prefixes to hide and skip (e.g. ОЗВИШ). */
   hiddenPrefixes?: string[];
+}
+
+/**
+ * Переносит известные фамилии в свежую выборку там, где портал их не назвал.
+ * Нужно, только когда бот работает гостем: тогда «преподавателя нет» — это не
+ * факт о расписании, а отсутствие доступа.
+ */
+function keepKnownTeachers(prev: Occurrence[], next: Occurrence[]): void {
+  const known = new Map<string, string>();
+  for (const o of prev) if (o.teacher) known.set(positionKey(o), o.teacher);
+  for (const o of next) if (!o.teacher) o.teacher = known.get(positionKey(o)) ?? null;
 }
 
 export class ScheduleService {
@@ -266,6 +277,11 @@ export class ScheduleService {
         const next = this.materialize(group, from, to);
         if (hasBaseline) {
           const prev = this.repo.occurrences(group.key, from, to);
+          // Учётка отвалилась — портал перестал называть преподавателей. Стирать
+          // уже известные фамилии из-за этого нельзя: человек увидит расписание
+          // «без преподавателей», а когда учётка вернётся, настоящая замена,
+          // случившаяся в это время, потеряется — сравнивать будет не с чем.
+          if (!this.portal.authenticated) keepKnownTeachers(prev, next);
           const events = diffOccurrences(prev, next, { from: today, to: addDays(today, NOTIFY_HORIZON_DAYS) });
           if (events.length) {
             result.events.push(...events);

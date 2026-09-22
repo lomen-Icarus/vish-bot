@@ -8,6 +8,7 @@ import { personGroup, type LogicalGroup } from "../../schedule/groups.js";
 import type { Occurrence } from "../../schedule/model.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../../time.js";
 import { teacherMapKey, type TeacherRef } from "../../portal/teachers.js";
+import { samePerson } from "../../text/match.js";
 import type { WebinarTeacher } from "../../portal/webinars.js";
 import { logger } from "../../logger.js";
 
@@ -26,21 +27,6 @@ export function webinarKey(name: string): string {
 
 function findWebinarTeacher(ctx: BotContext, key: string): WebinarTeacher | null {
   return (ctx.deps.webinars?.teachers() ?? []).find((t) => webinarKey(t.name) === key) ?? null;
-}
-
-/** Same person? Surnames repeat, so initials decide. */
-function samePerson(a: string, b: string): boolean {
-  const parts = (x: string) =>
-    x
-      .toLowerCase()
-      .replace(/ё/g, "е")
-      .split(/[\s.]+/)
-      .filter(Boolean);
-  const [pa, pb] = [parts(a), parts(b)];
-  if (!pa.length || !pb.length || pa[0] !== pb[0]) return false;
-  const initials = (p: string[]) => p.slice(1).map((w) => w[0]).join("");
-  const [ia, ib] = [initials(pa), initials(pb)];
-  return !ia || !ib || ia === ib;
 }
 
 async function showWebinarTeacher(ctx: BotContext, t: WebinarTeacher): Promise<void> {

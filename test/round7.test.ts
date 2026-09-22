@@ -19,6 +19,7 @@ import { tildaDate, tildaFeeds } from "../src/news/fetchers.js";
 import { formatDay, formatWeek, shortTeacher } from "../src/schedule/format.js";
 import { mondayOf } from "../src/time.js";
 import { diffOccurrences } from "../src/schedule/diff.js";
+import { samePerson } from "../src/text/match.js";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
 import { miscHandlers } from "../src/bot/handlers/misc.js";
@@ -480,6 +481,48 @@ describe("появление преподавателя не будит подп
     const before = { ...withTeacher(null), room: "Г-316" };
     const after = { ...withTeacher("Иванова И. И."), room: "Т-310" };
     const events = diffOccurrences([before], [after], { from: today, to: addDays(today, 14) });
+    expect(events).toHaveLength(1);
     expect(events[0]!.fields).toEqual(["room"]);
+  });
+});
+
+describe("одно ли это лицо", () => {
+  it("короче записанный — тот же человек, а не замена", () => {
+    expect(samePerson("Смирнов", "Смирнов С. С.")).toBe(true);
+    expect(samePerson("Иванова И.", "Иванова И.И.")).toBe(true);
+    expect(samePerson("доц. к.х.н. Иванова Ирина Ивановна", "Иванова И.И.")).toBe(true);
+    expect(samePerson("Иванова.", "Иванова")).toBe(true);
+  });
+
+  it("однофамильцы с разными именами — разные люди", () => {
+    // Сравнение по одним инициалам склеило бы их, и настоящая замена прошла бы мимо.
+    expect(samePerson("Иванова Ирина Ивановна", "Иванова Инна Игоревна")).toBe(false);
+    expect(samePerson("Иванова И. И.", "Петров П. П.")).toBe(false);
+  });
+
+  it("звание, прилипшее к фамилии без пробела, не съедает фамилию", () => {
+    expect(shortTeacher("проф.Иванов Иван Иванович")).toBe("Иванов И. И.");
+    expect(samePerson("проф.Иванов Иван Иванович", "Иванов И.И.")).toBe(true);
+  });
+
+  it("слитные инициалы разбираются, двойная фамилия не рвётся", () => {
+    expect(shortTeacher("Иванова И.И.")).toBe("Иванова И. И.");
+    expect(shortTeacher("Иванов-Петров Иван Сергеевич")).toBe("Иванов-Петров И. С.");
+  });
+});
+
+describe("мнимая замена преподавателя", () => {
+  it("тот же человек в таблице замен — ни строки «замена», ни значка", () => {
+    const same = lesson("Физика", 1);
+    const base: Occurrence = { ...same, teacher: "Иванова И.И.", substituted: { room: same.room, teacher: "доц. Иванова Ирина Ивановна", distance: false } };
+    const text = formatDay(group, today, [base], { week: 3, parity: "odd", semester: 1 }, today, {});
+    expect(text).not.toContain("замена");
+  });
+
+  it("настоящая замена преподавателя показывается коротко", () => {
+    const swap = lesson("Физика", 1);
+    const base: Occurrence = { ...swap, teacher: "Петров П. П.", substituted: { room: swap.room, teacher: "Иванова Ирина Ивановна", distance: false } };
+    const text = formatDay(group, today, [base], { week: 3, parity: "odd", semester: 1 }, today, {});
+    expect(text).toContain("Иванова И. И. → Петров П. П.");
   });
 });
