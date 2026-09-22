@@ -3,6 +3,7 @@ import { loadConfig, loadDotEnv } from "./config.js";
 import { logger } from "./logger.js";
 import { openDatabase } from "./db/index.js";
 import { Repo } from "./db/repo.js";
+import { pruneFalseChangeEvents } from "./db/cleanup.js";
 import { PortalClient } from "./portal/client.js";
 import { ScheduleService } from "./schedule/service.js";
 import { createBot, registerCommands } from "./bot/index.js";
@@ -29,6 +30,9 @@ async function main(): Promise<void> {
 
   const db = openDatabase(config.DB_PATH);
   const repo = new Repo(db);
+  // Разовая уборка после правки правил сравнения: ложные «изменения», которых
+  // по нынешним правилам не было бы вовсе, уходят из раздела «Изменения».
+  pruneFalseChangeEvents(repo);
   // Один клиент портала на всё. Если учётка задана, он ходит под ней — только
   // она видит преподавателей в расписании групп; не пустила — сам садится
   // гостем, и расписание продолжает работать, просто без фамилий. Двух
