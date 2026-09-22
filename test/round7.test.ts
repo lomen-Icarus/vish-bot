@@ -18,6 +18,7 @@ import { StudentDirectory } from "../src/students/directory.js";
 import { tildaDate, tildaFeeds } from "../src/news/fetchers.js";
 import { formatDay, formatWeek, shortTeacher } from "../src/schedule/format.js";
 import { mondayOf } from "../src/time.js";
+import { diffOccurrences } from "../src/schedule/diff.js";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
 import { miscHandlers } from "../src/bot/handlers/misc.js";
@@ -448,5 +449,37 @@ describe("преподаватель в расписании", () => {
     const text = formatDay(g, today, [lsn(1, "Физика", "Иванов Иван Иванович")], info, today, { teacherView: "bold" });
     expect(text).toContain("<b>Иванов И. И.</b>");
     expect(formatDay(g, today, [lsn(1, "Физика", "Иванов Иван Иванович")], info, today, { teacherView: "off" })).not.toContain("Иванов");
+  });
+});
+
+describe("появление преподавателя не будит подписчиков", () => {
+  const withTeacher = (t: string | null): Occurrence => ({ ...lesson("Физика", 1), teacher: t });
+
+  it("было пусто — стало имя: расписание обновится, уведомления не будет", () => {
+    const events = diffOccurrences([withTeacher(null)], [withTeacher("доц. Иванова Ирина Ивановна")], { from: today, to: addDays(today, 14) });
+    expect(events).toEqual([]);
+  });
+
+  it("учётка отвалилась и имя пропало — тоже молчим", () => {
+    const events = diffOccurrences([withTeacher("Иванова И. И.")], [withTeacher(null)], { from: today, to: addDays(today, 14) });
+    expect(events).toEqual([]);
+  });
+
+  it("то же имя в другом написании — не замена", () => {
+    const events = diffOccurrences([withTeacher("доц. к.х.н. Иванова Ирина Ивановна")], [withTeacher("Иванова И.И.")], { from: today, to: addDays(today, 14) });
+    expect(events).toEqual([]);
+  });
+
+  it("настоящая замена преподавателя по-прежнему доходит", () => {
+    const events = diffOccurrences([withTeacher("Иванова И. И.")], [withTeacher("Петров П. П.")], { from: today, to: addDays(today, 14) });
+    expect(events).toHaveLength(1);
+    expect(events[0]!.fields).toEqual(["teacher"]);
+  });
+
+  it("смена аудитории вместе с появлением фамилии всё равно доходит", () => {
+    const before = { ...withTeacher(null), room: "Г-316" };
+    const after = { ...withTeacher("Иванова И. И."), room: "Т-310" };
+    const events = diffOccurrences([before], [after], { from: today, to: addDays(today, 14) });
+    expect(events[0]!.fields).toEqual(["room"]);
   });
 });
