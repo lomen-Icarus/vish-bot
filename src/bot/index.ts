@@ -139,6 +139,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "health", description: "Состояние бота" },
     { command: "ailimit", description: "Лимиты вопросов к ИИ" },
     { command: "slides", description: "Слайды записанных вебинаров" },
+    { command: "whois", description: "Кто из списка ФИО уже пользуется ботом" },
   ];
   for (const id of deps.config.ADMIN_IDS) {
     try {

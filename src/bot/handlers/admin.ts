@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { clampHtml, esc } from "../../schedule/format.js";
+import { esc } from "../../schedule/format.js";
 import { isMenuText, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
 import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
@@ -169,6 +169,26 @@ async function showAiLimits(ctx: BotContext, edit = false): Promise<void> {
   await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
 }
 
+/** Сколько ФИО проверяем за один раз: больше — это уже выгрузка, а не список. */
+const WHOIS_LIMIT = 100;
+
+/** Режет готовые строки на сообщения Telegram, не разрывая строку пополам. */
+function chunkLines(lines: string[], limit: number): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const line of lines) {
+    const next = cur ? `${cur}\n${line}` : line;
+    if (next.length > limit && cur) {
+      out.push(cur);
+      cur = line;
+    } else {
+      cur = next;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 /**
  * «Кто из этих людей уже пользуется ботом» — сверка списка ФИО (актив, кружок,
  * группа) с теми, кто боту писал. Считается на сервере по файлу узнавания;
@@ -179,33 +199,46 @@ async function showAiLimits(ctx: BotContext, edit = false): Promise<void> {
  */
 adminOnly.command("whois", async (ctx) => {
   const known = ctx.deps.known;
-  if (!known?.count()) return void (await ctx.reply("Файл узнавания не загружен (KNOWN_DB) — сверять не с чем."));
-  const names = (ctx.match ?? "")
-    .split(/[\n;]+/)
-    .map((x) => x.replace(/^[\s\d.)|-]+/, "").replace(/\|.*$/, "").trim())
-    .filter((x) => /\p{L}/u.test(x) && x.split(/\s+/).length >= 2)
-    .slice(0, 100);
-  if (!names.length) {
-    return void (await ctx.reply("Пришли список ФИО после команды, по одному в строке:\n<code>/whois\nИванов Иван Иванович\nПетрова Анна Сергеевна</code>", { parse_mode: "HTML" }));
+  if (!known?.count()) {
+    // Файла может не быть, а может он быть и не прочитаться: это разные беды,
+    // и гонять админа проверять переменную, когда дело в кодировке, незачем.
+    const why = known?.stats().error;
+    return void (await ctx.reply(why ? `Файл узнавания не прочитан: ${esc(why)}` : "Файл узнавания не загружен (KNOWN_DB) — сверять не с чем.", { parse_mode: "HTML" }));
   }
+  const all = (ctx.match ?? "")
+    .split(/[\n;,]+/)
+    // Нумерация, маркеры списка и хвост таблицы после «|» — не часть ФИО.
+    .map((x) => x.replace(/^[\s\d.)|•-]+/, "").replace(/\|.*$/, "").trim().slice(0, 80))
+    // Группы и прочие строки с цифрами («ВИШ-11-23 (ЭиЭА)») — это не люди.
+    .filter((x) => /\p{L}/u.test(x) && !/\d/.test(x) && x.split(/\s+/).length >= 2);
+  if (!all.length) {
+    return void (await ctx.reply("Пришли список ФИО после команды, по одному в строке:\n<code>/whois\nИванов Иван Иванович\nПетрова Анна Сергеевна</code>\n\nМожно вставлять строки таблицы целиком: номера, группы и хвост после «|» бот отбросит сам.", { parse_mode: "HTML" }));
+  }
+  const names = all.slice(0, WHOIS_LIMIT);
   const usernames = ctx.deps.repo.botUsernames();
-  const marks = { uses: "✅", "not-seen": "▫️", "no-handle": "❔" } as const;
-  const tally = { uses: 0, "not-seen": 0, "no-handle": 0 };
+  const marks = { uses: "✅", "not-seen": "▫️", "no-handle": "❔", ambiguous: "⚠️" } as const;
+  const tally = { uses: 0, "not-seen": 0, "no-handle": 0, ambiguous: 0 };
   const lines: string[] = [];
   for (const name of names) {
     const status = known.status(name, usernames);
     tally[status]++;
     lines.push(`${marks[status]} ${esc(name)}`);
   }
-  const text = [
+  const head = [
     "<b>👥 Кто из списка пользуется ботом</b>",
-    `Проверено ${names.length} чел. · ✅ пользуются: <b>${tally.uses}</b> · ▫️ не заходили: ${tally["not-seen"]} · ❔ нет телеграма в списке старост: ${tally["no-handle"]}`,
-    "",
-    ...lines,
-    "",
-    "<i>❔ — про человека сказать нечего: телеграма не было в списке. ▫️ — ник известен, но с него боту не писали: мог сменить ник или включить «усиленную анонимность».</i>",
-  ].join("\n");
-  await ctx.reply(clampHtml(text), { parse_mode: "HTML" });
+    `Проверено ${names.length} чел. · ✅ пользуются: <b>${tally.uses}</b> · ▫️ ник не встречался: ${tally["not-seen"]} · ❔ нет в списке старост: ${tally["no-handle"]}${tally.ambiguous ? ` · ⚠️ тёзки: ${tally.ambiguous}` : ""}`,
+    ...(all.length > names.length ? [`⚠️ Проверены первые ${WHOIS_LIMIT} из ${all.length}: остальные ${all.length - names.length} не смотрел, пришли их отдельно.`] : []),
+  ];
+  const foot = [
+    "<i>▫️ — ник из списка боту не встречался: человек мог сменить ник, забанить бота или включить «усиленную анонимность».",
+    "❔ — такого ФИО в списке старост нет (либо опечатка в фамилии).",
+    "⚠️ — в списке несколько подходящих людей (полные тёзки или спросили без отчества): угадывать бот не станет.</i>",
+  ];
+  // Сотня строк не влезает в одно сообщение Telegram, а резать список
+  // молча нельзя: пусть лучше придёт несколько сообщений.
+  for (const chunk of chunkLines([...head, "", ...lines, "", ...foot], 3500)) {
+    await ctx.reply(chunk, { parse_mode: "HTML" });
+  }
 });
 
 adminOnly.callbackQuery(/^ail:(user|global):(up|down)$/, async (ctx) => {

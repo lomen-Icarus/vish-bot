@@ -7,8 +7,10 @@
  *
  * Почему отдельный файл, а не столбец в реестре поиска: ник не должен попасть
  * в поиск студентов ни при каких обстоятельствах. Поиск читает POISK_DB и про
- * этот файл не знает; здесь нет ни поиска по имени, ни выдачи ников наружу —
- * только «этот ник → это имя».
+ * этот файл не знает, а ник не покидает этот модуль: наружу уходит либо имя
+ * («Привет, Данил»), либо вердикт «пользуется / не встречался» для сверки
+ * списка активистов админом (status). Обратный поиск по ФИО есть только
+ * внутри, и результат его — не ник, а да/нет.
  *
  * Группу из файла бот никогда не навязывает: файл годичной давности, группы
  * успевают поменяться, а ФИО — нет.
@@ -22,6 +24,43 @@ export interface KnownPerson {
   name: string;
   /** Имя для обращения: «Албуткин Данил Иванович» → «Данил». */
   firstName: string;
+  /** Слова ФИО в нормальном виде: считаются один раз при загрузке. */
+  words: string[];
+}
+
+/** Ответ на вопрос «пользуется ли этот человек ботом». */
+export type KnownStatus =
+  /** Ник из файла встречался боту. */
+  | "uses"
+  /** Ник известен, но с него боту не писали. */
+  | "not-seen"
+  /** Такого человека в файле нет — сказать нечего. */
+  | "no-handle"
+  /** В файле несколько подходящих людей: угадывать нельзя. */
+  | "ambiguous";
+
+/**
+ * Один ли это человек. Сравнение нарочно строгое, без поправки на опечатки:
+ * здесь не подсказка в поиске, а утверждение «вот этот человек пользуется
+ * ботом», и ошибиться в нём хуже, чем ответить «не знаю».
+ *
+ * Фамилия — точно. Имя и отчество — точно, но инициал совпадает с полным
+ * словом («Иванов И. И.» = «Иванов Иван Иванович»), а отсутствующее слово ничему
+ * не противоречит («Иванов Иван» подходит любому Иванову Ивану). Зато два
+ * РАЗНЫХ отчества — это разные люди, и на них матч обязан развалиться.
+ */
+function sameWord(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (a.length === 1 || b.length === 1) return a[0] === b[0];
+  return false;
+}
+
+export function samePersonWords(want: string[], have: string[]): boolean {
+  if (!want.length || !have.length || !sameWord(want[0]!, have[0]!)) return false;
+  for (let i = 1; i < Math.min(want.length, have.length, 3); i++) {
+    if (!sameWord(want[i]!, have[i]!)) return false;
+  }
+  return true;
 }
 
 /** «Фамилия Имя Отчество» → «Имя». Одно слово — им и обращаемся. */
@@ -92,7 +131,7 @@ export class KnownPeople {
         // Один ник у двоих — узнавать по нему нельзя: выкидываем обоих, иначе
         // бот поздоровается чужим именем.
         if (map.has(handle)) dupes.add(handle);
-        map.set(handle, { name, firstName: firstNameOf(name) });
+        map.set(handle, { name, firstName: firstNameOf(name), words: normName(name).split(" ").filter(Boolean) });
       }
       for (const h of dupes) map.delete(h);
       this.byHandle = map;
@@ -118,35 +157,24 @@ export class KnownPeople {
 
   /**
    * Пользуется ли этот человек ботом. Сверка идёт внутри модуля, чтобы ник
-   * нигде не всплыл: наружу уходит только вердикт.
-   *   uses      — ник из списка старост встречался боту;
-   *   not-seen  — ник известен, но такой человек боту не писал;
-   *   no-handle — ника нет в списке, сказать нечего.
+   * нигде не всплыл: наружу уходит только вердикт. Четыре ответа, и «не знаю»
+   * тут не одно и то же, что «нет»: см. KnownStatus.
    */
-  status(fio: string, botUsernames: Set<string>): "uses" | "not-seen" | "no-handle" {
+  status(fio: string, botUsernames: Set<string>): KnownStatus {
     this.reloadIfChanged();
-    const handle = this.handleOf(fio);
-    if (!handle) return "no-handle";
-    return botUsernames.has(handle) ? "uses" : "not-seen";
-  }
-
-  /** Ник по ФИО: точное совпадение, иначе «фамилия + имя» (отчество могли не дописать). */
-  private handleOf(fio: string): string | null {
-    const want = normName(fio);
-    if (!want) return null;
-    const short = want.split(" ").slice(0, 2).join(" ");
-    let byShort: string | null = null;
-    let shortHits = 0;
+    const want = normName(fio).split(" ").filter(Boolean);
+    if (!want.length) return "no-handle";
+    let found: string | null = null;
+    let hits = 0;
     for (const [handle, person] of this.byHandle) {
-      const have = normName(person.name);
-      if (have === want) return handle;
-      if (have.split(" ").slice(0, 2).join(" ") === short) {
-        byShort = handle;
-        shortHits++;
-      }
+      if (!samePersonWords(want, person.words)) continue;
+      found = handle;
+      // Двое подходящих — это либо полные тёзки, либо спросили без отчества:
+      // в обоих случаях угадывать нельзя, и молчать об этом тоже нельзя.
+      if (++hits > 1) return "ambiguous";
     }
-    // Двое с одинаковыми фамилией и именем — угадывать нельзя.
-    return shortHits === 1 ? byShort : null;
+    if (!found) return "no-handle";
+    return botUsernames.has(found) ? "uses" : "not-seen";
   }
 
   count(): number {
