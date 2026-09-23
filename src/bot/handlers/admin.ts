@@ -1,7 +1,8 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { esc } from "../../schedule/format.js";
+import { esc, plural } from "../../schedule/format.js";
+import { pruneFalseChangeEvents } from "../../db/cleanup.js";
 import { isMenuText, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
 import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
@@ -197,6 +198,20 @@ function chunkLines(lines: string[], limit: number): string[] {
  * Честно разделяет «не пользуется» и «сказать нечего»: если телеграма человека
  * в списке старост не было, бот про него не знает ничего.
  */
+/**
+ * Ручная уборка ложных «изменений» — на случай, если после очередной правки
+ * правил в разделе снова осело то, чего по нынешним правилам не бывает.
+ * Считает заново каждую сохранённую правку и удаляет пустые.
+ */
+adminOnly.command("cleanchanges", async (ctx) => {
+  const removed = pruneFalseChangeEvents(ctx.deps.repo, { force: true });
+  await ctx.reply(
+    removed
+      ? `Убрал ${removed} ${plural(removed, "ложное изменение", "ложных изменения", "ложных изменений")}. Настоящие (аудитория, время, дистант, отмена, перенос, замена преподавателя) на месте.`
+      : "Ложных изменений не нашлось: всё, что лежит в разделе, по нынешним правилам — настоящие изменения.",
+  );
+});
+
 adminOnly.command("whois", async (ctx) => {
   const known = ctx.deps.known;
   if (!known?.count()) {
