@@ -14,7 +14,8 @@ import { sourceHandlers } from "./handlers/sources.js";
 import { poiskHandlers } from "./handlers/poisk.js";
 import { peopleHandlers } from "./people.js";
 import { logger } from "../logger.js";
-import { mainKeyboard } from "./keyboards.js";
+import { menuFor } from "./keyboards.js";
+import { teacherModeHandlers } from "./teacherMode.js";
 
 export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
@@ -28,7 +29,8 @@ export function createBot(deps: Deps): Bot<BotContext> {
     const p = payload as { chat_id?: number | string; reply_markup?: unknown };
     if ((method === "sendMessage" || method === "sendPhoto" || method === "sendDocument") && !p.reply_markup && typeof p.chat_id === "number" && p.chat_id > 0 && !menuRefreshed.has(p.chat_id)) {
       menuRefreshed.add(p.chat_id);
-      return prev(method, { ...payload, reply_markup: mainKeyboard() } as typeof payload, signal);
+      // В режиме преподавателя меню своё: третья кнопка — «Студенты».
+      return prev(method, { ...payload, reply_markup: menuFor(deps.repo.getUser(p.chat_id)) } as typeof payload, signal);
     }
     return prev(method, payload, signal);
   });
@@ -72,6 +74,8 @@ export function createBot(deps: Deps): Bot<BotContext> {
   });
 
   bot.use(adminHandlers);
+  // Режим преподавателя: только команда /prepod, кнопок нет.
+  bot.use(teacherModeHandlers);
   bot.use(sourceHandlers);
   bot.use(miscHandlers);
   bot.use(askHandlers);
@@ -89,7 +93,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
 
   bot.on("message:text", async (ctx) => {
     await ctx.reply("Не понял. Нажми кнопку ниже или посмотри /help", {
-      reply_markup: mainKeyboard(),
+      reply_markup: menuFor(ctx.user),
     });
   });
 
@@ -148,6 +152,8 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "slides", description: "Слайды записанных вебинаров" },
     { command: "whois", description: "Кто из списка ФИО уже пользуется ботом" },
     { command: "cleanchanges", description: "Убрать ложные изменения из раздела" },
+    // Только в меню админов: для остальных режим преподавателя пока без кнопок.
+    { command: "prepod", description: "Режим преподавателя (проверка: /prepod Фамилия)" },
   ];
   for (const id of deps.config.ADMIN_IDS) {
     try {

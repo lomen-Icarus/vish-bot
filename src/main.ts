@@ -59,6 +59,9 @@ async function main(): Promise<void> {
   // Узнавание по нику — отдельный файл и отдельный модуль: ники не должны
   // попасть в поиск студентов даже по ошибке. Нет файла — никого не узнаём.
   const known = new KnownPeople(config.KNOWN_DB);
+  // Реестр преподавателей для режима преподавателя: тот же формат «ФИО;ник».
+  const teacherRegistry = new KnownPeople(config.TEACHERS_DB);
+  logger.info({ count: teacherRegistry.count(), file: config.TEACHERS_DB }, teacherRegistry.count() ? "teacher registry loaded" : "teacher registry is empty or missing: режим преподавателя — только для админов (/prepod Фамилия)");
   logger.info({ count: known.count(), file: config.KNOWN_DB }, known.count() ? "known people loaded" : "known people file is empty or missing: бот никого не узнаёт по имени");
   if (students) {
     const st = students.stats();
@@ -95,7 +98,7 @@ async function main(): Promise<void> {
     : null;
   const ask = config.ANTHROPIC_API_KEY ? new AskService(config.ANTHROPIC_API_KEY, service, { model: config.AI_MODEL }, teachers, webinars, studentLookup) : null;
 
-  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, known, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
+  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, known, teacherRegistry, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
   const bot = createBot(deps);
   await bot.init();
   deps.news = config.ANTHROPIC_API_KEY

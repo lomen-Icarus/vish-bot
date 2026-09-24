@@ -113,6 +113,7 @@ function healthText(ctx: BotContext): string {
     `Inline-режим: ${deps.inline ? "включён" : "ВЫКЛЮЧЕН — включи в @BotFather: /setinline, затем /setinlinefeedback"}`,
     `Сыск (поиск студентов): ${poiskState(ctx)}`,
     `Узнавание по нику: ${knownState(ctx)}`,
+    `Режим преподавателя: ${deps.teacherRegistry?.count() ? `в реестре ${deps.teacherRegistry.count()} чел.` : "реестр пуст (TEACHERS_DB) — включают только админы"} · в режиме сейчас ${deps.repo.teacherModeCount()}`,
     `Карта преподавателей: ${(() => {
       const m = deps.repo.teacherMapStats();
       return `${m.vish} из ${m.total} помечены как ВИШ, проверено ${m.checked}`;

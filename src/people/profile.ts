@@ -11,7 +11,7 @@
  * Здесь только данные и текст; кнопки и отправка — в src/bot/people.ts.
  */
 import type { Deps } from "../bot/context.js";
-import type { User } from "../db/repo.js";
+import type { User, WebinarRow } from "../db/repo.js";
 import type { TeacherRef } from "../portal/teachers.js";
 import { teacherMapKey } from "../portal/teachers.js";
 import type { WebinarTeacher } from "../portal/webinars.js";
@@ -149,12 +149,16 @@ export async function loadProfile(deps: Deps, ref: PersonRef, viewerId: number |
 
 /** Пары со страницы вебинаров как обычные пары расписания: онлайн, с группами и темой. */
 function webinarLessons(deps: Deps, w: WebinarTeacher, from: LocalDate, to: LocalDate): Occurrence[] {
-  const name = normName(w.name);
-  return deps.repo
-    .webinarsBetween(from, to)
+  return webinarRowsToLessons(deps.repo.webinarsBetween(from, to), w.name);
+}
+
+/** Строки страницы вебинаров одного преподавателя → пары расписания. */
+export function webinarRowsToLessons(rows: WebinarRow[], teacherName: string): Occurrence[] {
+  const name = normName(teacherName);
+  return rows
     .filter((r) => r.scheduled && normName(r.teacher) === name)
     .map((r) => ({
-      groupKey: `webinar:${webinarNameKey(w.name)}`,
+      groupKey: `webinar:${webinarNameKey(teacherName)}`,
       period: 1 as const,
       date: r.date,
       slot: r.slot,

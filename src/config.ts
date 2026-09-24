@@ -80,6 +80,12 @@ const schema = z.object({
    * Пустое значение или отсутствующий файл = бот никого не узнаёт.
    */
   KNOWN_DB: z.string().default("./data/known.csv"),
+  /**
+   * Реестр преподавателей для режима преподавателя: «ФИО;телеграм-ник», как у
+   * KNOWN_DB. Лежит только на хостинге. Преподаватель из реестра включает режим
+   * командой /prepod, и бот показывает его собственное расписание как «свою группу».
+   */
+  TEACHERS_DB: z.string().default("./data/teachers.csv"),
   /** Токен, которым сервер записи вебинаров подписывает загрузку слайдов (POST /slides). Пусто — приём выключен. */
   SLIDES_TOKEN: z.string().optional().transform((v) => (v && v.trim().length >= 16 ? v.trim() : undefined)),
   SLIDES_DIR: z.string().default("./data/slides"),
