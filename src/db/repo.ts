@@ -868,6 +868,56 @@ export class Repo {
     return new Set(rows.map((r) => r.username.toLowerCase()));
   }
 
+  // ---- групповые чаты (белый список) ----
+
+  enableGroupChat(chatId: number, title: string | null, addedBy: number | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO group_chats (chat_id, title, enabled, added_by, created_at) VALUES (?, ?, 1, ?, ?)
+         ON CONFLICT(chat_id) DO UPDATE SET enabled = 1, title = COALESCE(excluded.title, group_chats.title)`,
+      )
+      .run(chatId, title, addedBy, nowIso());
+  }
+
+  /** Запомнить чат (выключенным), чтобы в /chats было видно его название. */
+  rememberGroupChat(chatId: number, title: string | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO group_chats (chat_id, title, enabled, created_at) VALUES (?, ?, 0, ?)
+         ON CONFLICT(chat_id) DO UPDATE SET title = COALESCE(excluded.title, group_chats.title)`,
+      )
+      .run(chatId, title, nowIso());
+  }
+
+  disableGroupChat(chatId: number): boolean {
+    return this.db.prepare("UPDATE group_chats SET enabled = 0 WHERE chat_id = ?").run(chatId).changes > 0;
+  }
+
+  groupChatEnabled(chatId: number): boolean {
+    const r = this.db.prepare("SELECT enabled FROM group_chats WHERE chat_id = ?").get(chatId) as { enabled: number } | undefined;
+    return r?.enabled === 1;
+  }
+
+  groupChats(): Array<{ chatId: number; title: string | null; enabled: boolean }> {
+    const rows = this.db.prepare("SELECT chat_id, title, enabled FROM group_chats ORDER BY created_at").all() as Array<{ chat_id: number; title: string | null; enabled: number }>;
+    return rows.map((r) => ({ chatId: r.chat_id, title: r.title, enabled: r.enabled === 1 }));
+  }
+
+  // ---- база ответов ----
+
+  addCannedReply(trigger: string, answer: string): number {
+    const r = this.db.prepare("INSERT INTO canned_replies (trigger, answer, created_at) VALUES (?, ?, ?)").run(trigger.trim(), answer.trim(), nowIso());
+    return Number(r.lastInsertRowid);
+  }
+
+  deleteCannedReply(id: number): boolean {
+    return this.db.prepare("DELETE FROM canned_replies WHERE id = ?").run(id).changes > 0;
+  }
+
+  cannedReplies(): Array<{ id: number; trigger: string; answer: string }> {
+    return this.db.prepare("SELECT id, trigger, answer FROM canned_replies ORDER BY id").all() as Array<{ id: number; trigger: string; answer: string }>;
+  }
+
   /** Сколько человек включили «усиленную анонимность» (для /health). */
   anonCount(): number {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE anon = 1").get() as { n: number }).n;

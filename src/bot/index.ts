@@ -12,6 +12,7 @@ import { newsHandlers } from "./handlers/news.js";
 import { calendarHandlers } from "./handlers/calendar.js";
 import { sourceHandlers } from "./handlers/sources.js";
 import { poiskHandlers } from "./handlers/poisk.js";
+import { groupHandlers } from "./handlers/group.js";
 import { logger } from "../logger.js";
 import { mainKeyboard } from "./keyboards.js";
 
@@ -52,6 +53,9 @@ export function createBot(deps: Deps): Bot<BotContext> {
 
   // News sources (channels / chats) are handled before the private-chat guard.
   bot.use(newsHandlers);
+  // Групповые чаты: ответ на обращение к боту и включение/выключение чата.
+  // Стоит до гарда лички — остальное в группах бот по-прежнему не трогает.
+  bot.use(groupHandlers);
 
   // Private chats only for the interactive UI; groups can still use inline mode.
   bot.on("message", async (ctx, next) => {
@@ -141,6 +145,10 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "slides", description: "Слайды записанных вебинаров" },
     { command: "whois", description: "Кто из списка ФИО уже пользуется ботом" },
     { command: "cleanchanges", description: "Убрать ложные изменения из раздела" },
+    { command: "chats", description: "Групповые чаты: где бот отвечает" },
+    { command: "replies", description: "База ответов для групп" },
+    { command: "reply_add", description: "Добавить ответ: триггер => ответ" },
+    { command: "chatlimit", description: "Лимит ответов ИИ на чат в день" },
   ];
   for (const id of deps.config.ADMIN_IDS) {
     try {
