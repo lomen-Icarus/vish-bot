@@ -293,4 +293,36 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE users ADD COLUMN teacher_ref TEXT;
   ALTER TABLE users ADD COLUMN teacher_name TEXT;
   `,
+  `
+  -- Болталка в групповых чатах. chat_groups — чаты, где бот есть, и можно ли
+  -- ему там отвечать (включает админ бота). chat_usage — расход по дням: и
+  -- лимиты, и учёт токенов; как ai_usage, переживает /soon. chat_log — ответы
+  -- бота людям в чатах: из них собирается контекст разговора; живёт 3 дня.
+  CREATE TABLE chat_groups (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    present INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE chat_usage (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id, day)
+  );
+  CREATE INDEX chat_usage_day ON chat_usage (day);
+  CREATE TABLE chat_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX chat_log_chat_user ON chat_log (chat_id, user_id, created_at);
+  `,
 ];

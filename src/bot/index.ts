@@ -17,6 +17,8 @@ import { logger } from "../logger.js";
 import { menuFor } from "./keyboards.js";
 import { teacherModeHandlers } from "./teacherMode.js";
 import { subjectHandlers } from "./handlers/subjects.js";
+import { groupChatHandlers } from "./handlers/groupChat.js";
+import { chatAdminHandlers } from "./handlers/chatAdmin.js";
 
 export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
@@ -59,12 +61,19 @@ export function createBot(deps: Deps): Bot<BotContext> {
 
   // News sources (channels / chats) are handled before the private-chat guard.
   bot.use(newsHandlers);
+  // Болталка: «@бот привет» в группе (CHAT_AI=TRUE); остальное в группах — как раньше.
+  bot.use(groupChatHandlers);
 
   // Private chats only for the interactive UI; groups can still use inline mode.
   bot.on("message", async (ctx, next) => {
     if (ctx.chat.type !== "private") {
-      if (ctx.msg.text?.startsWith("/")) {
-        const uname = bot.botInfo?.username ?? "bot";
+      const cmd = ctx.msg.text?.startsWith("/") ? ctx.msg.text.split(/\s/)[0]! : null;
+      const uname = bot.botInfo?.username ?? "bot";
+      // С выключенным privacy mode бот видит все команды чата, в том числе
+      // чужим ботам: отвечаем только на адресованные ему (/cmd@бот), а голые —
+      // лишь когда их присылает сам Telegram, то есть в privacy mode.
+      const mine = cmd ? (cmd.includes("@") ? cmd.toLowerCase().endsWith(`@${uname.toLowerCase()}`) : !ctx.me.can_read_all_group_messages) : false;
+      if (mine) {
         // Про inline пишем только когда он реально включён в BotFather.
         const hint = deps.inline ? `\n\nВ этом чате работает inline: набери <code>@${uname} 12-23 завтра</code> и выбери подсказку — расписание вставится сообщением.` : "";
         await ctx.reply(`Я работаю в личных сообщениях: напиши мне напрямую @${uname}.${hint}`, { parse_mode: "HTML" });
@@ -75,6 +84,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
   });
 
   bot.use(adminHandlers);
+  bot.use(chatAdminHandlers);
   // Режим преподавателя: только команда /prepod, кнопок нет.
   bot.use(teacherModeHandlers);
   bot.use(sourceHandlers);
@@ -158,6 +168,8 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     // Только в меню админов: для остальных режим преподавателя пока без кнопок.
     { command: "prepod", description: "Режим преподавателя (проверка: /prepod Фамилия)" },
     { command: "subjects", description: "Предметы: сколько и когда пар (тест)" },
+    { command: "qa", description: "Сценарий болталки: вопрос → ответ" },
+    { command: "chatlimit", description: "Лимиты болталки в группах" },
   ];
   for (const id of deps.config.ADMIN_IDS) {
     try {
