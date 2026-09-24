@@ -3,14 +3,18 @@
  * он отвечает через Claude с учётом разговора (src/chat/service.ts).
  *
  * Где болтать, решает админ бота: чат, куда бота добавил сам админ, включается
- * сразу, остальные — кнопкой в «/admin → 💬 Болталка» (или CHAT_GROUP_IDS).
+ * сразу; добавил кто-то другой — админам приходит вопрос с кнопкой
+ * «Разрешить». Ещё: «/admin → 💬 Болталка», CHAT_GROUP_IDS или /chaton и
+ * /chatoff прямо в чате.
  * Лимиты на день — там же. Всё остальное в группах работает как раньше:
  * команды получают подсказку «пиши в личку», inline — как был.
  */
-import { Composer } from "grammy";
+import { Composer, InlineKeyboard } from "grammy";
 import type { Message, UserFromGetMe } from "grammy/types";
 import type { BotContext, Deps } from "../context.js";
 import { chatAllowance, type ChatVerdict } from "../../chat/limits.js";
+import { featuresText, needGroup } from "../views.js";
+import { esc } from "../../schedule/format.js";
 import { todayMsk, wallClock } from "../../time.js";
 import { logger } from "../../logger.js";
 
@@ -25,6 +29,9 @@ export function chatEnabled(deps: Deps, chatId: number): boolean {
 
 /** Обращаются ли к боту: @упоминание (в тексте или подписи) или ответ на его сообщение. */
 export function addressedToBot(msg: Message, me: UserFromGetMe): boolean {
+  // Пересланное сообщение писали не боту: упоминание в нём чужое, а пересылка
+  // спама с @ботом иначе жгла бы лимит чужими руками.
+  if (msg.forward_origin) return false;
   const reply = msg.reply_to_message;
   // Ответ на сообщение, вставленное через inline, — ответ человеку, а не боту.
   if (reply?.from?.id === me.id && !reply.via_bot) return true;
@@ -44,7 +51,11 @@ function speakerName(msg: Message): string {
   return (msg.from?.first_name || msg.sender_chat?.title || "кто-то").slice(0, 40);
 }
 
+/** Пауза между ответами в одном чате: чтобы бота не раскачали в пинг-понг. */
+export const CHAT_COOLDOWN_MS = 3000;
+
 // ---- состояние процесса ----
+const lastReplyAt = new Map<number, number>();
 /** Кому бот отвечает прямо сейчас: второй вопрос того же человека ждёт, а не идёт параллельно. */
 const busy = new Set<number>();
 const inFlightByChat = new Map<number, number>();
@@ -56,8 +67,14 @@ const disabledNoticed = new Set<number>();
 /** Сбои модели не пересказываем чаще раза в 10 минут на чат. */
 const errorNoticedAt = new Map<number, number>();
 
+/** Для тестов: забыть паузы между ответами (остальную память не трогать). */
+export function resetChatCooldowns(): void {
+  lastReplyAt.clear();
+}
+
 /** Для тестов: сбросить память процесса. */
 export function resetGroupChatState(): void {
+  lastReplyAt.clear();
   busy.clear();
   inFlightByChat.clear();
   inFlightGlobal = 0;
@@ -71,6 +88,16 @@ function limitText(verdict: ChatVerdict): string {
   if (verdict === "limit-chat") return "В этом чате я на сегодня всё, язык устал 🙂 До завтра.";
   return "Я сегодня уже со всеми наболтался — лимит на день кончился. До завтра 🙂";
 }
+
+// Включить или выключить болталку прямо в чате — только админ бота.
+groupChatHandlers.chatType(["group", "supergroup"]).command(["chaton", "chatoff"], async (ctx) => {
+  if (!ctx.isAdmin) return;
+  const on = ctx.msg.text.startsWith("/chaton");
+  ctx.deps.repo.upsertChatGroup(ctx.chat.id, { title: ctx.chat.title ?? null, present: true, enabled: on });
+  if (!on) return void (await ctx.reply("Ок, в этом чате молчу. Включить обратно: /chaton"));
+  if (!ctx.deps.chat) return void (await ctx.reply("Чат включён, но болталка выключена в настройках бота (CHAT_AI=FALSE или нет ключа Anthropic)."));
+  await ctx.reply(`Привет! Теперь я здесь отвечаю, если меня позвать: «@${ctx.me.username} …» или ответом на моё сообщение.`);
+});
 
 // Бота добавили в группу или удалили из неё.
 groupChatHandlers.on("my_chat_member", async (ctx, next) => {
@@ -93,10 +120,21 @@ groupChatHandlers.on("my_chat_member", async (ctx, next) => {
   deps.repo.upsertChatGroup(chat.id, { title, present: true, enabled });
   logger.info({ chat: chat.id, enabled, byAdmin }, "group chat: bot added");
   const wasPresent = cur?.present === true;
-  if (deps.chat && !wasPresent && (enabled || chatEnabled(deps, chat.id))) {
+  if (wasPresent) return;
+  if (enabled || chatEnabled(deps, chat.id)) {
+    if (!deps.chat) return;
     const me = ctx.me;
-    const privacy = me.can_read_all_group_messages ? "" : "\n\n(Сейчас я вижу только обращения ко мне и ответы на мои сообщения — так даже спокойнее.)";
-    await ctx.reply(`Привет! Зовите: «@${me.username} …» или отвечайте на мои сообщения — поболтаю. Расписание — inline: «@${me.username} 12-23 завтра».${privacy}`).catch(() => undefined);
+    await ctx.reply(`Привет! Зовите: «@${me.username} …» или отвечайте на мои сообщения — поболтаю, подскажу про пары и преподавателей.`).catch(() => undefined);
+    return;
+  }
+  // Добавил кто-то другой: бот молчит, а админам приходит вопрос с кнопкой.
+  if (!deps.chat) return;
+  const who = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
+  const kb = new InlineKeyboard().text("✅ Разрешить болтать", `gch:on:${chat.id}`);
+  for (const adminId of deps.config.ADMIN_IDS) {
+    await ctx.api
+      .sendMessage(adminId, `👥 Меня добавили в чат «${esc(title ?? String(chat.id))}» (${esc(who)}). Пока я там молчу.`, { parse_mode: "HTML", reply_markup: kb })
+      .catch((err: unknown) => logger.debug({ err: String(err), adminId }, "group join notice failed"));
   }
 });
 
@@ -146,6 +184,7 @@ groupChatHandlers.on("message", async (ctx, next) => {
   service.memory.push(chatId, { at: Date.now(), userId, name: speaker, text: text || raw, addressed: true });
 
   if (busy.has(userId)) return;
+  if (Date.now() - (lastReplyAt.get(chatId) ?? 0) < CHAT_COOLDOWN_MS) return;
   const day = todayMsk();
   const { verdict } = chatAllowance(deps.repo, deps.config, { userId, chatId, isAdmin: ctx.isAdmin }, day, { chat: inFlightByChat.get(chatId) ?? 0, global: inFlightGlobal });
   if (verdict !== "ok") {
@@ -166,13 +205,17 @@ groupChatHandlers.on("message", async (ctx, next) => {
       : null;
 
   busy.add(userId);
+  lastReplyAt.set(chatId, Date.now());
   inFlightByChat.set(chatId, (inFlightByChat.get(chatId) ?? 0) + 1);
   inFlightGlobal++;
   try {
     await ctx.replyWithChatAction("typing").catch(() => undefined);
     const history = deps.repo.recentChat(chatId, userId, 6 * 60 * 60_000, 6).map((h) => ({ question: h.question, answer: h.answer }));
     const now = wallClock();
-    const result = await service.reply({ chatTitle: title, speaker, speakerId: userId, text, history, transcript, repliedTo, now: { date: now.date, minutes: now.minutes } });
+    // Своя группа человека — если он пользуется ботом в личке: «что у меня завтра».
+    const group = needGroup(ctx);
+    const tools = deps.ask?.groupTools({ group, subgroup: ctx.user.subgroup, userId, botHelp: featuresText(deps) });
+    const result = await service.reply({ chatTitle: title, speaker, speakerId: userId, text, history, transcript, repliedTo, now: { date: now.date, minutes: now.minutes }, speakerGroup: group?.title ?? null, ...(tools ? { tools } : {}) });
     const answer = result.refused ? "На это отвечать не буду 🙂" : result.text || "Хм, даже не знаю, что сказать 🙂";
     deps.repo.bumpChatUsage(chatId, userId, day, result.inputTokens, result.outputTokens);
     await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } });

@@ -9,8 +9,12 @@ import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
 import { decodeText, parseQa, QaBase, qaLine } from "../src/chat/qa.js";
 import { ChatService, type ChatClient } from "../src/chat/service.js";
-import { addressedToBot, groupChatHandlers, resetGroupChatState, stripMention } from "../src/bot/handlers/groupChat.js";
-import { chatAdminHandlers } from "../src/bot/handlers/chatAdmin.js";
+import { addressedToBot, groupChatHandlers, resetChatCooldowns, resetGroupChatState, stripMention } from "../src/bot/handlers/groupChat.js";
+import { chatAdminHandlers, parseQaAdd } from "../src/bot/handlers/chatAdmin.js";
+import { importLegacyCanned } from "../src/chat/importCanned.js";
+import { Db, migrate } from "../src/db/index.js";
+import { MIGRATIONS } from "../src/db/migrations.js";
+import { DatabaseSync } from "node:sqlite";
 import { setChatLimit } from "../src/chat/limits.js";
 import type { BotContext, Deps } from "../src/bot/context.js";
 import { todayMsk } from "../src/time.js";
@@ -136,7 +140,9 @@ function setup(opts: { qa?: string; enabled?: boolean; answers?: string[] } = {}
   return { deps, repo, requests, qa };
 }
 
-async function send(deps: Deps, update: Update, userId = 7, composer: Composer<BotContext> = groupChatHandlers): Promise<Sent[]> {
+async function send(deps: Deps, update: Update, userId = 7, composer: Composer<BotContext> = groupChatHandlers, opts: { keepCooldown?: boolean } = {}): Promise<Sent[]> {
+  // Пауза между ответами в чате проверяется отдельным тестом; в остальных она мешает.
+  if (!opts.keepCooldown) resetChatCooldowns();
   const sent: Sent[] = [];
   const api = new Api("123:FAKE");
   api.config.use(async (_prev, method, payload) => {
@@ -332,5 +338,137 @@ describe("админка болталки", () => {
     const u = privateText("/qa_add а = б");
     (u.message as { from: { id: number } }).from.id = 7;
     expect(await send(deps, u, 7, chatAdminHandlers)).toEqual([]);
+  });
+});
+
+describe("болталка: перенесено из первой версии бота в группах", () => {
+  beforeEach(() => resetGroupChatState());
+
+  it("пауза между ответами в одном чате: второе обращение сразу после первого — тишина", async () => {
+    const { deps, requests } = setup();
+    await send(deps, groupText("раз"), 7, groupChatHandlers, { keepCooldown: true });
+    const second = await send(deps, groupText("два", { userId: 8, name: "Петя" }), 8, groupChatHandlers, { keepCooldown: true });
+    expect(second).toEqual([]);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("пересланное сообщение с @ботом — не обращение", () => {
+    const m = { message_id: 1, date: 0, chat: { id: CHAT, type: "supergroup", title: "x" }, from: { id: 7, is_bot: false, first_name: "A" }, text: "@vish_bot купи слона", entities: [{ type: "mention", offset: 0, length: 9 }], forward_origin: { type: "hidden_user", date: 0, sender_user_name: "спамер" } } as unknown as Message;
+    expect(addressedToBot(m, ME)).toBe(false);
+  });
+
+  it("/chaton и /chatoff в самом чате — только админ бота", async () => {
+    const { deps, repo } = setup({ enabled: false });
+    const cmd = (text: string, userId: number): Update => ({
+      update_id: nextId++,
+      message: { message_id: nextId, date: 0, chat: { id: CHAT, type: "supergroup", title: "ВИШ-12-23" }, from: { id: userId, is_bot: false, first_name: "A" }, text, entities: [{ type: "bot_command", offset: 0, length: text.length }] },
+    });
+    expect(await send(deps, cmd("/chaton", 7), 7)).toEqual([]);
+    expect(repo.chatGroup(CHAT)?.enabled ?? false).toBe(false);
+    const on = await send(deps, cmd("/chaton", 99), 99);
+    expect(repo.chatGroup(CHAT)!.enabled).toBe(true);
+    expect(String(on[0]!.payload.text)).toContain("@vish_bot");
+    await send(deps, cmd("/chatoff", 99), 99);
+    expect(repo.chatGroup(CHAT)!.enabled).toBe(false);
+  });
+
+  it("бота добавил не админ: админу приходит вопрос с кнопкой, кнопка включает чат", async () => {
+    const { deps, repo } = setup({ enabled: false });
+    const added: Update = {
+      update_id: nextId++,
+      my_chat_member: { chat: { id: -100700, type: "supergroup", title: "Чужой чат" }, from: { id: 7, is_bot: false, first_name: "Вася", username: "vasya" }, date: 0, old_chat_member: { status: "left", user: ME }, new_chat_member: { status: "member", user: ME } },
+    };
+    const sent = await send(deps, added, 7);
+    const dm = sent.find((s) => s.method === "sendMessage" && s.payload.chat_id === 99)!;
+    expect(String(dm.payload.text)).toContain("Чужой чат");
+    expect(JSON.stringify(dm.payload.reply_markup)).toContain("gch:on:-100700");
+    expect(repo.chatGroup(-100700)!.enabled).toBe(false);
+    const press: Update = { update_id: nextId++, callback_query: { id: "1", from: { id: 99, is_bot: false, first_name: "A" }, chat_instance: "1", data: "gch:on:-100700", message: { message_id: 3, date: 0, chat: { id: 99, type: "private", first_name: "A" }, text: "x" } as never } };
+    const after = await send(deps, press, 99, chatAdminHandlers);
+    expect(repo.chatGroup(-100700)!.enabled).toBe(true);
+    expect(after.some((s) => s.method === "sendMessage" && s.payload.chat_id === -100700)).toBe(true);
+  });
+
+  it("про пары модель отвечает инструментами: вызов, результат, ответ; группа человека — в запросе", async () => {
+    const { repo, qa } = setup();
+    const requests: Anthropic.MessageCreateParamsNonStreaming[] = [];
+    let step = 0;
+    const client: ChatClient = {
+      messages: {
+        create: async (params) => {
+          requests.push(structuredClone(params));
+          if (step++ === 0) return { ...fakeMessage(""), stop_reason: "tool_use", content: [{ type: "tool_use", id: "tu1", name: "get_schedule", input: { group: "12-23" } }] } as unknown as Anthropic.Message;
+          return fakeMessage("Завтра у 12-23 матан в 8:20");
+        },
+      },
+    };
+    const ran: unknown[] = [];
+    const tool = { name: "get_schedule", description: "расписание", input_schema: { type: "object" as const, properties: {} }, parse: (x: unknown) => x, run: async (args: never) => { ran.push(args); return "пн: матан 08:20"; } };
+    const chat = new ChatService(null, { model: "m", contextMessages: 10, botUsername: "vish_bot" }, qa, client);
+    const out = await chat.reply({ chatTitle: "x", speaker: "Аня", speakerId: 7, text: "что завтра у меня", history: [], transcript: [], repliedTo: null, now: { date: todayMsk(), minutes: 600 }, speakerGroup: "ВИШ-12-23", tools: [tool] });
+    expect(out.text).toBe("Завтра у 12-23 матан в 8:20");
+    expect(ran).toEqual([{ group: "12-23" }]);
+    expect(requests[0]!.tools).toEqual([{ name: "get_schedule", description: "расписание", input_schema: { type: "object", properties: {} } }]);
+    expect(lastUserText(requests[0]!)).toContain("Группа Аня в боте: ВИШ-12-23");
+    const results = requests[1]!.messages.at(-1)!.content as Anthropic.ToolResultBlockParam[];
+    expect(results[0]).toMatchObject({ type: "tool_result", tool_use_id: "tu1", content: "пн: матан 08:20" });
+    expect(out.inputTokens).toBe(200);
+    void repo;
+  });
+
+  it("в группе у ИИ нет поиска студентов, в личке есть", async () => {
+    const { AskService } = await import("../src/ai/ask.js");
+    const lookup = { search: () => [], allowed: () => true, note: () => undefined, whereabouts: () => null };
+    const svc = new AskService("sk-test", {} as never, { model: "m" }, null, null, lookup);
+    const group = svc.groupTools({ group: null, subgroup: null, userId: 1 }).map((t) => t.name);
+    expect(group).toContain("get_schedule");
+    expect(group).not.toContain("find_student");
+    const priv = (svc as unknown as { tools: (...a: unknown[]) => Array<{ name: string }> }).tools(null, null, "", { teachers: [], webinarTeachers: [], groupKeys: [], students: [] }, 1).map((t) => t.name);
+    expect(priv).toContain("find_student");
+  });
+
+  it("/reply_add «триггер => ответ» (многострочный ответ с «=»), /qa_del по номеру и по тексту", async () => {
+    expect(parseQaAdd("сосал? => строка 1\nа = б")).toEqual({ questions: ["сосал?"], answer: "строка 1\nа = б", hint: null });
+    expect(parseQaAdd("как дела | как ты = Норм = шутливо")).toEqual({ questions: ["как дела", "как ты"], answer: "Норм", hint: "шутливо" });
+    expect(parseQaAdd("без ответа")).toBeNull();
+    const { deps, qa } = setup({ qa: "вопрос;ответ\nраз;1\nдва;2\nтри;3\n" });
+    const cmd = (text: string): Update => ({ update_id: nextId++, message: { message_id: nextId, date: 0, chat: { id: 99, type: "private", first_name: "A" }, from: { id: 99, is_bot: false, first_name: "A" }, text, entities: [{ type: "bot_command", offset: 0, length: text.split(/\s/)[0]!.length }] } });
+    await send(deps, cmd("/reply_add сосал? => Ответ = с равно"), 99, chatAdminHandlers);
+    expect(qa.match("сосал?")[0]!.entry.answer).toBe("Ответ = с равно");
+    await send(deps, cmd("/qa_del 2"), 99, chatAdminHandlers);
+    expect(qa.entries().map((e) => e.answer)).toEqual(["1", "3", "Ответ = с равно"]);
+    await send(deps, cmd("/reply_del три"), 99, chatAdminHandlers);
+    expect(qa.entries().map((e) => e.answer)).toEqual(["1", "Ответ = с равно"]);
+  });
+
+  it("база ответов первой версии один раз переезжает в сценарий", () => {
+    const { repo, qa } = setup({ qa: "вопрос;ответ\nпривет;Здарова\n" });
+    repo.db.prepare("INSERT INTO canned_replies (trigger, answer, created_at) VALUES (?, ?, ?)").run("сосал?", "Ответ админа", "2026-09-24T00:00:00Z");
+    repo.db.prepare("INSERT INTO canned_replies (trigger, answer, created_at) VALUES (?, ?, ?)").run("привет", "дубль", "2026-09-24T00:00:00Z");
+    expect(importLegacyCanned(repo, qa)).toBe(1);
+    expect(qa.match("сосал")[0]!.entry).toMatchObject({ answer: "Ответ админа", hint: "дословно" });
+    expect(importLegacyCanned(repo, qa)).toBe(0);
+    expect(qa.stats().count).toBe(2);
+  });
+
+  it("миграция поверх первой версии: включённые чаты и лимит на чат переезжают", () => {
+    const db = new Db(new DatabaseSync(":memory:"));
+    const legacy = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE group_chats"));
+    expect(legacy).toBeGreaterThan(0);
+    // База в том виде, в каком она сейчас на сервере: миграции до group_chats включительно.
+    for (let i = 0; i <= legacy; i++) db.exec(MIGRATIONS[i]!);
+    db.pragma(`user_version = ${legacy + 1}`);
+    db.prepare("INSERT INTO group_chats (chat_id, title, enabled, added_by, created_at) VALUES (?, ?, ?, ?, ?)").run(-1001, "Наш чат", 1, 99, "2026-09-24T00:00:00Z");
+    db.prepare("INSERT INTO group_chats (chat_id, title, enabled, added_by, created_at) VALUES (?, ?, ?, ?, ?)").run(-1002, "Чужой", 0, null, "2026-09-24T00:00:00Z");
+    db.prepare("INSERT INTO meta (key, value) VALUES ('group:dailyLimit', '80')").run();
+    migrate(db);
+    const repo = new Repo(db);
+    expect(repo.chatGroup(-1001)).toMatchObject({ enabled: true, title: "Наш чат" });
+    expect(repo.chatGroup(-1002)).toMatchObject({ enabled: false });
+    expect(repo.getMeta("chat:limit:chat")).toBe("80");
+    // И режим преподавателя тоже доехал: его миграция идёт после group_chats.
+    repo.touchUser(5, "u", "U");
+    repo.updateUser(5, { teacherMode: true, teacherName: "Петрова Анна Сергеевна" });
+    expect(repo.getUser(5)!.teacherMode).toBe(true);
   });
 });

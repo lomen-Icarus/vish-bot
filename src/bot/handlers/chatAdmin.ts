@@ -107,6 +107,20 @@ adminOnly.callbackQuery("adm:chat", async (ctx) => {
   await showChat(ctx, true);
 });
 
+// /chats — так этот экран назывался в первой версии бота в группах.
+adminOnly.command("chats", async (ctx) => showChat(ctx));
+
+// Кнопка из сообщения «меня добавили в чат …» (формат — ещё с первой версии).
+adminOnly.callbackQuery(/^gch:(on|off):(-?\d{1,20})$/, async (ctx) => {
+  const on = ctx.match[1] === "on";
+  const chatId = Number(ctx.match[2]);
+  ctx.deps.repo.upsertChatGroup(chatId, { enabled: on });
+  await ctx.answerCallbackQuery({ text: on ? "Разрешил: болтаю в этом чате" : "Выключил: в этом чате молчу" });
+  const title = ctx.deps.repo.chatGroup(chatId)?.title ?? String(chatId);
+  await ctx.editMessageText(`${on ? "✅ Болтаю" : "⛔ Молчу"} в чате «${esc(title)}». Все чаты и лимиты: /chats`, { parse_mode: "HTML" }).catch(() => undefined);
+  if (on && ctx.deps.chat) await ctx.api.sendMessage(chatId, `Привет! Зовите: «@${ctx.me.username} …» или отвечайте на мои сообщения — поболтаю, подскажу про пары и преподавателей.`).catch(() => undefined);
+});
+
 adminOnly.callbackQuery("chl:show", async (ctx) => {
   await ctx.answerCallbackQuery();
   await showChat(ctx, true);
@@ -163,23 +177,25 @@ adminOnly.command("chatlimit", async (ctx) => {
 });
 
 // ---- сценарий «вопрос → ответ» ----
-adminOnly.command("qa", async (ctx) => {
+// /replies и /reply_add, /reply_del — имена из первой версии бота в группах.
+adminOnly.command(["qa", "replies"], async (ctx) => {
   const chat = ctx.deps.chat;
   if (!chat) return void (await ctx.reply("Болталка выключена (CHAT_AI=FALSE или нет ключа), сценарий не загружен."));
   const st = chat.qa.stats();
   const sample = chat.qa
     .entries()
-    .slice(0, 5)
-    .map((e) => `• ${esc(e.questions.join(" | "))} → ${esc(e.answer.length > 80 ? `${e.answer.slice(0, 80)}…` : e.answer)}`);
+    .slice(0, 30)
+    .map((e, i) => `${i + 1}. ${esc(e.questions.join(" | ").slice(0, 60))} → ${esc(e.answer.length > 70 ? `${e.answer.slice(0, 70)}…` : e.answer)}`);
   await ctx.reply(
     [
       "<b>🗂 Сценарий болталки</b>",
       `Файл: <code>${esc(st.file)}</code> · заготовок: <b>${st.count}</b>${st.skipped ? ` · пропущено строк: ${st.skipped}` : ""}${st.error ? ` · ${esc(st.error)}` : ""}`,
-      ...(sample.length ? ["", ...sample, st.count > 5 ? `…и ещё ${st.count - 5}` : ""] : []),
+      ...(sample.length ? ["", ...sample, st.count > 30 ? `…и ещё ${st.count - 30} — весь файл: /qa_file` : ""] : []),
       "",
       "Ответ всё равно пишет ИИ: на похожий вопрос он отвечает заготовкой — дословно или близко к тексту.",
       "",
-      "<code>/qa_add вопрос | вариант = ответ</code> — добавить (можно <code>= подсказка</code> третьей частью)",
+      "<code>/qa_add вопрос | вариант = ответ</code> — добавить (можно <code>= подсказка</code> третьей частью; если в ответе есть «=», пиши <code>вопрос =&gt; ответ</code>)",
+      "<code>/qa_del 3</code> или <code>/qa_del вопрос</code> — удалить",
       "<code>/qa_test текст</code> — какие заготовки подойдут к реплике",
       "<code>/qa_file</code> — скачать файл, <code>/qa_import</code> — прислать исправленный",
       "",
@@ -191,22 +207,53 @@ adminOnly.command("qa", async (ctx) => {
   );
 });
 
-adminOnly.command("qa_add", async (ctx) => {
-  const chat = ctx.deps.chat;
-  if (!chat) return void (await ctx.reply("Болталка выключена — добавлять некуда."));
-  const [q, a, hint] = (ctx.match ?? "").split("=").map((x) => x.trim());
-  const questions = (q ?? "")
+/**
+ * «вопрос | вариант = ответ = подсказка» или «вопрос => ответ» (так было в
+ * /reply_add; ответ после «=>» берётся целиком, со всеми «=» и переносами).
+ */
+export function parseQaAdd(raw: string): { questions: string[]; answer: string; hint: string | null } | null {
+  let q: string;
+  let a: string;
+  let hint: string | null = null;
+  const arrow = raw.indexOf("=>");
+  if (arrow >= 0) {
+    q = raw.slice(0, arrow);
+    a = raw.slice(arrow + 2).trim();
+  } else {
+    const parts = raw.split("=").map((x) => x.trim());
+    q = parts[0] ?? "";
+    a = parts[1] ?? "";
+    hint = parts[2] || null;
+  }
+  const questions = q
     .split("|")
     .map((x) => x.trim())
     .filter(Boolean);
-  if (!questions.length || !a) return void (await ctx.reply("Так: <code>/qa_add как дела | как ты = Лучше всех!</code>\nТретьей частью можно дать подсказку: <code>= шутливо</code>.", { parse_mode: "HTML" }));
+  return questions.length && a ? { questions, answer: a, hint } : null;
+}
+
+adminOnly.command(["qa_add", "reply_add"], async (ctx) => {
+  const chat = ctx.deps.chat;
+  if (!chat) return void (await ctx.reply("Болталка выключена — добавлять некуда."));
+  const parsed = parseQaAdd(ctx.match ?? "");
+  if (!parsed) return void (await ctx.reply("Так: <code>/qa_add как дела | как ты = Лучше всех!</code>\nТретьей частью можно дать подсказку: <code>= шутливо</code>. Если в ответе есть «=»: <code>/qa_add вопрос =&gt; ответ</code>.", { parse_mode: "HTML" }));
+  const { questions, answer, hint } = parsed;
   try {
-    chat.qa.append(questions, a, hint || null);
+    chat.qa.append(questions, answer, hint);
   } catch (err) {
     logger.warn({ err: String(err) }, "qa_add failed");
     return void (await ctx.reply(`Не смог записать файл: ${esc(String(err).slice(0, 200))}`, { parse_mode: "HTML" }));
   }
-  await ctx.reply(`Добавил. Заготовок теперь: ${chat.qa.stats().count}.\n<code>${esc(qaLine(questions, a, hint || null))}</code>`, { parse_mode: "HTML" });
+  await ctx.reply(`Добавил. Заготовок теперь: ${chat.qa.stats().count}.\n<code>${esc(qaLine(questions, answer, hint))}</code>`, { parse_mode: "HTML" });
+});
+
+adminOnly.command(["qa_del", "reply_del"], async (ctx) => {
+  const chat = ctx.deps.chat;
+  if (!chat) return void (await ctx.reply("Болталка выключена."));
+  const arg = (ctx.match ?? "").trim().replace(/^#/, "");
+  if (!arg) return void (await ctx.reply("Так: <code>/qa_del 3</code> (номер из /qa) или <code>/qa_del как дела</code>.", { parse_mode: "HTML" }));
+  const removed = /^\d+$/.test(arg) ? chat.qa.removeAt(Number(arg)) : chat.qa.remove(arg);
+  await ctx.reply(removed ? `Удалил (${removed}). Заготовок теперь: ${chat.qa.stats().count}. Старая версия файла — рядом, .bak.` : "Такой заготовки нет. Список с номерами: /qa");
 });
 
 adminOnly.command("qa_test", async (ctx) => {
