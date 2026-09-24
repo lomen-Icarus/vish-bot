@@ -86,6 +86,36 @@ const schema = z.object({
    * командой /prepod, и бот показывает его собственное расписание как «свою группу».
    */
   TEACHERS_DB: z.string().default("./data/teachers.csv"),
+  /**
+   * Болталка в групповых чатах: бота позвали (@бот привет или ответ на его
+   * сообщение) — он отвечает через Claude с учётом разговора. FALSE — бот в
+   * группах молчит, как раньше.
+   */
+  CHAT_AI: z
+    .string()
+    .default("FALSE")
+    .transform((v) => ["1", "true", "yes", "on", "да"].includes(v.trim().toLowerCase())),
+  /** Отдельный ключ Anthropic для болталки (свой счёт и свои лимиты). Пусто — берётся ANTHROPIC_API_KEY. */
+  CHAT_ANTHROPIC_API_KEY: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  /** Модель болталки. Пусто — та же, что AI_MODEL. */
+  CHAT_AI_MODEL: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  /**
+   * База «вопрос;ответ» — сценарий для болталки: на похожий вопрос бот отвечает
+   * заготовкой (своими словами или дословно). Лежит на хостинге, в репозиторий
+   * не попадает; бот перечитывает файл сам, перезапуск не нужен.
+   */
+  CHAT_QA_DB: z.string().default("./data/chat-qa.csv"),
+  /** Дневные лимиты по умолчанию; в админке («💬 Болталка») их можно поменять без перезапуска. */
+  CHAT_DAILY_LIMIT_PER_USER: z.coerce.number().int().nonnegative().catch(20),
+  CHAT_DAILY_LIMIT_PER_CHAT: z.coerce.number().int().nonnegative().catch(150),
+  CHAT_DAILY_LIMIT_GLOBAL: z.coerce.number().int().nonnegative().catch(400),
+  /**
+   * Чаты, где болталка включена сразу. Остальные включаются в админке; чат,
+   * куда бота добавил сам админ бота, включается автоматически.
+   */
+  CHAT_GROUP_IDS: idList,
+  /** Сколько последних сообщений чата бот держит в памяти как контекст (0 — только свои диалоги). */
+  CHAT_CONTEXT_MESSAGES: z.coerce.number().int().min(0).max(100).catch(30),
   /** Токен, которым сервер записи вебинаров подписывает загрузку слайдов (POST /slides). Пусто — приём выключен. */
   SLIDES_TOKEN: z.string().optional().transform((v) => (v && v.trim().length >= 16 ? v.trim() : undefined)),
   SLIDES_DIR: z.string().default("./data/slides"),

@@ -10,10 +10,11 @@ import type { WebinarService } from "../portal/webinars.js";
 import type { StudentDirectory } from "../students/directory.js";
 import type { KnownPeople } from "../students/known.js";
 import type { Server } from "node:http";
+import type { ChatService } from "../chat/service.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
-  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher" | "search" | "poisk" | "people";
+  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher" | "search" | "poisk" | "people" | "qa-import";
   /** For broadcast: captured message to forward. */
   chatId?: number;
   messageId?: number;
@@ -47,6 +48,11 @@ export interface Deps {
    * Нет файла — режим включают только админы для проверки: /prepod Фамилия.
    */
   teacherRegistry?: KnownPeople | null;
+  /**
+   * Болталка в групповых чатах (CHAT_AI=TRUE и есть ключ Anthropic); null —
+   * бот в группах не болтает.
+   */
+  chat?: ChatService | null;
   /** Calendar-feed server; subscription links are offered only while it listens. */
   http: Server | null;
   /**

@@ -33,6 +33,25 @@ function isoAgo(ms: number): string {
   return new Date(Date.now() - ms).toISOString();
 }
 
+/** Групповой чат, куда добавлен бот, и можно ли ему там болтать. */
+export interface ChatGroup {
+  chatId: number;
+  title: string | null;
+  /** Админ бота разрешил отвечать в этом чате. */
+  enabled: boolean;
+  /** Бот сейчас в чате (его не удалили). */
+  present: boolean;
+}
+interface ChatGroupRow {
+  chat_id: number;
+  title: string | null;
+  enabled: number;
+  present: number;
+}
+function rowToChatGroup(r: ChatGroupRow): ChatGroup {
+  return { chatId: r.chat_id, title: r.title, enabled: r.enabled === 1, present: r.present === 1 };
+}
+
 function rowToSource(r: NewsSourceRow): NewsSource {
   return { id: r.id, kind: r.kind as NewsSource["kind"], ref: r.ref, title: r.title, enabled: r.enabled === 1, lastScannedAt: r.last_scanned_at, lastError: r.last_error };
 }
@@ -785,6 +804,8 @@ export class Repo {
         // ai_usage stays: it is spend accounting and also backs the global daily
         // budget, so a wipe must not hand anyone a fresh quota.
         "DELETE FROM ai_log WHERE user_id = ?",
+        // chat_usage остаётся по той же причине, что ai_usage; реплики — нет.
+        "DELETE FROM chat_log WHERE user_id = ?",
         "DELETE FROM news_complaints WHERE user_id = ?",
         "DELETE FROM users WHERE id = ?",
       ]) {
@@ -1057,6 +1078,76 @@ export class Repo {
          ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1, input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens`,
       )
       .run(userId, day, inputTokens, outputTokens);
+  }
+
+  // ---------- болталка в группах ----------
+  chatGroup(chatId: number): ChatGroup | null {
+    const r = this.db.prepare("SELECT * FROM chat_groups WHERE chat_id = ?").get(chatId) as ChatGroupRow | undefined;
+    return r ? rowToChatGroup(r) : null;
+  }
+
+  chatGroups(): ChatGroup[] {
+    return (this.db.prepare("SELECT * FROM chat_groups ORDER BY present DESC, enabled DESC, updated_at DESC").all() as ChatGroupRow[]).map(rowToChatGroup);
+  }
+
+  /** Запомнить чат (название, есть ли там бот); enabled — только если передан явно. */
+  upsertChatGroup(chatId: number, patch: { title?: string | null; present?: boolean; enabled?: boolean }): ChatGroup {
+    const cur = this.chatGroup(chatId);
+    const title = patch.title !== undefined ? patch.title : (cur?.title ?? null);
+    const present = patch.present ?? cur?.present ?? true;
+    const enabled = patch.enabled ?? cur?.enabled ?? false;
+    this.db
+      .prepare(
+        `INSERT INTO chat_groups (chat_id, title, enabled, present, updated_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, enabled = excluded.enabled, present = excluded.present, updated_at = excluded.updated_at`,
+      )
+      .run(chatId, title, enabled ? 1 : 0, present ? 1 : 0, nowIso());
+    return { chatId, title, enabled, present };
+  }
+
+  chatUsage(scope: { userId?: number; chatId?: number }, day: string): number {
+    const where = ["day = ?"];
+    const args: unknown[] = [day];
+    if (scope.userId != null) {
+      where.push("user_id = ?");
+      args.push(scope.userId);
+    }
+    if (scope.chatId != null) {
+      where.push("chat_id = ?");
+      args.push(scope.chatId);
+    }
+    const r = this.db.prepare(`SELECT COALESCE(SUM(count), 0) AS c FROM chat_usage WHERE ${where.join(" AND ")}`).get(...args) as { c: number };
+    return r.c;
+  }
+
+  chatTokens(day: string): { input: number; output: number } {
+    const r = this.db.prepare("SELECT COALESCE(SUM(input_tokens), 0) AS i, COALESCE(SUM(output_tokens), 0) AS o FROM chat_usage WHERE day = ?").get(day) as { i: number; o: number };
+    return { input: r.i, output: r.o };
+  }
+
+  bumpChatUsage(chatId: number, userId: number, day: string, inputTokens: number, outputTokens: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO chat_usage (chat_id, user_id, day, count, input_tokens, output_tokens) VALUES (?, ?, ?, 1, ?, ?)
+         ON CONFLICT(chat_id, user_id, day) DO UPDATE SET count = count + 1, input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens`,
+      )
+      .run(chatId, userId, day, inputTokens, outputTokens);
+  }
+
+  logChat(chatId: number, userId: number, question: string, answer: string): void {
+    this.db.prepare("INSERT INTO chat_log (chat_id, user_id, question, answer, created_at) VALUES (?, ?, ?, ?, ?)").run(chatId, userId, question.slice(0, 2000), answer.slice(0, 4000), nowIso());
+  }
+
+  /** Последние обмены репликами с этим человеком в этом чате, старые первыми. */
+  recentChat(chatId: number, userId: number, withinMs: number, limit: number): Array<{ question: string; answer: string; createdAt: string }> {
+    const rows = this.db
+      .prepare("SELECT question, answer, created_at FROM chat_log WHERE chat_id = ? AND user_id = ? AND created_at > ? ORDER BY id DESC LIMIT ?")
+      .all(chatId, userId, isoAgo(withinMs), limit) as Array<{ question: string; answer: string; created_at: string }>;
+    return rows.reverse().map((r) => ({ question: r.question, answer: r.answer, createdAt: r.created_at }));
+  }
+
+  pruneChatLog(olderThanDays = 3): void {
+    this.db.prepare("DELETE FROM chat_log WHERE created_at < ?").run(isoAgo(olderThanDays * 86_400_000));
   }
 
   // ---------- AI log ----------
