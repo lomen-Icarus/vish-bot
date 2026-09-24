@@ -53,12 +53,12 @@ function statsText(ctx: BotContext): string {
   return lines.join("\n");
 }
 
-function teacherState(ctx: BotContext, count: number): string {
+function teacherState(ctx: BotContext, count: number, error: string | null): string {
   const t = ctx.deps.teachers;
   if (!t) return "учётка портала не задана (PORTAL_LOGIN / PORTAL_PASSWORD) — работают только преподаватели дистанта";
   const ok = t.loginOk();
-  if (ok === true) return `учётка вошла, в справочнике ${count}`;
-  if (ok === false) return "учётка НЕ вошла в портал";
+  if (ok === true) return error ? `учётка вошла, но справочник не обновился — в сохранённом списке ${count}` : `учётка вошла, в справочнике ${count}`;
+  if (ok === false) return "учётка НЕ вошла в портал — бот ходит гостем, расписаний преподавателей нет";
   return "учётка задана, вход ещё не проверялся";
 }
 
@@ -108,7 +108,7 @@ function healthText(ctx: BotContext): string {
     `Учебный год: ${deps.service.academicYear}/${deps.service.academicYear + 1}`,
     `Неделя 1 осень: ${anchor1 ?? "не калибрована"} · весна: ${anchor3 ?? "не калибрована"}`,
     `Групп: ${deps.service.groups().length} · рендер картинок: ${deps.renderer ? "да" : "нет"} · ИИ: ${deps.ask ? deps.config.AI_MODEL : "выкл"} · каналы новостей: ${deps.config.NEWS_CHANNEL_IDS.length} · ИИ-сканер: ${deps.news ? `${deps.repo.listNewsSources(true).length} источн.` : "выкл"}`,
-    `Преподаватели: ${teacherState(ctx, teacherCount)}${teacherErr ? ` · <code>${esc(teacherErr).slice(0, 200)}</code>` : ""}`,
+    `Преподаватели: ${teacherState(ctx, teacherCount, teacherErr)}${teacherErr ? ` · <code>${esc(teacherErr).slice(0, 200)}</code>` : ""}`,
     `Вебинары (преподаватели дистанта): ${webinarStats(ctx)}`,
     `Доска объявлений: ${deps.repo.activeAnnouncements().length} активных`,
     `Лимиты ИИ: ${aiLimits(deps.repo, deps.config, todayMsk()).perUser}/чел, ${aiLimits(deps.repo, deps.config, todayMsk()).global} общих · потрачено сегодня ${deps.repo.aiUsageGlobal(todayMsk())}`,
