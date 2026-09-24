@@ -167,3 +167,56 @@ describe("режим преподавателя", () => {
     expect(sent.join("\n")).toContain("Программирование");
   });
 });
+
+describe("/start — одно сообщение", () => {
+  const startDeps = (withAsk: boolean): Deps => {
+    const deps = makeDeps();
+    deps.repo.touchUser(7, "u", "U");
+    if (withAsk) deps.ask = {} as Deps["ask"];
+    return deps;
+  };
+  const runStart = async (deps: Deps): Promise<Call[]> => {
+    const calls: Call[] = [];
+    const api = new Api("123:FAKE");
+    api.config.use(async (_prev, method, payload) => {
+      calls.push({ method, payload: payload as Record<string, unknown> });
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never };
+    });
+    const { miscHandlers } = await import("../src/bot/handlers/misc.js");
+    const ctx = new Context(text("/start"), api, ME) as BotContext;
+    ctx.deps = deps;
+    ctx.user = deps.repo.touchUser(7, "u", "U");
+    ctx.isAdmin = false;
+    await new Composer<BotContext>().use(miscHandlers).middleware()(ctx, async () => undefined);
+    return calls;
+  };
+  const buttonTexts = (c: Call): string[] => ((c.payload.reply_markup as { inline_keyboard?: Array<Array<{ text: string }>> }).inline_keyboard ?? []).flat().map((b) => b.text);
+
+  it("вернувшийся: приветствие и одна кнопка «Спросить?»", async () => {
+    const deps = startDeps(true);
+    deps.repo.updateUser(7, { groupKey: group.key });
+    const calls = await runStart(deps);
+    const sent = calls.filter((c) => c.method === "sendMessage");
+    expect(sent).toHaveLength(1);
+    expect(String(sent[0]!.payload.text)).toContain("С возвращением");
+    expect(buttonTexts(sent[0]!)).toEqual(["💬 Спросить?"]);
+  });
+
+  it("новый: одно сообщение — приветствие, выбор группы и «Спросить?»", async () => {
+    const deps = startDeps(true);
+    const calls = await runStart(deps);
+    const sent = calls.filter((c) => c.method === "sendMessage");
+    expect(sent).toHaveLength(1);
+    expect(String(sent[0]!.payload.text)).toMatch(/выбери свою группу/);
+    const labels = buttonTexts(sent[0]!);
+    expect(labels).toContain("12-23");
+    expect(labels[labels.length - 1]).toBe("💬 Спросить?");
+  });
+
+  it("преподаватель — по имени-отчеству", async () => {
+    const deps = startDeps(true);
+    deps.repo.updateUser(7, { teacherMode: true, teacherName: "Петрова Анна Сергеевна", teacherRef: null });
+    const calls = await runStart(deps);
+    expect(String(calls.find((c) => c.method === "sendMessage")!.payload.text)).toContain("Здравствуйте, Анна Сергеевна!");
+  });
+});

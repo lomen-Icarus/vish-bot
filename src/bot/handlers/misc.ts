@@ -1,9 +1,9 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, groupCb, groupLabel, isMenuText, mainKeyboard } from "../keyboards.js";
+import { BTN, groupCb, groupLabel, groupPicker, isMenuText, menuFor } from "../keyboards.js";
+import { nameAndPatronymic } from "../teacherMode.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
-import { showGroupPicker } from "./schedule.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
 import { showPerson } from "../people.js";
@@ -28,13 +28,12 @@ function knownName(ctx: BotContext): string | null {
 }
 
 /**
- * Кнопки под приветствием. Расписание и так в нижней клавиатуре, а вот про
- * «спросить своими словами» никто не догадывается — поэтому она здесь.
+ * Единственная кнопка под приветствием — «Спросить?»: расписание и так в
+ * нижнем меню, а про «спросить своими словами» никто не догадывается. Это тот
+ * же ИИ-поиск, что и «🔍 Поиск», с теми же дневными лимитами из админки.
  */
-function startActions(ctx: BotContext): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  if (ctx.deps.ask) kb.text("💬 Спросить?", "ask:open");
-  return kb.text("🧭 Что я умею", "feat:open");
+function askButton(ctx: BotContext): InlineKeyboard | null {
+  return ctx.deps.ask ? new InlineKeyboard().text("💬 Спросить?", "ask:open") : null;
 }
 
 /**
@@ -70,15 +69,22 @@ export function inlineGuide(ctx: BotContext): string {
 }
 
 miscHandlers.command("start", async (ctx) => {
-  const kb = mainKeyboard();
   const group = needGroup(ctx);
   // Кнопка над inline-списком открывает личку с «/start inline» — значит,
   // человек спрашивает именно про inline, и отвечать надо про него.
   if ((ctx.match ?? "").trim() === "inline") {
-    await ctx.reply(inlineGuide(ctx), { parse_mode: "HTML", reply_markup: kb, link_preview_options: { is_disabled: true } });
+    await ctx.reply(inlineGuide(ctx), { parse_mode: "HTML", reply_markup: menuFor(ctx.user), link_preview_options: { is_disabled: true } });
     await ctx.reply("Можно попробовать прямо сейчас — кнопка откроет выбор чата:", {
       reply_markup: new InlineKeyboard().switchInline("💬 Попробовать в чате", "неделя"),
     });
+    return;
+  }
+  const ask = askButton(ctx);
+  const askLine = ctx.deps.ask ? "\n\nМожно просто спросить словами — «когда матан», «где Беляев», «как включить напоминания»." : "";
+  // Режим преподавателя: своя «группа» — он сам, обращение по имени-отчеству.
+  if (ctx.user.teacherMode) {
+    const name = ctx.user.teacherName ? nameAndPatronymic(ctx.user.teacherName) : null;
+    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}!` : "Здравствуйте!"} Включён режим преподавателя: «📅 Сегодня» и «🗓 Неделя» — ваши пары, «👥 Студенты» — расписание любой группы.${askLine}`, { parse_mode: "HTML", reply_markup: ask ?? menuFor(ctx.user) });
     return;
   }
   // Бот может узнать человека по телеграм-нику из файла старост. ФИО у людей
@@ -86,18 +92,19 @@ miscHandlers.command("start", async (ctx) => {
   // он годичной давности, группа могла смениться, а имя — нет.
   const hello = knownName(ctx);
   if (!group) {
+    // Одно сообщение: приветствие, выбор группы и «Спросить?». Нижнее меню
+    // придёт вместе с подтверждением выбранной группы.
+    const groups = ctx.deps.service.groups();
+    const kb = groups.length ? groupPicker(groups, { selected: null }) : new InlineKeyboard();
+    if (ask) kb.row().text("💬 Спросить?", "ask:open");
     await ctx.reply(
-      `${hello ? `Привет, ${esc(hello)}! ` : "Привет! "}Я бот расписания Высшей инженерной школы ЧувГУ.\n\nПокажу пары на любой день, пришлю изменения в расписании и напомню о парах. Сначала выбери группу.`,
+      `${hello ? `Привет, ${esc(hello)}! ` : "Привет! "}Я бот расписания Высшей инженерной школы ЧувГУ.\n\nПокажу пары на любой день, пришлю изменения в расписании и напомню о парах. ${groups.length ? "Сначала выбери свою группу:" : "Список групп ещё загружается с портала — напиши /start через минуту."}`,
       { parse_mode: "HTML", reply_markup: kb },
     );
-    await showGroupPicker(ctx);
     return;
   }
-  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.`, {
-    parse_mode: "HTML",
-    reply_markup: kb,
-  });
-  await ctx.reply(ctx.deps.ask ? "Можно просто спросить словами — «когда матан», «где Беляев», «как включить напоминания»." : "Что дальше?", { reply_markup: startActions(ctx) });
+  // Одно сообщение с одной кнопкой. Нижнее меню у вернувшегося уже есть.
+  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.${askLine}`, { parse_mode: "HTML", reply_markup: ask ?? menuFor(ctx.user) });
 });
 
 /** Карта функций приходит двумя сообщениями: одним она не влезает в лимит Telegram. */
