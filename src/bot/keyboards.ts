@@ -8,6 +8,8 @@ export const BTN = {
   today: "📅 Сегодня",
   tomorrow: "📅 Завтра",
   otherGroups: "👥 Др. группы",
+  /** Та же кнопка в режиме преподавателя: расписание любой группы. */
+  students: "👥 Студенты",
   week: "🗓 Неделя",
   nextWeek: "🗓 Следующая",
   stream: "🎓 Поток",
@@ -56,6 +58,36 @@ export function mainKeyboard(): Keyboard {
     .text(BTN.settings)
     .resized()
     .persistent();
+}
+
+/**
+ * Меню режима преподавателя: то же самое, только третья кнопка — «Студенты»
+ * (расписание любой группы), а «Сегодня / Завтра / Неделя» — его собственные пары.
+ */
+export function teacherKeyboard(): Keyboard {
+  return new Keyboard()
+    .text(BTN.today)
+    .text(BTN.tomorrow)
+    .text(BTN.students)
+    .row()
+    .text(BTN.week)
+    .text(BTN.nextWeek)
+    .text(BTN.stream)
+    .row()
+    .text(BTN.changes)
+    .text(BTN.calendar)
+    .text(BTN.teachers)
+    .row()
+    .text(BTN.features)
+    .text(BTN.search)
+    .text(BTN.settings)
+    .resized()
+    .persistent();
+}
+
+/** Нижнее меню этого человека: обычное или режима преподавателя. */
+export function menuFor(user: Pick<User, "teacherMode"> | null | undefined): Keyboard {
+  return user?.teacherMode ? teacherKeyboard() : mainKeyboard();
 }
 
 /** `poisk` добавляет кнопку глобального поиска студента (POISK=TRUE). */
@@ -207,7 +239,9 @@ export function formatPicker(): InlineKeyboard {
 
 export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: { topics: string[]; hasImages: boolean; watchCount: number; defaultTheme: string; teacherCount?: number; slides?: boolean; known?: boolean }): InlineKeyboard {
   const kb = new InlineKeyboard();
-  kb.text(`👥 Группа: ${group?.title ?? "не выбрана"}`, "s:group").row();
+  // В режиме преподавателя «своя группа» — это он сам.
+  if (user.teacherMode) kb.text(`👨‍🏫 Режим преподавателя: ${user.teacherName ?? "включён"}`.slice(0, 60), "s:group").row();
+  else kb.text(`👥 Группа: ${group?.title ?? "не выбрана"}`, "s:group").row();
   kb.text(`🔢 Подгруппа: ${user.subgroup ? `${user.subgroup}` : "все"}`, "s:subgroup");
   if (opts.hasImages) kb.text(`🖼 Формат: ${{ text: "текст", image: "картинка", both: "оба" }[user.format]}`, "s:format");
   kb.row();

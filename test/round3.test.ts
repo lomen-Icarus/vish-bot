@@ -274,7 +274,7 @@ describe("calendar feeds", () => {
     expect(cancelled).toBe(2);
     const flat = ics.replace(/\r\n[ \t]/g, "");
     expect(flat.split("BEGIN:VEVENT").length - 1).toBe(4);
-    expect(flat).toContain("SUMMARY:Отменено: Физика (лекция)");
+    expect(flat).toContain("SUMMARY:Отменено: Физика (ЛК)");
     expect(flat).toContain("LOCATION:ауд. Т-100\\, ЧувГУ");
     expect(flat).toContain("DTSTART:20260918T103000Z");
   });

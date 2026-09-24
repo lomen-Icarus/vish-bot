@@ -4,10 +4,17 @@ import { BTN, groupCb, isMenuText } from "../keyboards.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { featuresText, needGroup } from "../views.js";
 import { clampHtml, esc } from "../../schedule/format.js";
-import { todayMsk } from "../../time.js";
+import { addDays, mondayOf, todayMsk } from "../../time.js";
+import type { Occurrence } from "../../schedule/model.js";
+import { ownTeacherRef } from "../teacherMode.js";
+import { loadProfile, profileLessons } from "../../people/profile.js";
 import { aiAllowance, aiLimits } from "../../ai/limits.js";
 import type { AskMentions } from "../../ai/ask.js";
-import { teacherVishTag, webinarKey } from "./teachers.js";
+import { teacherVishTag } from "./teachers.js";
+import { showPerson, webinarRef } from "../people.js";
+import { hitLabel } from "../../people/search.js";
+import { refKey, type PersonRef } from "../../people/ref.js";
+import { samePerson } from "../../text/match.js";
 import { logger } from "../../logger.js";
 
 export const askHandlers = new Composer<BotContext>();
@@ -37,7 +44,8 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   inFlightByUser.set(ctx.user.id, (inFlightByUser.get(ctx.user.id) ?? 0) + 1);
   inFlightGlobal++;
   try {
-    const res = await ask.answer({ question, group: needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps) });
+    const self = ctx.user.teacherMode ? await ownTeacherContext(ctx) : undefined;
+    const res = await ask.answer({ question, group: self ? null : needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps), self });
     ctx.deps.repo.bumpAiUsage(ctx.user.id, day, res.inputTokens, res.outputTokens);
     const logId = ctx.deps.repo.logAi(ctx.user.id, question, res.text);
     // Copy the caller's rows: mutating their keyboard would move buttons between messages.
@@ -47,6 +55,9 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
     kb.row().text("👎 Ответ неверный", `aiw:${logId}`);
     const text = clampHtml(res.text);
     await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => ctx.reply(text.replace(/<[^>]+>/g, ""), { reply_markup: kb }));
+    // Нашёлся ровно один человек — следом его карточка, та же, что из кнопок.
+    const person = soleExactPerson(res.mentions);
+    if (person) await showPerson(ctx, person, todayMsk()).catch((err: unknown) => logger.warn({ err: String(err) }, "ask: person card failed"));
     return "answered";
   } catch (err) {
     logger.error({ err }, "ask failed");
@@ -59,44 +70,44 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   }
 }
 
+/** Режим преподавателя: ФИО и его пары на две недели — вместо расписания группы. */
+async function ownTeacherContext(ctx: BotContext): Promise<{ name: string; lessons: Occurrence[] } | undefined> {
+  const ref = ownTeacherRef(ctx.user);
+  const name = ctx.user.teacherName ?? "преподаватель";
+  if (!ref) return { name, lessons: [] };
+  try {
+    const profile = await loadProfile(ctx.deps, ref);
+    if (!profile) return { name, lessons: [] };
+    const from = mondayOf(todayMsk());
+    const loaded = await profileLessons(ctx.deps, profile, from, addDays(from, 13));
+    return { name: loaded.fullName ?? name, lessons: loaded.lessons };
+  } catch (err) {
+    logger.debug({ err: String(err) }, "ask: own teacher schedule failed");
+    return { name, lessons: [] };
+  }
+}
+
 /**
- * Кнопки на то, что ИИ нашёл: людей и группы. Человек ошибся в фамилии — модель
- * предлагает похожих словами, а нажать их можно здесь.
+ * Кнопки на то, что ИИ нашёл: людей и группы. Подписи и карточка — те же,
+ * что у кнопок «👨‍🏫 Преподаватели» и «Где студент»: человек выглядит
+ * одинаково, как бы его ни искали.
  */
 function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentions): void {
   const taken = new Set(kb.inline_keyboard.flat().map((b) => ("callback_data" in b ? b.callback_data : "")));
   const today = todayMsk();
   const items: Array<[string, string]> = [];
-  // Один человек приходит и из справочника (t:<id>), и со страницы вебинаров
-  // (wtc:<hash>) — по callback_data это разные кнопки, поэтому помним и имена.
-  // Преподаватели и студенты считаются отдельно: «Троишестова Д.А.» и
-  // «Троишестов Иван Сергеевич» дают одинаковый ключ, и кнопка на студента
-  // пропадала бы из-за однофамильца-преподавателя.
-  const names = { teacher: new Set<string>(), student: new Set<string>() };
-  // «Иванова И.И.» и «Иванова Ирина Ивановна» — один человек: фамилия + инициалы.
-  const key = (s: string): string => {
-    const parts = s.toLowerCase().replace(/ё/g, "е").split(/[.\s]+/).filter(Boolean);
-    return `${parts[0] ?? ""}|${parts.slice(1).map((w) => w[0]).join("")}`;
-  };
-  const add = (label: string, data: string, name?: string, kind: "teacher" | "student" = "teacher"): void => {
+  const add = (label: string, data: string): void => {
     if (taken.has(data) || items.length >= 6) return;
-    if (name) {
-      const k = key(name);
-      if (names[kind].has(k)) return;
-      names[kind].add(k);
-    }
     taken.add(data);
-    items.push([label.slice(0, 40), data]);
+    items.push([label, data]);
   };
   // «Наши» — ниже остальных, ближе к полю ввода: туда и смотрят, и жмут.
-  // Пометку считаем по разу на человека: внутри сравнения это были бы десятки
-  // одинаковых запросов в базу на каждую перестановку.
-  const tagged = mentions.teachers.map((t) => ({ t, tag: teacherVishTag(ctx.deps.repo, t.id, t.name) }));
-  tagged.sort((a, b) => Number(!!a.tag) - Number(!!b.tag));
-  for (const { t, tag } of tagged) add(`👨‍🏫 ${t.name}${tag}`, `t:${t.id}`, t.name);
+  const tagged = mentions.teachers.map((t) => ({ t, vish: !!teacherVishTag(ctx.deps.repo, t.id, t.name) }));
+  tagged.sort((a, b) => Number(a.vish) - Number(b.vish));
+  for (const { t, vish } of tagged) add(hitLabel({ role: "teacher", name: t.name, vish }), `ppo:${refKey({ kind: "teacher", id: t.id })}`);
   // Преподаватель онлайн-пары ВИШ — всегда наш, карта для этого не нужна.
-  for (const name of mentions.webinarTeachers) add(`👨‍🏫 ${name} (ВИШ)`, webinarKey(name), name);
-  for (const st of mentions.students) add(`🕵️ ${st.name} · ${st.groupTitle}`, `pop:${st.id}`, st.name, "student");
+  for (const w of mentions.webinarTeachers) add(hitLabel({ role: "teacher", name: w.name, vish: true, webinarOnly: true }), `ppo:${refKey(webinarRef(w.name))}`);
+  for (const st of mentions.students) add(hitLabel({ role: "student", name: st.name, vish: true, groupTitle: st.groupTitle }), `ppo:${refKey({ kind: "student", id: st.id })}`);
   for (const key of mentions.groupKeys) {
     const g = ctx.deps.service.group(key);
     if (g && g.key !== ctx.user.groupKey) add(`📅 ${g.title}`, groupCb("pdn", g.key, today));
@@ -107,6 +118,22 @@ function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentio
     if (i % 2 === 0) kb.row();
     kb.text(label, data);
   });
+}
+
+/**
+ * Единственный человек, которого ИИ нашёл точно, — его карточку бот пришлёт
+ * следом за ответом. Несколько или только «похожие» — остаются кнопки.
+ */
+export function soleExactPerson(mentions: AskMentions): PersonRef | null {
+  const refs = new Map<string, PersonRef>();
+  for (const t of mentions.teachers) if (t.exact) refs.set(refKey({ kind: "teacher", id: t.id }), { kind: "teacher", id: t.id });
+  for (const w of mentions.webinarTeachers) if (w.exact) refs.set(refKey(webinarRef(w.name)), webinarRef(w.name));
+  for (const st of mentions.students) if (st.exact) refs.set(refKey({ kind: "student", id: st.id }), { kind: "student", id: st.id });
+  // Тот же человек и из справочника, и со страницы вебинаров — один человек.
+  const teachersExact = mentions.teachers.filter((t) => t.exact);
+  if (teachersExact.length === 1) for (const w of mentions.webinarTeachers) if (w.exact && samePerson(w.name, teachersExact[0]!.name)) refs.delete(refKey(webinarRef(w.name)));
+  if (mentions.teachers.some((t) => !t.exact) || mentions.webinarTeachers.some((w) => !w.exact) || mentions.students.some((s) => !s.exact)) return null;
+  return refs.size === 1 ? [...refs.values()][0]! : null;
 }
 
 async function answer(ctx: BotContext, question: string): Promise<void> {

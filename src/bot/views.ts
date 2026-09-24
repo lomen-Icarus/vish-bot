@@ -13,6 +13,11 @@ export function needGroup(ctx: BotContext): LogicalGroup | null {
   return ctx.deps.service.group(key);
 }
 
+/** Пары группы за [from, to] с преподавателем и темой онлайн-пар со страницы вебинаров. */
+export function groupLessons(deps: Deps, group: LogicalGroup, from: LocalDate, to: LocalDate): Occurrence[] {
+  return withWebinars(deps, group, deps.service.materialize(group, from, to));
+}
+
 /** Fill in the teacher and the topic of online lessons from the portal's webinar page. */
 function withWebinars(deps: Deps, group: LogicalGroup, lessons: Occurrence[]): Occurrence[] {
   if (!deps.webinars) return lessons;
@@ -264,14 +269,14 @@ export function featuresSections(deps: Deps, opts: { admin?: boolean } = {}): st
     "• 🧹 /soon — стереть все свои данные; после этого /start начнётся с нуля.",
     ...(deps.inline
       ? [
-          `\n<b>💬 В любом чате (inline)</b>\nНапиши <code>@${bot} 12-23 завтра</code> — и выбери, что вставить: день, неделю, поток или общие пары. Работает и в группах, бот туда добавлять не нужно. Примеры: <code>@${bot} неделя</code>, <code>@${bot} поток 24</code>, <code>@${bot} общие</code>, <code>@${bot} 25.09</code>, <code>@${bot} преподаватель Петров</code>${poisk ? `, <code>@${bot} студент Беляев</code>` : ""}. Над списком подсказок есть кнопка «❔ Как писать запрос» — там весь гайд, он же открывается по /start inline.`,
+          `\n<b>💬 В любом чате (inline)</b>\nНапиши <code>@${bot} 12-23 завтра</code> — и выбери, что вставить: день, неделю, поток или общие пары. Работает и в группах, бот туда добавлять не нужно. Примеры: <code>@${bot} неделя</code>, <code>@${bot} поток 24</code>, <code>@${bot} общие</code>, <code>@${bot} 25.09</code>, <code>@${bot} Петров завтра</code> — расписание человека по фамилии${poisk ? ", хоть преподавателя, хоть студента" : ""}. Над списком подсказок есть кнопка «❔ Как писать запрос» — там весь гайд, он же открывается по /start inline.`,
         ]
       : []),
     ...(opts.admin
       ? [
           `\n<b>🛡 Админу</b>\n/admin — статистика, здоровье, рассылка, доска объявлений, лимиты ИИ, источники новостей. /poll — опросить портал сейчас. /ailimit — квоты ИИ.${
             deps.known?.count() ? " /whois — прислать список ФИО и узнать, кто из них уже пользуется ботом." : ""
-          }\n/chats — групповые чаты, где бот отвечает на обращения; /replies и /reply_add — база ответов для них; /chatlimit — сколько ответов ИИ на чат в день.`,
+          }\n/chats — болталка в группах: чаты, где бот отвечает, и лимиты; /qa — сценарий «вопрос → ответ» (/qa_add, /qa_del, /qa_file, /qa_import); /chatlimit — лимиты на день.`,
         ]
       : []),
   ];

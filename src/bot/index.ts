@@ -12,9 +12,13 @@ import { newsHandlers } from "./handlers/news.js";
 import { calendarHandlers } from "./handlers/calendar.js";
 import { sourceHandlers } from "./handlers/sources.js";
 import { poiskHandlers } from "./handlers/poisk.js";
-import { groupHandlers } from "./handlers/group.js";
+import { peopleHandlers } from "./people.js";
 import { logger } from "../logger.js";
-import { mainKeyboard } from "./keyboards.js";
+import { menuFor } from "./keyboards.js";
+import { teacherModeHandlers } from "./teacherMode.js";
+import { subjectHandlers } from "./handlers/subjects.js";
+import { groupChatHandlers } from "./handlers/groupChat.js";
+import { chatAdminHandlers } from "./handlers/chatAdmin.js";
 
 export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
@@ -28,7 +32,8 @@ export function createBot(deps: Deps): Bot<BotContext> {
     const p = payload as { chat_id?: number | string; reply_markup?: unknown };
     if ((method === "sendMessage" || method === "sendPhoto" || method === "sendDocument") && !p.reply_markup && typeof p.chat_id === "number" && p.chat_id > 0 && !menuRefreshed.has(p.chat_id)) {
       menuRefreshed.add(p.chat_id);
-      return prev(method, { ...payload, reply_markup: mainKeyboard() } as typeof payload, signal);
+      // В режиме преподавателя меню своё: третья кнопка — «Студенты».
+      return prev(method, { ...payload, reply_markup: menuFor(deps.repo.getUser(p.chat_id)) } as typeof payload, signal);
     }
     return prev(method, payload, signal);
   });
@@ -46,22 +51,29 @@ export function createBot(deps: Deps): Bot<BotContext> {
       return;
     }
     if (!from || from.is_bot) return;
-    ctx.user = deps.repo.touchUser(from.id, from.username ?? null, from.first_name ?? null);
+    // Пользователем бот считает того, кто пишет ему в личку (или жмёт кнопки
+    // там). Inline-запрос и реплика в группе — ещё не знакомство.
+    const privateChat = ctx.chat?.type === "private";
+    ctx.user = privateChat ? deps.repo.touchUser(from.id, from.username ?? null, from.first_name ?? null) : deps.repo.peekUser(from.id, from.username ?? null, from.first_name ?? null);
     ctx.isAdmin = deps.config.ADMIN_IDS.includes(from.id);
     await next();
   });
 
   // News sources (channels / chats) are handled before the private-chat guard.
   bot.use(newsHandlers);
-  // Групповые чаты: ответ на обращение к боту и включение/выключение чата.
-  // Стоит до гарда лички — остальное в группах бот по-прежнему не трогает.
-  bot.use(groupHandlers);
+  // Болталка: «@бот привет» в группе (CHAT_AI=TRUE); остальное в группах — как раньше.
+  bot.use(groupChatHandlers);
 
   // Private chats only for the interactive UI; groups can still use inline mode.
   bot.on("message", async (ctx, next) => {
     if (ctx.chat.type !== "private") {
-      if (ctx.msg.text?.startsWith("/")) {
-        const uname = bot.botInfo?.username ?? "bot";
+      const cmd = ctx.msg.text?.startsWith("/") ? ctx.msg.text.split(/\s/)[0]! : null;
+      const uname = bot.botInfo?.username ?? "bot";
+      // С выключенным privacy mode бот видит все команды чата, в том числе
+      // чужим ботам: отвечаем только на адресованные ему (/cmd@бот), а голые —
+      // лишь когда их присылает сам Telegram, то есть в privacy mode.
+      const mine = cmd ? (cmd.includes("@") ? cmd.toLowerCase().endsWith(`@${uname.toLowerCase()}`) : !ctx.me.can_read_all_group_messages) : false;
+      if (mine) {
         // Про inline пишем только когда он реально включён в BotFather.
         const hint = deps.inline ? `\n\nВ этом чате работает inline: набери <code>@${uname} 12-23 завтра</code> и выбери подсказку — расписание вставится сообщением.` : "";
         await ctx.reply(`Я работаю в личных сообщениях: напиши мне напрямую @${uname}.${hint}`, { parse_mode: "HTML" });
@@ -72,21 +84,29 @@ export function createBot(deps: Deps): Bot<BotContext> {
   });
 
   bot.use(adminHandlers);
+  bot.use(chatAdminHandlers);
+  // Режим преподавателя: только команда /prepod, кнопок нет.
+  bot.use(teacherModeHandlers);
   bot.use(sourceHandlers);
   bot.use(miscHandlers);
   bot.use(askHandlers);
+  // Карточка человека, кнопки под ней и ввод фамилии — общие для преподавателей
+  // и студентов; студенческие ссылки работают только при POISK=TRUE.
+  bot.use(peopleHandlers);
   bot.use(teacherHandlers);
   // Глобальный поиск студентов подключается только при POISK=TRUE: иначе в боте
   // нет ни кнопок, ни команд, ни колбэков этого раздела.
   if (deps.config.POISK) bot.use(poiskHandlers);
   bot.use(streamHandlers);
+  // Панель предметов — тестово, только командой /subjects.
+  bot.use(subjectHandlers);
   bot.use(calendarHandlers);
   bot.use(settingsHandlers);
   bot.use(scheduleHandlers);
 
   bot.on("message:text", async (ctx) => {
     await ctx.reply("Не понял. Нажми кнопку ниже или посмотри /help", {
-      reply_markup: mainKeyboard(),
+      reply_markup: menuFor(ctx.user),
     });
   });
 
@@ -145,10 +165,13 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "slides", description: "Слайды записанных вебинаров" },
     { command: "whois", description: "Кто из списка ФИО уже пользуется ботом" },
     { command: "cleanchanges", description: "Убрать ложные изменения из раздела" },
-    { command: "chats", description: "Групповые чаты: где бот отвечает" },
-    { command: "replies", description: "База ответов для групп" },
-    { command: "reply_add", description: "Добавить ответ: триггер => ответ" },
-    { command: "chatlimit", description: "Лимит ответов ИИ на чат в день" },
+    // Только в меню админов: для остальных режим преподавателя пока без кнопок.
+    { command: "prepod", description: "Режим преподавателя (проверка: /prepod Фамилия)" },
+    { command: "subjects", description: "Предметы: сколько и когда пар (тест)" },
+    { command: "chats", description: "Болталка в группах: чаты и лимиты" },
+    { command: "qa", description: "Сценарий болталки: вопрос → ответ" },
+    { command: "reply_add", description: "Добавить в сценарий: вопрос => ответ" },
+    { command: "chatlimit", description: "Лимиты болталки в группах" },
   ];
   for (const id of deps.config.ADMIN_IDS) {
     try {
