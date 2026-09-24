@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, formatPicker, groupPicker, onboardingKeyboard } from "../keyboards.js";
+import { BTN, formatPicker, groupPicker, menuFor, onboardingKeyboard } from "../keyboards.js";
 import { groupRequiredText, needGroup, sendDay, sendWeek } from "../views.js";
 import { addDays, fmtDDMM, isLocalDate, mondayOf, parseDayWord, parseRuDate, todayMsk, type LocalDate } from "../../time.js";
 import { showOwnTeacher } from "../teacherMode.js";
@@ -167,14 +167,22 @@ scheduleHandlers.callbackQuery(/^g:(.+)$/, async (ctx) => {
   ctx.user.groupKey = group.key;
   ctx.user.subgroup = null;
   await ctx.answerCallbackQuery({ text: `Группа: ${group.title}` });
-  try {
-    if (ctx.callbackQuery.message && !("photo" in ctx.callbackQuery.message && ctx.callbackQuery.message.photo)) {
-      await ctx.editMessageText(`Группа выбрана: <b>${esc(group.title)}</b>`, { parse_mode: "HTML" });
-    } else {
-      await ctx.reply(`Группа выбрана: <b>${esc(group.title)}</b>`, { parse_mode: "HTML" });
+  if (firstTime) {
+    // Первый выбор идёт из приветствия /start: приветствие оставляем, убираем
+    // из него список групп, а нижнее меню приходит вместе с подтверждением —
+    // раньше его нести было не в чем (у приветствия только кнопки под текстом).
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
+    await ctx.reply(`✅ Группа: <b>${esc(group.title)}</b>. Меню — внизу 👇`, { parse_mode: "HTML", reply_markup: menuFor(ctx.user) });
+  } else {
+    try {
+      if (ctx.callbackQuery.message && !("photo" in ctx.callbackQuery.message && ctx.callbackQuery.message.photo)) {
+        await ctx.editMessageText(`Группа выбрана: <b>${esc(group.title)}</b>`, { parse_mode: "HTML" });
+      } else {
+        await ctx.reply(`Группа выбрана: <b>${esc(group.title)}</b>`, { parse_mode: "HTML" });
+      }
+    } catch {
+      /* message may be gone */
     }
-  } catch {
-    /* message may be gone */
   }
   if (firstTime) {
     await ctx.reply(

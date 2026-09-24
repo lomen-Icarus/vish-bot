@@ -30,7 +30,7 @@ function adminMenu(): InlineKeyboard {
     .text("📌 Доска объявлений", "adm:board")
     .text("👥 Группы", "adm:groups")
     .row()
-    .text("🤖 Лимиты ИИ", "adm:ai")
+    .text("🤖 Лимиты «Спросить»", "adm:ai")
     .text("📰 Источники", "adm:sources");
 }
 
@@ -146,7 +146,8 @@ function aiLimitsScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     .text("♻️ Как в .env", "ail:reset")
     .text("🔄 Обновить", "ail:show");
   const text = [
-    "<b>🤖 Лимиты ИИ</b>",
+    "<b>🤖 Лимиты «Спросить?»</b>",
+    "Кнопка «💬 Спросить?» в приветствии /start, «🔍 Поиск» и /ask — это один ИИ-поиск с общим лимитом.",
     ctx.deps.ask ? `Модель: <code>${esc(ctx.deps.config.AI_MODEL)}</code>` : "ИИ выключен: не задан ANTHROPIC_API_KEY.",
     "",
     `На человека в сутки: <b>${l.perUser}</b>${l.bonusUser ? ` (${l.baseUser} + ${l.bonusUser} на сегодня)` : ""}${l.userOverridden ? ` · в .env ${l.envUser}` : ""}`,
