@@ -16,6 +16,7 @@ import { peopleHandlers } from "./people.js";
 import { logger } from "../logger.js";
 import { menuFor } from "./keyboards.js";
 import { teacherModeHandlers } from "./teacherMode.js";
+import { subjectHandlers } from "./handlers/subjects.js";
 
 export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
@@ -87,6 +88,8 @@ export function createBot(deps: Deps): Bot<BotContext> {
   // нет ни кнопок, ни команд, ни колбэков этого раздела.
   if (deps.config.POISK) bot.use(poiskHandlers);
   bot.use(streamHandlers);
+  // Панель предметов — тестово, только командой /subjects.
+  bot.use(subjectHandlers);
   bot.use(calendarHandlers);
   bot.use(settingsHandlers);
   bot.use(scheduleHandlers);
@@ -154,6 +157,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "cleanchanges", description: "Убрать ложные изменения из раздела" },
     // Только в меню админов: для остальных режим преподавателя пока без кнопок.
     { command: "prepod", description: "Режим преподавателя (проверка: /prepod Фамилия)" },
+    { command: "subjects", description: "Предметы: сколько и когда пар (тест)" },
   ];
   for (const id of deps.config.ADMIN_IDS) {
     try {
