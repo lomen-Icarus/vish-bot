@@ -28,6 +28,11 @@ interface NewsSourceRow {
   last_scanned_at: string | null;
   last_error: string | null;
 }
+/** Момент «ms назад» в том же ISO-формате, в котором в базе лежат все created_at. */
+function isoAgo(ms: number): string {
+  return new Date(Date.now() - ms).toISOString();
+}
+
 function rowToSource(r: NewsSourceRow): NewsSource {
   return { id: r.id, kind: r.kind as NewsSource["kind"], ref: r.ref, title: r.title, enabled: r.enabled === 1, lastScannedAt: r.last_scanned_at, lastError: r.last_error };
 }
@@ -340,6 +345,48 @@ export class Repo {
     this.updateUser(id, { calToken: token });
     return token;
   }
+  /**
+   * Пользователь для апдейтов не из лички (inline-запрос, сообщение в группе):
+   * запись из базы, если человек уже писал боту, иначе временная — в базу она
+   * не попадает. Иначе каждый, кто хоть раз набрал «@бот» в чате, числился бы
+   * пользователем: попадал бы в рассылки, которые ему нельзя доставить, и
+   * раздувал статистику. И пометку «заблокировал бота» такой апдейт снимать
+   * не должен: писать человеку в личку по-прежнему нельзя.
+   */
+  peekUser(id: number, username: string | null, firstName: string | null): User {
+    const existing = this.getUser(id);
+    if (existing) return existing;
+    const ts = nowIso();
+    return rowToUser({
+      id,
+      username,
+      first_name: firstName,
+      group_key: null,
+      subgroup: null,
+      format: "both",
+      notify_changes: 0,
+      notify_session: 0,
+      want_slides: 1,
+      anon: 0,
+      teacher_view: "bold",
+      notify_notices: 0,
+      remind_first_min: null,
+      remind_each_min: null,
+      remind_distance_min: null,
+      evening_at: null,
+      quiet_from: null,
+      quiet_to: null,
+      topics: "[]",
+      stream_intake: null,
+      cal_token: null,
+      cal_alarm_min: null,
+      poster_theme: null,
+      blocked: 0,
+      created_at: ts,
+      last_seen_at: ts,
+    });
+  }
+
   touchUser(id: number, username: string | null, firstName: string | null): User {
     const ts = nowIso();
     this.db
@@ -881,8 +928,8 @@ export class Repo {
   /** Кого ещё не проверяли (или проверяли давно) — для фонового обхода справочника. */
   teacherMapStale(limit: number, olderThanDays = 30): number[] {
     const rows = this.db
-      .prepare("SELECT teacher_id FROM teacher_map WHERE teacher_id IS NOT NULL AND (checked_at IS NULL OR checked_at < datetime('now', ?)) ORDER BY checked_at IS NOT NULL, checked_at LIMIT ?")
-      .all(`-${olderThanDays} days`, limit) as Array<{ teacher_id: number }>;
+      .prepare("SELECT teacher_id FROM teacher_map WHERE teacher_id IS NOT NULL AND (checked_at IS NULL OR checked_at < ?) ORDER BY checked_at IS NOT NULL, checked_at LIMIT ?")
+      .all(isoAgo(olderThanDays * 86_400_000), limit) as Array<{ teacher_id: number }>;
     return rows.map((r) => r.teacher_id);
   }
 
@@ -933,8 +980,11 @@ export class Repo {
     // быстрее, а в журнале была бы одна и та же строка дважды.
     const text = query.slice(0, 200);
     const recent = this.db
-      .prepare("SELECT id FROM poisk_log WHERE user_id = ? AND day = ? AND created_at > datetime('now', '-2 minutes') AND replace(replace(query, 'ии: ', ''), 'поиск: ', '') = ? ORDER BY id DESC LIMIT 1")
-      .get(userId, day, text.replace(/^(ии|поиск): /, "")) as { id: number } | undefined;
+      // created_at хранится как ISO («…T…Z»), а datetime('now') отдаёт «… …» с
+      // пробелом: такое сравнение строк верно лишь до даты, и «две минуты»
+      // превращались в «весь день». Границу считаем здесь, в том же формате.
+      .prepare("SELECT id FROM poisk_log WHERE user_id = ? AND day = ? AND created_at > ? AND replace(replace(query, 'ии: ', ''), 'поиск: ', '') = ? ORDER BY id DESC LIMIT 1")
+      .get(userId, day, isoAgo(2 * 60_000), text.replace(/^(ии|поиск): /, "")) as { id: number } | undefined;
     if (recent) {
       if (student) this.db.prepare("UPDATE poisk_log SET student = COALESCE(student, ?) WHERE id = ?").run(student, recent.id);
       return;
@@ -957,13 +1007,14 @@ export class Repo {
   }
   /** Старые пачки слайдов: записи и пути к файлам, чтобы их можно было удалить с диска. */
   pruneSlideDecks(olderThanDays = 120): string[] {
-    const rows = this.db.prepare("SELECT file FROM slide_decks WHERE created_at < datetime('now', ?)").all(`-${olderThanDays} days`) as Array<{ file: string }>;
-    this.db.prepare("DELETE FROM slide_decks WHERE created_at < datetime('now', ?)").run(`-${olderThanDays} days`);
+    const cutoff = isoAgo(olderThanDays * 86_400_000);
+    const rows = this.db.prepare("SELECT file FROM slide_decks WHERE created_at < ?").all(cutoff) as Array<{ file: string }>;
+    this.db.prepare("DELETE FROM slide_decks WHERE created_at < ?").run(cutoff);
     return rows.map((r) => r.file);
   }
 
   prunePoiskLog(olderThanDays = 180): void {
-    this.db.prepare("DELETE FROM poisk_log WHERE created_at < datetime('now', ?)").run(`-${olderThanDays} days`);
+    this.db.prepare("DELETE FROM poisk_log WHERE created_at < ?").run(isoAgo(olderThanDays * 86_400_000));
   }
 
   aiUsage(userId: number, day: string): number {
@@ -1030,6 +1081,23 @@ export class Repo {
       .prepare("INSERT INTO news_items (source_id, external_id, url, published_at, text, photo_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(item.sourceId, item.externalId, item.url, item.publishedAt, item.text, item.photoUrl, nowIso());
     return r.lastInsertRowid;
+  }
+
+  /**
+   * Посты, которые ещё не разложены по темам: классификатор упал или вернул
+   * не всё. Без повторной попытки они терялись бы навсегда — при следующем
+   * скане insertNewsItem считает их уже виденными.
+   */
+  unclassifiedNewsItems(sinceIso: string, limit = 120): NewsItem[] {
+    const rows = this.db
+      .prepare("SELECT i.* FROM news_items i JOIN news_sources s ON s.id = i.source_id WHERE i.topic IS NULL AND i.created_at >= ? ORDER BY i.id LIMIT ?")
+      .all(sinceIso, limit) as NewsItemRow[];
+    return rows.map(rowToItem);
+  }
+
+  newsSource(id: number): NewsSource | null {
+    const r = this.db.prepare("SELECT * FROM news_sources WHERE id = ?").get(id) as NewsSourceRow | undefined;
+    return r ? rowToSource(r) : null;
   }
 
   setNewsTopic(id: number, topic: string | null, title: string | null): void {

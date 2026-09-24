@@ -136,7 +136,7 @@ export class AskService {
     private readonly webinars: WebinarService | null = null,
     private readonly students: StudentLookup | null = null,
   ) {
-    this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 90_000 });
+    this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 180_000 });
   }
 
   private resolveGroup(query: string, fallback: LogicalGroup): LogicalGroup | null {
@@ -308,7 +308,10 @@ export class AskService {
     const mentions = emptyMentions();
     const runner = this.client.beta.messages.toolRunner({
       model: this.opts.model,
-      max_tokens: 1200,
+      // У Sonnet 5 размышление включено по умолчанию, и max_tokens ограничивает
+      // его вместе с ответом: при 1200 ответ мог обрезаться на полуслове или
+      // не начаться вовсе. Платится только то, что модель реально написала.
+      max_tokens: 8000,
       max_iterations: 6,
       system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
       output_config: { effort: "medium" },
@@ -336,6 +339,11 @@ export class AskService {
       .map((b) => b.text)
       .join("\n")
       .trim();
+    if (final.stop_reason === "max_tokens") {
+      logger.warn({ outputTokens }, "ask: answer hit max_tokens");
+      // Обрезанный ответ лучше честно пометить, чем выдать за полный.
+      return { text: text ? `${text}…\n\n<i>Ответ получился слишком длинным и обрезан — спроси точнее.</i>` : "Ответ получился слишком длинным. Спроси точнее — например, про один день или одну группу.", inputTokens, outputTokens, mentions };
+    }
     return { text: text || "Не нашёл ответа в расписании.", inputTokens, outputTokens, mentions };
   }
 }
