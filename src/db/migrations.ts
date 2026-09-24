@@ -285,4 +285,24 @@ export const MIGRATIONS: string[] = [
   -- (обычным текстом), off (не показывать вовсе).
   ALTER TABLE users ADD COLUMN teacher_view TEXT NOT NULL DEFAULT 'bold';
   `,
+  `
+  -- Групповые чаты, где боту разрешено отвечать на обращения. Белый список:
+  -- бот, которого добавили в чужой чат, молчит, пока админ его не включит, —
+  -- иначе любой мог бы жечь дневной бюджет ИИ.
+  CREATE TABLE group_chats (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    added_by INTEGER,
+    created_at TEXT NOT NULL
+  );
+  -- База ответов владельца: «на такое по смыслу — отвечай вот этим». Её видит
+  -- модель в группах; точное совпадение отвечается сразу, без ИИ.
+  CREATE TABLE canned_replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];
