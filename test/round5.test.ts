@@ -11,6 +11,7 @@ import { StudentDirectory } from "../src/students/directory.js";
 import { addAiBonus, aiAllowance, aiLimits, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../src/ai/limits.js";
 import { BTN, streamKeyboard, teacherDayNav } from "../src/bot/keyboards.js";
 import { poiskHandlers } from "../src/bot/handlers/poisk.js";
+import { peopleHandlers } from "../src/bot/people.js";
 import { scheduleHandlers } from "../src/bot/handlers/schedule.js";
 import type { BotContext, Deps } from "../src/bot/context.js";
 import type { ScheduleService } from "../src/schedule/service.js";
@@ -91,6 +92,7 @@ async function run(update: Update, deps: Deps, opts: { admin?: boolean } = {}): 
   ctx.isAdmin = opts.admin ?? false;
   const composer = new Composer<BotContext>();
   // Как в bot/index.ts: раздел «сыска» вообще не подключается при POISK=FALSE.
+  composer.use(peopleHandlers);
   if (deps.config.POISK) composer.use(poiskHandlers);
   composer.use(scheduleHandlers);
   await composer.middleware()(ctx, async () => undefined);
@@ -282,7 +284,7 @@ describe("global student search", () => {
     const out = texts(calls);
     // Предлагаем кнопками, а не показываем «где он сейчас» как факт.
     expect(out).toMatch(/Точного совпадения/);
-    expect(JSON.stringify(calls)).toContain("pop:");
+    expect(JSON.stringify(calls)).toContain("ppo:s");
     expect(out).not.toMatch(/📍/);
   });
 
@@ -297,7 +299,7 @@ describe("global student search", () => {
     const calls = await run(textUpdate("Сорокин"), deps);
     const out = texts(calls);
     expect(out).toMatch(/несколько разных групп/);
-    expect(JSON.stringify(calls)).toContain("posg:");
+    expect(JSON.stringify(calls)).toContain("ppg:");
     expect(out).not.toMatch(/📍/);
   });
 

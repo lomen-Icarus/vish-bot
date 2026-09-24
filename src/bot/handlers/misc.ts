@@ -6,7 +6,9 @@ import { featuresSections, featuresText, needGroup } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
-import { teacherVishTag, webinarKey } from "./teachers.js";
+import { showPerson } from "../people.js";
+import { clearHit, hitLabel, hitShort, searchPeople, type PersonHit } from "../../people/search.js";
+import { refKey } from "../../people/ref.js";
 import { clampHtml, esc } from "../../schedule/format.js";
 import { buildInlineResults, buildPeopleResults, parseInlineQuery } from "../inline.js";
 import { findGroup } from "../../schedule/groups.js";
@@ -239,6 +241,10 @@ interface LocalHits {
   parts: string[];
   kb: InlineKeyboard;
   buttons: number;
+  /** Найденные люди (преподаватели и студенты). */
+  people: PersonHit[];
+  /** Кроме людей ничего не нашлось: ни групп, ни предметов. */
+  onlyPeople: boolean;
 }
 
 async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
@@ -285,57 +291,30 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
     }
   }
 
-  // 3. Teachers: the portal directory when the bot has an account, plus teachers of online lessons.
-  // Only for name-shaped input: a whole question would send every word of it to
-  // the portal search one by one.
+  // 3. Люди: преподаватели и студенты — тем же поиском, что и кнопки
+  // «👨‍🏫 Преподаватели» и «Где студент», с теми же подписями и карточкой.
+  // Только для запроса, похожего на имя: целый вопрос разослал бы каждое своё
+  // слово в поиск портала по очереди.
   const nameWords = query.trim().split(/\s+/).filter((w) => /\p{L}{3,}/u.test(w));
+  let people: PersonHit[] = [];
   if (nameWords.length > 0 && nameWords.length <= 3) {
-    const names: string[] = [];
     try {
-      for (const t of deps.teachers ? await deps.teachers.search(query, 5) : []) {
-        names.push(t.name);
-        kb.text(`👨‍🏫 ${t.name}${teacherVishTag(deps.repo, t.id, t.name)}`, `t:${t.id}`);
-        if (++buttons % 2 === 0) kb.row();
-      }
+      // Журнал «сыска» ведётся и на промахах; если по тому же запросу сработает
+      // ещё и инструмент ИИ, repo.logPoisk склеит это в одну запись.
+      people = (await searchPeople(deps, query, { scope: "all", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск", limit: 6 })).hits;
     } catch (err) {
-      logger.warn({ err: String(err) }, "search: teachers failed");
+      logger.warn({ err: String(err) }, "search: people failed");
     }
-    for (const t of deps.webinars?.search(query, 4) ?? []) {
-      if (names.some((n) => n.toLowerCase().startsWith(t.name.toLowerCase().slice(0, 12)))) continue;
-      names.push(`${t.name} (дистант)`);
-      kb.text(`👨‍🏫 ${t.name}`, webinarKey(t.name));
-      if (++buttons % 2 === 0) kb.row();
-    }
-    if (names.length) parts.push(`<b>Преподаватели</b>: ${names.map(esc).join("; ")}`);
-    if (buttons % 2) kb.row();
-  }
-
-  // 4. Студенты — когда включён глобальный поиск. Тот же лимит и тот же журнал,
-  // что и у «Где студент»: через поиск базу выкачать не проще.
-  const students = deps.students;
-  if (students && nameWords.length > 0 && nameWords.length <= 3) {
-    const limit = deps.config.POISK_DAILY_LIMIT;
-    const day = todayMsk();
-    const allowed = limit <= 0 || ctx.isAdmin || deps.repo.poiskUsage(ctx.user.id, day) < limit;
-    if (allowed) {
-      const hits = students.search(query, 4);
-      // Журнал ведём всегда, в том числе на промахах: иначе базу можно было бы
-      // перебирать по фамилиям бесплатно и без следов. Если по тому же запросу
-      // сработает ещё и инструмент ИИ, repo.logPoisk склеит это в одну запись.
-      deps.repo.logPoisk(ctx.user.id, day, `поиск: ${query}`, hits[0]?.student.id ?? null);
-      if (hits.length) {
-        const guess = hits.every((h) => h.fuzzy);
-        parts.push(`<b>Студенты ВИШ</b>${guess ? " (похожие по написанию)" : ""}: ${hits.map((h) => `${esc(h.student.name)} — ${esc(h.student.groupTitle)}`).join("; ")}`);
-        for (const h of hits) {
-          kb.text(`🕵️ ${h.student.name}`.slice(0, 40), `pop:${h.student.id}`);
-          if (++buttons % 2 === 0) kb.row();
-        }
-        if (buttons % 2) kb.row();
-      }
+    if (people.length) {
+      const guess = people.every((h) => h.fuzzy);
+      parts.push(`<b>Люди</b>${guess ? " (похожие по написанию)" : ""}: ${people.map((h) => esc(hitShort(h))).join("; ")}`);
+      if (buttons % 3) kb.row();
+      for (const h of people) kb.text(hitLabel(h), `ppo:${refKey(h.ref)}`).row();
+      buttons += people.length;
     }
   }
 
-  return { parts, kb, buttons };
+  return { parts, kb, buttons, people, onlyPeople: people.length > 0 && parts.length === 1 };
 }
 
 /**
@@ -346,6 +325,13 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
 async function runSearch(ctx: BotContext, query: string): Promise<void> {
   const deps = ctx.deps;
   const hits = await localSearch(ctx, query);
+  // Нашёлся ровно один человек и больше ничего — сразу его карточка, та же, что
+  // из кнопок «Преподаватели» и «Где студент»: кто это, где сейчас, день.
+  const person = hits.onlyPeople ? clearHit(hits.people) : null;
+  if (person) {
+    await showPerson(ctx, person.ref, todayMsk());
+    return;
+  }
   if (deps.ask) {
     const outcome = await askAi(ctx, query, { extraButtons: hits.buttons ? hits.kb : undefined });
     if (outcome === "answered") return;

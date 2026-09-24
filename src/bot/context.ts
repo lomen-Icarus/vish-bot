@@ -13,7 +13,7 @@ import type { Server } from "node:http";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
-  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher" | "search" | "poisk";
+  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher" | "search" | "poisk" | "people";
   /** For broadcast: captured message to forward. */
   chatId?: number;
   messageId?: number;

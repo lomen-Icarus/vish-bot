@@ -27,6 +27,11 @@ export interface FormatOptions {
   now?: WallClock;
   /** Как показывать преподавателя: с выделением, обычным текстом или никак. */
   teacherView?: TeacherView;
+  /**
+   * Не печатать название группы под датой: в карточке человека (преподаватель,
+   * студент) кто это — написано в её шапке, повторять ни к чему.
+   */
+  hideTitle?: boolean;
 }
 
 export function filterSubgroup(list: Occurrence[], subgroup: number | null | undefined): Occurrence[] {
@@ -167,7 +172,7 @@ export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
 
 export function formatDay(group: LogicalGroup, date: LocalDate, lessons: Occurrence[], info: WeekInfo, today: LocalDate, opts: FormatOptions = {}): string {
   const list = filterSubgroup(lessons, opts.subgroup);
-  const head = `${dayHeader(date, info, today)}\n${esc(group.title)}`;
+  const head = opts.hideTitle ? dayHeader(date, info, today) : `${dayHeader(date, info, today)}\n${esc(group.title)}`;
   if (list.length === 0) return `${head}\n\n😴 Пар нет`;
   const active = list.filter((o) => o.status === "scheduled");
   const body = list.map((o) => formatLesson(o, opts)).join("\n\n");
@@ -192,7 +197,7 @@ export function countLessons(n: number): string {
 
 export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<LocalDate, Occurrence[]>, info: WeekInfo, today: LocalDate, opts: FormatOptions = {}): string {
   const pl = parityLine(info);
-  const parts: string[] = [`<b>Неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDays(monday, 6))}</b>${pl ? `\n${pl}` : ""}\n${esc(group.title)}`];
+  const parts: string[] = [`<b>Неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDays(monday, 6))}</b>${pl ? `\n${pl}` : ""}${opts.hideTitle ? "" : `\n${esc(group.title)}`}`];
   for (let i = 0; i < 7; i++) {
     const date = addDays(monday, i);
     const list = filterSubgroup(byDate.get(date) ?? [], opts.subgroup);

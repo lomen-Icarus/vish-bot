@@ -6,6 +6,7 @@ import { Repo } from "../src/db/repo.js";
 import { miscHandlers } from "../src/bot/handlers/misc.js";
 import { askHandlers } from "../src/bot/handlers/ask.js";
 import { teacherHandlers } from "../src/bot/handlers/teachers.js";
+import { peopleHandlers } from "../src/bot/people.js";
 import { streamHandlers } from "../src/bot/handlers/stream.js";
 import { calendarHandlers } from "../src/bot/handlers/calendar.js";
 import { settingsHandlers } from "../src/bot/handlers/settings.js";
@@ -61,7 +62,7 @@ async function run(update: Update, deps: Deps, userId = 7): Promise<{ calls: Cal
   ctx.user = deps.repo.touchUser(userId, "u", "U");
   ctx.isAdmin = false;
   const composer = new Composer<BotContext>();
-  composer.use(miscHandlers, askHandlers, teacherHandlers, streamHandlers, calendarHandlers, settingsHandlers, scheduleHandlers);
+  composer.use(miscHandlers, askHandlers, peopleHandlers, teacherHandlers, streamHandlers, calendarHandlers, settingsHandlers, scheduleHandlers);
   let fellThrough = false;
   await composer.middleware()(ctx, async () => {
     fellThrough = true;
@@ -187,10 +188,11 @@ describe("search", () => {
     const deps = makeDeps();
     deps.repo.updateUser(7, { groupKey: group.key });
     deps.teachers = {
-      search: async (q: string) => {
+      searchScored: async (q: string) => {
         asked.push(q);
         return [];
       },
+      ensureMapped: async () => undefined,
       lastError: () => null,
     } as unknown as Deps["teachers"];
     await run(textUpdate("/search как включить напоминания за 5 минут"), deps);

@@ -13,6 +13,11 @@ export function needGroup(ctx: BotContext): LogicalGroup | null {
   return ctx.deps.service.group(key);
 }
 
+/** Пары группы за [from, to] с преподавателем и темой онлайн-пар со страницы вебинаров. */
+export function groupLessons(deps: Deps, group: LogicalGroup, from: LocalDate, to: LocalDate): Occurrence[] {
+  return withWebinars(deps, group, deps.service.materialize(group, from, to));
+}
+
 /** Fill in the teacher and the topic of online lessons from the portal's webinar page. */
 function withWebinars(deps: Deps, group: LogicalGroup, lessons: Occurrence[]): Occurrence[] {
   if (!deps.webinars) return lessons;

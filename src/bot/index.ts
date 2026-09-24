@@ -12,6 +12,7 @@ import { newsHandlers } from "./handlers/news.js";
 import { calendarHandlers } from "./handlers/calendar.js";
 import { sourceHandlers } from "./handlers/sources.js";
 import { poiskHandlers } from "./handlers/poisk.js";
+import { peopleHandlers } from "./people.js";
 import { logger } from "../logger.js";
 import { mainKeyboard } from "./keyboards.js";
 
@@ -74,6 +75,9 @@ export function createBot(deps: Deps): Bot<BotContext> {
   bot.use(sourceHandlers);
   bot.use(miscHandlers);
   bot.use(askHandlers);
+  // Карточка человека, кнопки под ней и ввод фамилии — общие для преподавателей
+  // и студентов; студенческие ссылки работают только при POISK=TRUE.
+  bot.use(peopleHandlers);
   bot.use(teacherHandlers);
   // Глобальный поиск студентов подключается только при POISK=TRUE: иначе в боте
   // нет ни кнопок, ни команд, ни колбэков этого раздела.
