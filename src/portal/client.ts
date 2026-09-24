@@ -9,6 +9,34 @@ import type { LocalDate } from "../time.js";
 
 export const PORTAL_BASE = "https://tt.chuvsu.ru";
 
+const ENTITIES: Record<string, string> = { "&nbsp;": " ", "&amp;": "&", "&quot;": '"', "&#39;": "'", "&lt;": "<", "&gt;": ">" };
+
+/**
+ * Преподаватели на странице портала: кнопки `.techbut` с `val(<id>)` (так
+ * устроены список и поиск), а на всякий случай ещё кнопки `name="tech<id>"`
+ * и ссылки на `/index/techtt/tech/<id>` — чтобы смена разметки не обнуляла
+ * справочник.
+ */
+export function parseTeacherList(html: string): Array<{ id: number; name: string }> {
+  const byId = new Map<number, string>();
+  for (const t of parseTeacherButtons(html)) {
+    const name = t.name.replace(/\s+/g, " ").trim();
+    if (name) byId.set(t.id, name);
+  }
+  // Кнопки вида name="tech123" value="…" — так на портале устроен список аудиторий.
+  for (const m of html.matchAll(/<button\b[^>]*\bname=["']tech(\d+)["'][^>]*\bvalue=["']([^"']*)["']/gi)) {
+    const id = Number(m[1]);
+    const name = m[2]!.replace(/\s+/g, " ").trim();
+    if (name && !byId.has(id)) byId.set(id, name);
+  }
+  for (const m of html.matchAll(/<a\b[^>]*href=["'][^"']*\/index\/techtt\/tech\/(\d+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    const id = Number(m[1]);
+    const name = m[2]!.replace(/<[^>]+>/g, " ").replace(/&[#a-z0-9]+;/gi, (e) => ENTITIES[e] ?? " ").replace(/\s+/g, " ").trim();
+    if (name && !byId.has(id)) byId.set(id, name);
+  }
+  return [...byId].map(([id, name]) => ({ id, name }));
+}
+
 export interface PortalGroup {
   id: number;
   name: string;
@@ -156,10 +184,46 @@ export class PortalClient {
     return res.body;
   }
 
-  /** Full teacher directory (account only; guests are redirected away). */
-  async getAllTeachers(): Promise<Array<{ id: number; name: string }>> {
-    const html = await this.authGet(`${PORTAL_BASE}/index/tech`);
-    return parseTeacherButtons(html).map((t) => ({ id: t.id, name: t.name.trim() }));
+  /** Откуда в последний раз взялся справочник преподавателей и почему он пуст, если пуст (для /health). */
+  directorySource: string | null = null;
+  directoryNote: string | null = null;
+
+  /**
+   * Справочник преподавателей (только под учёткой: гостя портал уводит на
+   * главную). Живёт на /index/techfac; старый адрес /index/tech портал больше
+   * не отдаёт, но остаётся запасным. Если страница просит выбрать факультет,
+   * пробуем её же с факультетом бота.
+   */
+  async getAllTeachers(facultyId?: number): Promise<Array<{ id: number; name: string }>> {
+    const attempts: Array<{ source: string; load: () => Promise<string> }> = [
+      { source: "/index/techfac", load: () => this.authGet(`${PORTAL_BASE}/index/techfac`) },
+      ...(facultyId ? [{ source: `/index/techfac (факультет ${facultyId})`, load: () => this.authPost(`${PORTAL_BASE}/index/techfac`, { hfac: String(facultyId), pertt: "1" }) }] : []),
+      { source: "/index/tech", load: () => this.authGet(`${PORTAL_BASE}/index/tech`) },
+    ];
+    const notes: string[] = [];
+    for (const a of attempts) {
+      let html: string;
+      try {
+        html = await a.load();
+      } catch (err) {
+        // Портал всё время возвращает форму входа — дальше пробовать бессмысленно.
+        if (err instanceof PortalAuthError) throw err;
+        notes.push(`${a.source}: ${String(err).slice(0, 80)}`);
+        continue;
+      }
+      const list = parseTeacherList(html);
+      if (list.length) {
+        this.directorySource = a.source;
+        this.directoryNote = null;
+        logger.info({ source: a.source, count: list.length }, "portal: teacher directory loaded");
+        return list;
+      }
+      notes.push(`${a.source}: преподавателей нет${/class=["']?[^"'>]*facbut/.test(html) ? " (на странице выбор факультета)" : ""}`);
+    }
+    this.directorySource = null;
+    this.directoryNote = notes.join("; ");
+    logger.warn({ tried: notes }, "portal: teacher directory is empty on every known page");
+    return [];
   }
 
   async searchTeachers(query: string): Promise<Array<{ id: number; name: string }>> {

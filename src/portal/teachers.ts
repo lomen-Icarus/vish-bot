@@ -74,6 +74,8 @@ export class TeacherService {
     private readonly portal: PortalClient,
     private readonly repo: Repo,
     private readonly schedule: ScheduleService,
+    /** Факультет бота: справочник на портале может спрашивать, чей он. */
+    private readonly facultyId?: number,
   ) {}
 
   /** Teacher directory, refreshed daily. Falls back to the stale copy on network errors. */
@@ -85,7 +87,7 @@ export class TeacherService {
     if (this.directoryPromise) return this.directoryPromise;
     this.directoryPromise = (async () => {
       try {
-        const list = await this.portal.getAllTeachers();
+        const list = await this.portal.getAllTeachers(this.facultyId);
         if (list.length) {
           this.repo.setMeta("teachers:list", JSON.stringify(list));
           this.repo.setMeta("teachers:fetchedAt", String(Date.now()));
@@ -93,7 +95,7 @@ export class TeacherService {
           logger.info({ count: list.length }, "teacher directory refreshed");
           return list;
         }
-        this.repo.setMeta("teachers:lastError", "справочник /index/tech пуст — портал не отдал список (учётка не авторизована?)");
+        this.repo.setMeta("teachers:lastError", `справочник преподавателей пуст: ${this.portal.directoryNote ?? "портал не отдал список"}`);
         logger.warn("teacher directory came back empty");
         return cached;
       } catch (err) {
@@ -165,10 +167,20 @@ export class TeacherService {
   async checkLogin(): Promise<{ ok: boolean; error?: string }> {
     try {
       await this.portal.login();
-      const list = await this.portal.getAllTeachers();
-      if (!list.length) {
-        const msg = "вход прошёл, но справочник преподавателей пуст: учётка не видит /index/tech";
+      // Учётку портал не пустил — клиент сел гостем. Гостю справочник не
+      // показывают, и «пустой справочник» тут только сбивал бы с толку.
+      const mode = this.portal.mode();
+      if (mode.mode !== "account") {
+        const msg = `учётка не вошла (${mode.error ?? "портал не пустил"}) — бот ходит гостем`;
         this.repo.setMeta("teachers:loginOk", "0");
+        this.repo.setMeta("teachers:lastError", msg);
+        return { ok: false, error: msg };
+      }
+      const list = await this.portal.getAllTeachers(this.facultyId);
+      if (!list.length) {
+        // Вход прошёл: беда в странице справочника, а не в учётке.
+        const msg = `справочник преподавателей пуст: ${this.portal.directoryNote ?? "портал не отдал список"}`;
+        this.repo.setMeta("teachers:loginOk", "1");
         this.repo.setMeta("teachers:lastError", msg);
         return { ok: false, error: msg };
       }

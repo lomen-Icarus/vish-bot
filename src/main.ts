@@ -53,7 +53,7 @@ async function main(): Promise<void> {
     logger.warn({ err: String(err) }, "image renderer unavailable, text only");
     return null;
   });
-  const teachers = config.PORTAL_LOGIN && config.PORTAL_PASSWORD ? new TeacherService(portal, repo, service) : null;
+  const teachers = config.PORTAL_LOGIN && config.PORTAL_PASSWORD ? new TeacherService(portal, repo, service, config.FACULTY_ID) : null;
   if (!teachers) logger.info("teacher schedules disabled: PORTAL_LOGIN/PORTAL_PASSWORD not set");
   // The webinar page is guest-readable and is the only source of teacher names without an account.
   const webinars = new WebinarService(portal, repo, config.FACULTY_ID);
