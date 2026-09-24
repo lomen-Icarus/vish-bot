@@ -113,8 +113,11 @@ function matchText(matches: QaMatch[]): string {
 export class ChatService {
   readonly memory: ChatMemory;
   private readonly client: ChatClient;
-  /** Модель не приняла параметр effort — больше его не шлём. */
-  private effortSupported = true;
+  /**
+   * Шлём ли параметр effort. Haiku 4.5 и модели старше его не знают (по
+   * таблице моделей Anthropic); для прочих — пока модель его не отвергла.
+   */
+  private effortSupported: boolean;
 
   constructor(
     apiKey: string | null,
@@ -123,6 +126,7 @@ export class ChatService {
     client?: ChatClient,
   ) {
     this.memory = new ChatMemory(opts.contextMessages);
+    this.effortSupported = !/haiku-4|claude-3/i.test(opts.model);
     this.client = client ?? (new Anthropic({ apiKey: apiKey ?? undefined, maxRetries: 2, timeout: 60_000 }) as unknown as ChatClient);
   }
 
