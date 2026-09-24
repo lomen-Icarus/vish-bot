@@ -23,22 +23,28 @@ export function resolveStudentGroup(groups: LogicalGroup[], student: StudentReco
 
 const place = (o: Occurrence): string => (o.isDistance ? "дистанционно 💻" : o.room ? `ауд. ${esc(o.room)}` : "аудитория не указана");
 
-/** Пара одной строкой; подгруппу называем, когда она неизвестна и вариантов несколько. */
+/**
+ * Пара одной строкой; подгруппу называем, когда она неизвестна и вариантов
+ * несколько. У преподавателя пара идёт у групп — их тоже называем.
+ */
 function lessonLine(o: Occurrence, showSubgroup: boolean): string {
   const sub = showSubgroup && o.subgroup ? `${o.subgroup} подгр. — ` : "";
-  return `${sub}<b>${esc(o.subject)}</b> (${esc(lessonTypeLabel(o.type))}), ${place(o)}`;
+  const groups = o.groups?.length ? ` · ${esc(o.groups.slice(0, 4).join(", "))}${o.groups.length > 4 ? "…" : ""}` : "";
+  return `${sub}<b>${esc(o.subject)}</b> (${esc(lessonTypeLabel(o.type))}), ${place(o)}${groups}`;
 }
 
 /**
  * Где человек должен быть сейчас: идёт пара, перерыв до следующей или свободен.
- * Если в реестре нет подгруппы, у одной и той же пары бывает два разных места —
- * тогда честно показываем оба варианта, а не первый попавшийся.
+ * Одна и та же строка для студента и для преподавателя — карточки у них
+ * одинаковые. Если в реестре нет подгруппы, у одной и той же пары бывает два
+ * разных места — тогда честно показываем оба варианта, а не первый попавшийся.
  */
-export function whereNowText(lessons: Occurrence[], date: LocalDate, today: LocalDate, subgroup: number | null): string {
+export function whereNowText(lessons: Occurrence[], date: LocalDate, today: LocalDate, subgroup: number | null, opts: { teacher?: boolean } = {}): string {
   const clock = wallClock();
   // «moved» — это опустевший слот перенесённой пары, человека там нет.
   const live = lessons.filter((o) => o.status !== "moved");
-  const unknownSubgroup = subgroup == null;
+  // У преподавателя подгрупп нет: две пары в один слот — это две группы, а не «оба варианта».
+  const unknownSubgroup = subgroup == null && !opts.teacher;
   const slots = (list: Occurrence[]): number => new Set(list.map((o) => o.slot ?? o.start ?? 0)).size;
   if (date !== today) {
     if (!live.length) return `📍 ${fmtDDMM(date)}: пар нет.`;
@@ -46,7 +52,7 @@ export function whereNowText(lessons: Occurrence[], date: LocalDate, today: Loca
     const first = live[0]!;
     return `📍 ${fmtDDMM(date)}: ${n} ${plural(n, "пара", "пары", "пар")}, начало в ${first.start != null ? fmtHHMM(first.start) : "?"}.`;
   }
-  if (!live.length) return "📍 Сегодня пар нет — по расписанию человек свободен.";
+  if (!live.length) return "📍 Сегодня по расписанию пар нет.";
   const now = clock.minutes;
   const sameSlot = (a: Occurrence, b: Occurrence): boolean => (a.slot ?? a.start) === (b.slot ?? b.start);
   const current = live.filter((o) => o.start != null && o.end != null && now >= o.start && now <= o.end);
@@ -54,7 +60,7 @@ export function whereNowText(lessons: Occurrence[], date: LocalDate, today: Loca
   if (current.length) {
     const end = current[0]!.end;
     const where = current.map((o) => lessonLine(o, unknownSubgroup)).join("\n   ");
-    return `📍 Сейчас (${fmtHHMM(now)}) должен быть здесь: ${current.length > 1 ? "\n   " : ""}${where}${end != null ? `\n   до ${fmtHHMM(end)}` : ""}${note}`;
+    return `📍 Сейчас (${fmtHHMM(now)}) по расписанию: ${current.length > 1 ? "\n   " : ""}${where}${end != null ? `\n   до ${fmtHHMM(end)}` : ""}${note}`;
   }
   const upcoming = live.filter((o) => o.start != null && o.start > now);
   if (upcoming.length) {

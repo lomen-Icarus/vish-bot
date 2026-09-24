@@ -15,6 +15,7 @@ import type { TeacherService } from "../portal/teachers.js";
 import type { WebinarService, WebinarTeacher } from "../portal/webinars.js";
 import { addDays, fmtHHMM, isLocalDate, mondayOf, todayMsk, weekdayName, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
+import { whereNowPlain } from "../people/profile.js";
 
 export interface AskOptions {
   model: string;
@@ -34,16 +35,19 @@ export interface StudentLookup {
   whereabouts(studentId: string): string | null;
 }
 
-/** Кого назвали инструменты по ходу ответа: бот вешает это кнопками под текстом. */
+/**
+ * Кого назвали инструменты по ходу ответа: бот вешает это кнопками под текстом,
+ * а если человек нашёлся ровно один и точно (exact) — присылает его карточку.
+ */
 export interface AskMentions {
   /** Преподаватели из справочника портала. */
-  teachers: Array<{ id: number; name: string }>;
+  teachers: Array<{ id: number; name: string; exact: boolean }>;
   /** Преподаватели, известные только по странице вебинаров. */
-  webinarTeachers: string[];
+  webinarTeachers: Array<{ name: string; exact: boolean }>;
   /** Ключи групп, чьё расписание смотрели. */
   groupKeys: string[];
   /** Найденные студенты (когда включён глобальный поиск). */
-  students: Array<{ id: string; name: string; groupTitle: string }>;
+  students: Array<{ id: string; name: string; groupTitle: string; exact: boolean }>;
 }
 
 export interface AskResult {
@@ -81,7 +85,8 @@ const SYSTEM = `Ты — помощник по расписанию Высшей
 - Отвечай кратко, по-русски, на «ты». Формат Telegram HTML: только теги <b>, <i>, <code>. Без Markdown, без списков через «*».
 - Про сам бот отвечай инструментом bot_help: там точный список кнопок и возможностей. Не выдумывай кнопок, которых там нет.
 - Если группа пользователя не выбрана, скажи, что её нужно выбрать кнопкой «👥 Др. группы» или командой /group, и всё равно ответь тем, что можешь.
-- Даты пиши как «пн 14.09», время как 11:40–13:00.`;
+- Даты пиши как «пн 14.09», время как 11:40–13:00.
+- Когда инструмент точно нашёл одного человека (преподавателя или студента), бот сам пришлёт под твоим ответом его карточку: кто это, где он сейчас по расписанию и пары на день с кнопками. Поэтому не пересказывай его расписание целиком — ответь на сам вопрос одной-двумя фразами.`;
 
 function normalize(s: string): string {
   return s.toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
@@ -113,6 +118,14 @@ function fmtLessons(list: Occurrence[], today: LocalDate): string {
   return lines.join("\n").trim() || "пар нет";
 }
 
+/** Онлайн-пары преподавателя на сегодня как пары расписания — для строки «где сейчас». */
+function webinarToday(t: WebinarTeacher, today: LocalDate): Occurrence[] {
+  return t.lessons
+    .filter((l) => l.date === today && l.scheduled)
+    .map((l) => ({ groupKey: "webinar", period: 1 as const, date: l.date, slot: l.slot, start: l.start, end: l.end, subject: l.subject, type: l.type.replace(/\.$/, "").toLowerCase(), room: null, teacher: null, subgroup: l.subgroup, isDistance: true, status: "scheduled" as const, sources: [], groups: l.groups }))
+    .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+}
+
 /** What the webinar page knows about a teacher, as plain text for the model. */
 function describeWebinarTeacher(t: WebinarTeacher, webinars: WebinarService, today: LocalDate): string {
   const title = [t.position, t.degree].filter(Boolean).join(", ");
@@ -121,6 +134,8 @@ function describeWebinarTeacher(t: WebinarTeacher, webinars: WebinarService, tod
     `${t.name}${title ? ` (${title})` : ""} — по странице вебинаров ВИШ (только онлайн-пары ближайших дней и недавнего прошлого):`,
     `ведёт онлайн: ${t.subjects.join("; ")}`,
     `группы: ${t.groups.join(", ")}`,
+    // Та же строка, что в карточке человека: модель и кнопка говорят одно и то же.
+    `где сейчас (по онлайн-парам): ${whereNowPlain(webinarToday(t, today), "teacher", null)}`,
     next.length ? `ближайшие онлайн-пары (сегодня ${today}):\n${next.join("\n")}` : "ближайших онлайн-пар нет",
   ].join("\n");
 }
@@ -219,9 +234,9 @@ export class AskService {
         if (webinarHits.length && webinarHits.every((x) => x.fuzzy)) {
           out.push(`Точного совпадения с «${input.query}» нет; ниже — похожие по написанию: ${fromWebinars.map((t) => t.name).join("; ")}. Предложи выбрать, кнопки бот добавит сам.`);
         }
-        for (const t of fromWebinars) {
-          out.push(describeWebinarTeacher(t, webinars!, today));
-          remember(mentions.webinarTeachers, t.name, (a, b) => a.toLowerCase() === b.toLowerCase());
+        for (const hit of webinarHits) {
+          out.push(describeWebinarTeacher(hit.teacher, webinars!, today));
+          remember(mentions.webinarTeachers, { name: hit.teacher.name, exact: !hit.fuzzy }, (a, b) => a.name.toLowerCase() === b.name.toLowerCase());
         }
         if (!teachers) {
           out.push(
@@ -237,7 +252,7 @@ export class AskService {
         // до нужной фамилии мог ещё не дойти — проверяем тех, кого нашли.
         await teachers.ensureMapped(found);
         const tag = (t: { id: number; name: string }): string => (teachers.isVish(t.id, t.name) ? " (ВИШ)" : "");
-        for (const t of found) remember(mentions.teachers, { id: t.id, name: t.name }, (a, b) => a.id === b.id);
+        for (const x of scored) remember(mentions.teachers, { id: x.ref.id, name: x.ref.name, exact: !x.fuzzy }, (a, b) => a.id === b.id);
         if (!found.length) {
           out.push(`В справочнике преподавателей ЧувГУ «${input.query}» не найден — даже с поправкой на опечатки. Попроси написать фамилию иначе или прислать инициалы.`);
           return out.join("\n\n");
@@ -255,7 +270,9 @@ export class AskService {
           teachers.noteFromLessons(t.id, fullName ?? t.name, lessons);
           const subjects = [...new Set(lessons.map((o) => o.subject))];
           const groups = [...new Set(lessons.flatMap((o) => o.groups ?? []))];
-          out.push(`${fullName ?? t.name}${tag(t)}: ${subjects.length ? `ведёт ${subjects.join("; ")}` : "в ближайшие 2 недели пар нет"}${groups.length ? `. Группы: ${groups.join(", ")}` : ""}.\nПары на 2 недели:\n${fmtLessons(lessons.slice(0, 20), today)}`);
+          out.push(
+            `${fullName ?? t.name}${tag(t)} — преподаватель: ${subjects.length ? `ведёт ${subjects.join("; ")}` : "в ближайшие 2 недели пар нет"}${groups.length ? `. Группы: ${groups.join(", ")}` : ""}.\nГде сейчас по расписанию: ${whereNowPlain(lessons, "teacher", null)}\nПары на 2 недели:\n${fmtLessons(lessons.slice(0, 20), today)}`,
+          );
         } catch (err) {
           logger.warn({ err: String(err), teacher: t.id }, "ask: teacher page failed");
           out.push(`${t.name}${tag(t)} есть в справочнике, но портал не отдал расписание (попробуй позже).`);
@@ -276,7 +293,7 @@ export class AskService {
         const found = students.search(input.query, 5);
         students.note(userId, input.query, found[0]?.id ?? null);
         if (!found.length) return `В реестре студентов ВИШ никого похожего на «${input.query}» нет. Возможно, это первокурсник: их в реестре нет.`;
-        for (const st of found) remember(mentions.students, { id: st.id, name: st.name, groupTitle: st.groupTitle }, (a, b) => a.id === b.id);
+        for (const st of found) remember(mentions.students, { id: st.id, name: st.name, groupTitle: st.groupTitle, exact: !st.fuzzy }, (a, b) => a.id === b.id);
         const exact = found.filter((f) => !f.fuzzy);
         const list = (exact.length ? exact : found).slice(0, 5);
         const lines = list.map((st) => {
