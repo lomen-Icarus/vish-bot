@@ -239,6 +239,31 @@ describe("болталка в группе", () => {
     expect(requests).toHaveLength(0);
   });
 
+  it("effort: не шлётся моделям, которые его не знают, и отключается после отказа API", async () => {
+    const { qa } = setup();
+    const input = { chatTitle: null, speaker: "Аня", speakerId: 7, text: "привет", history: [], transcript: [], repliedTo: null, now: { date: todayMsk(), minutes: 600 } };
+    const noop: ChatClient = { messages: { create: async () => fakeMessage("ok") } };
+    expect(new ChatService(null, { model: "claude-haiku-4-5", contextMessages: 0, botUsername: null }, qa, noop).buildRequest(input, []).output_config).toBeUndefined();
+    const sonnet = new ChatService(null, { model: "claude-sonnet-5", contextMessages: 0, botUsername: null }, qa, noop);
+    expect(sonnet.buildRequest(input, []).output_config).toEqual({ effort: "low" });
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const seen: unknown[] = [];
+    const picky: ChatClient = {
+      messages: {
+        create: async (params) => {
+          seen.push(params.output_config);
+          if (params.output_config) throw new Anthropic.BadRequestError(400, { type: "error", error: { type: "invalid_request_error", message: "effort is not supported" } }, "effort is not supported", new Headers());
+          return fakeMessage("без effort");
+        },
+      },
+    };
+    const svc = new ChatService(null, { model: "future-model", contextMessages: 0, botUsername: null }, qa, picky);
+    expect((await svc.reply(input)).text).toBe("без effort");
+    expect(seen).toEqual([{ effort: "low" }, undefined]);
+    await svc.reply(input);
+    expect(seen).toHaveLength(3);
+  });
+
   it("отказ модели — короткая фраза вместо пустоты", async () => {
     const { deps, repo, qa } = setup();
     const chat = new ChatService(null, { model: "m", contextMessages: 10, botUsername: "vish_bot" }, qa, { messages: { create: async () => fakeMessage("", "refusal") } });
