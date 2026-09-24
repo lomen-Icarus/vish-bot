@@ -204,8 +204,13 @@ function dayLesson(o: Occurrence, accent: string, ongoing: boolean, view: Teache
     col(
       { flex: 1, minWidth: 0, paddingLeft: 16, paddingRight: 12 },
       text(o.subject, { fontSize: 34, fontWeight: 700, color: FG, lineHeight: 1.18, letterSpacing: -0.5, textDecoration: moved ? "line-through" : "none", marginTop: 6 }),
-      row({ flexWrap: "wrap", alignItems: "center", marginTop: 8 }, capsule(lessonTypeLabel(o.type), typeTint(o.type)), ...metaSpans(meta, SOFT)),
-      posterTeacher(o.teacher, view) ? text(posterTeacher(o.teacher, view)!, { fontSize: 24, fontWeight: view === "plain" ? 400 : 700, color: view === "plain" ? SOFT : FG, marginTop: 6 }) : null,
+      // Преподаватель в той же строке, что тип и аудитория; не влез — переносится целиком.
+      row(
+        { flexWrap: "wrap", alignItems: "center", marginTop: 8 },
+        capsule(lessonTypeLabel(o.type), typeTint(o.type)),
+        ...metaSpans(meta, SOFT),
+        posterTeacher(o.teacher, view) ? text(`·\u00a0${posterTeacher(o.teacher, view)!}`, { fontSize: 23, fontWeight: view === "plain" ? 400 : 700, color: view === "plain" ? SOFT : FG, marginTop: 6, lineHeight: 1.3 }) : null,
+      ),
       badges.length ? row({ flexWrap: "wrap", marginTop: 4 }, ...badges) : null,
     ),
   );

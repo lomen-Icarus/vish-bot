@@ -218,8 +218,9 @@ function lessonRow(o: Occurrence, ongoing: boolean, accent: string, view: Teache
           { display: "flex", flexDirection: "row", flexWrap: "wrap", alignItems: "center", width: "100%", marginTop: 10 },
           tag(lessonTypeLabel(o.type), { bg: typeColor(o.type), mt: 6, border: inv ? typeColor(o.type) : INK }),
           ...meta.map((m) => text(up(m), { fontSize: 24, fontWeight: 700, color: fg, letterSpacing: 1, marginRight: 16, marginTop: 6 })),
+          // Преподаватель в той же строке; не влез — переносится целиком.
+          posterTeacher(o.teacher, view) ? text(up(posterTeacher(o.teacher, view)!), { fontSize: 24, fontWeight: view === "plain" ? 500 : 800, letterSpacing: view === "plain" ? 0 : 1, color: view === "plain" ? sub : fg, marginTop: 6 }) : null,
         ),
-        posterTeacher(o.teacher, view) ? text(up(posterTeacher(o.teacher, view)!), { fontSize: 24, fontWeight: view === "plain" ? 500 : 800, letterSpacing: view === "plain" ? 0 : 1, color: view === "plain" ? sub : fg, marginTop: 8 }) : null,
         badges.length
           ? h("div", { display: "flex", flexDirection: "row", flexWrap: "wrap", width: "100%", marginTop: 8 }, ...badges.map((b) => tag(b.label, { bg: b.bg, mt: 6, border: inv ? b.bg : INK })))
           : null,
