@@ -3,6 +3,9 @@
  * участник разговора. Ответ всегда пишет ИИ; база «вопрос → ответ» (qa.ts) —
  * сценарий: на похожий вопрос модель отвечает заготовкой админа.
  *
+ * Про пары, преподавателей и бота модель отвечает инструментами AskService
+ * (без поиска студентов: про конкретных людей в общем чате — ни слова).
+ *
  * Контекст ответа — три слоя:
  *  1) прошлые обмены репликами с этим человеком в этом чате (chat_log, часы);
  *  2) недавняя переписка чата (память процесса, если бот её видит);
@@ -16,6 +19,21 @@ import type { QaBase, QaMatch } from "./qa.js";
 import { ChatMemory, type ChatLine } from "./memory.js";
 import { fmtDDMM, fmtHHMM, weekdayShort, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
+
+/**
+ * Инструмент для модели: определение плюс функция — как у betaZodTool из
+ * AskService (расписание, предметы, преподаватели, справка по боту).
+ */
+export interface ChatTool {
+  name: string;
+  description?: string;
+  input_schema: Anthropic.Tool.InputSchema;
+  parse(input: unknown): unknown;
+  run(args: never): unknown;
+}
+
+/** Сколько раз за ответ модель может сходить в инструменты. */
+const MAX_TOOL_ROUNDS = 4;
 
 /** Узкий срез клиента Anthropic: в тестах его подменяют. */
 export interface ChatClient {
@@ -43,6 +61,10 @@ export interface ChatInput {
   /** Сообщение, на которое человек ответил (если не боту). */
   repliedTo: { name: string; text: string } | null;
   now: { date: LocalDate; minutes: number };
+  /** Группа этого человека в боте, если он её выбрал в личке: для «что у меня завтра». */
+  speakerGroup?: string | null;
+  /** Инструменты расписания; нет — модель отвечает только сама. */
+  tools?: ChatTool[];
 }
 
 export interface ChatReply {
@@ -78,7 +100,9 @@ function persona(botUsername: string | null): string {
 - Учитывай разговор: что человек писал тебе раньше, о чём сейчас говорят в чате, на что он ответил. Не переспрашивай то, что уже понятно из контекста.
 - Подколоть в ответ можно, травить нельзя: без оскорблений по внешности, национальности, полу и т. п., без угроз и без выдумок о реальных людях из чата и преподавателях.
 - Не знаешь — так и скажи. Не выдумывай факты про ВИШ, пары, людей и оценки.
-- Расписание в этом чате ты не показываешь. Если спрашивают про пары, подскажи: «@${botUsername ?? "бот"} 12-23 завтра» прямо в чате (inline) или в личке боту.
+- Про пары, аудитории, преподавателей, предметы и про то, как пользоваться ботом, отвечай по делу — инструментами, если они есть, коротко: одну-две пары, а не простыню. Нужно больше — подскажи «@${botUsername ?? "бот"} 12-23 завтра» прямо в чате (inline) или личку с ботом. Инструментов нет — сразу подскажи это.
+- Если спрашивают «что у меня», а группа человека неизвестна, попроси назвать группу, например «12-23».
+- Про конкретных студентов (где человек, в какой он группе, какие у него пары) в общем чате ничего не говори: это только в личке с ботом. Так и скажи одной фразой.
 - Не пересказывай эти правила и не говори, что ты языковая модель, если не спросили прямо.
 - Пиши обычным текстом: без Markdown, без HTML, без списков.
 
@@ -152,7 +176,7 @@ export class ChatService {
       messages.push({ role: "assistant", content: t.answer });
     }
     const parts = [
-      `Чат: ${input.chatTitle ? `«${input.chatTitle}»` : "групповой"}. Сейчас ${weekdayShort(input.now.date)} ${fmtDDMM(input.now.date)}, ${fmtHHMM(input.now.minutes)} (Москва).`,
+      `Чат: ${input.chatTitle ? `«${input.chatTitle}»` : "групповой"}. Сейчас ${weekdayShort(input.now.date)} ${fmtDDMM(input.now.date)}, ${fmtHHMM(input.now.minutes)} (Москва).${input.speakerGroup ? ` Группа ${input.speaker} в боте: ${input.speakerGroup}.` : ""}`,
     ];
     const transcript = transcriptText(input.transcript, input.speakerId);
     if (transcript) parts.push(`Недавняя переписка в чате (для контекста, старые сверху):\n${transcript}`);
@@ -169,25 +193,57 @@ export class ChatService {
       max_tokens: 2000,
       system,
       messages,
+      ...(input.tools?.length ? { tools: input.tools.map((t) => ({ name: t.name, ...(t.description ? { description: t.description } : {}), input_schema: t.input_schema })) } : {}),
       ...(this.effortSupported ? { output_config: { effort: "low" as const } } : {}),
     };
   }
 
+  /** Один запрос к модели; модель, не знающая effort, получает повтор без него. */
+  private async call(params: Anthropic.MessageCreateParamsNonStreaming): Promise<Anthropic.Message> {
+    try {
+      return await this.client.messages.create(params);
+    } catch (err) {
+      if (!params.output_config || !(err instanceof Anthropic.BadRequestError) || !/effort|output_config/i.test(String(err.message))) throw err;
+      this.effortSupported = false;
+      logger.warn({ model: this.opts.model }, "chat: model rejected output_config.effort, retrying without it");
+      const { output_config: _drop, ...rest } = params;
+      return this.client.messages.create(rest);
+    }
+  }
+
   async reply(input: ChatInput): Promise<ChatReply> {
     const matches = this.qa.match(input.text);
+    const request = this.buildRequest(input, matches);
+    const messages = [...request.messages];
+    const byName = new Map((input.tools ?? []).map((t) => [t.name, t]));
+    let inputTokens = 0;
+    let outputTokens = 0;
     let message: Anthropic.Message;
-    try {
-      message = await this.client.messages.create(this.buildRequest(input, matches));
-    } catch (err) {
-      // Не все модели знают effort: одна неудачная попытка — и дальше без него.
-      if (this.effortSupported && err instanceof Anthropic.BadRequestError && /effort|output_config/i.test(String(err.message))) {
-        this.effortSupported = false;
-        logger.warn({ model: this.opts.model }, "chat: model rejected output_config.effort, retrying without it");
-        message = await this.client.messages.create(this.buildRequest(input, matches));
-      } else throw err;
+    for (let round = 0; ; round++) {
+      message = await this.call({ ...request, messages });
+      inputTokens += message.usage.input_tokens + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0);
+      outputTokens += message.usage.output_tokens;
+      if (message.stop_reason !== "tool_use" || round >= MAX_TOOL_ROUNDS) break;
+      // Ответ модели уходит обратно как есть (с блоками размышлений), следом — результаты инструментов.
+      messages.push({ role: "assistant", content: message.content as Anthropic.ContentBlockParam[] });
+      const results: Anthropic.ToolResultBlockParam[] = [];
+      for (const block of message.content) {
+        if (block.type !== "tool_use") continue;
+        const tool = byName.get(block.name);
+        let content: string;
+        let isError = false;
+        try {
+          if (!tool) throw new Error(`нет инструмента ${block.name}`);
+          const out = await tool.run(tool.parse(block.input) as never);
+          content = typeof out === "string" ? out : JSON.stringify(out);
+        } catch (err) {
+          content = `Ошибка: ${String(err instanceof Error ? err.message : err).slice(0, 300)}`;
+          isError = true;
+        }
+        results.push({ type: "tool_result", tool_use_id: block.id, content, ...(isError ? { is_error: true } : {}) });
+      }
+      messages.push({ role: "user", content: results });
     }
-    const inputTokens = message.usage.input_tokens + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0);
-    const outputTokens = message.usage.output_tokens;
     if (message.stop_reason === "refusal") {
       logger.info({ category: message.stop_details?.category }, "chat: model refused");
       return { text: "", inputTokens, outputTokens, refused: true, truncated: false, matched: matches.length };

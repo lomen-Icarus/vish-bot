@@ -88,12 +88,13 @@ const schema = z.object({
   TEACHERS_DB: z.string().default("./data/teachers.csv"),
   /**
    * Болталка в групповых чатах: бота позвали (@бот привет или ответ на его
-   * сообщение) — он отвечает через Claude с учётом разговора. FALSE — бот в
-   * группах молчит, как раньше.
+   * сообщение) — он отвечает через Claude с учётом разговора. Включена по
+   * умолчанию (нужен ключ Anthropic); болтает только в разрешённых чатах.
+   * FALSE — бот в группах молчит.
    */
   CHAT_AI: z
     .string()
-    .default("FALSE")
+    .default("TRUE")
     .transform((v) => ["1", "true", "yes", "on", "да"].includes(v.trim().toLowerCase())),
   /** Отдельный ключ Anthropic для болталки (свой счёт и свои лимиты). Пусто — берётся ANTHROPIC_API_KEY. */
   CHAT_ANTHROPIC_API_KEY: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),

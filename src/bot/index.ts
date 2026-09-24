@@ -168,7 +168,9 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     // Только в меню админов: для остальных режим преподавателя пока без кнопок.
     { command: "prepod", description: "Режим преподавателя (проверка: /prepod Фамилия)" },
     { command: "subjects", description: "Предметы: сколько и когда пар (тест)" },
+    { command: "chats", description: "Болталка в группах: чаты и лимиты" },
     { command: "qa", description: "Сценарий болталки: вопрос → ответ" },
+    { command: "reply_add", description: "Добавить в сценарий: вопрос => ответ" },
     { command: "chatlimit", description: "Лимиты болталки в группах" },
   ];
   for (const id of deps.config.ADMIN_IDS) {

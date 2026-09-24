@@ -113,7 +113,7 @@ function healthText(ctx: BotContext): string {
     `Доска объявлений: ${deps.repo.activeAnnouncements().length} активных`,
     `Лимиты ИИ: ${aiLimits(deps.repo, deps.config, todayMsk()).perUser}/чел, ${aiLimits(deps.repo, deps.config, todayMsk()).global} общих · потрачено сегодня ${deps.repo.aiUsageGlobal(todayMsk())}`,
     `Inline-режим: ${deps.inline ? "включён" : "ВЫКЛЮЧЕН — включи в @BotFather: /setinline, затем /setinlinefeedback"}`,
-    `Болталка в группах: ${deps.chat ? `${esc(deps.chat.model)} · сценарий ${deps.chat.qa.stats().count} · сегодня ответов ${deps.repo.chatUsage({}, todayMsk())} · privacy mode ${ctx.me.can_read_all_group_messages ? "выключен" : "ВКЛЮЧЁН (бот не видит @упоминаний)"}` : deps.config.CHAT_AI ? "нет ключа Anthropic" : "выключена (CHAT_AI=FALSE)"}`,
+    `Болталка в группах: ${deps.chat ? `${esc(deps.chat.model)} · чатов включено ${deps.repo.chatGroups().filter((g) => g.enabled).length + deps.config.CHAT_GROUP_IDS.length} · сценарий ${deps.chat.qa.stats().count} · сегодня ответов ${deps.repo.chatUsage({}, todayMsk())} · privacy mode ${ctx.me.can_read_all_group_messages ? "выключен" : "ВКЛЮЧЁН — «@бот …» может не доходить, ответы на сообщения бота работают (/chats)"}` : deps.config.CHAT_AI ? "нет ключа Anthropic" : "выключена (CHAT_AI=FALSE)"}`,
     `Сыск (поиск студентов): ${poiskState(ctx)}`,
     `Узнавание по нику: ${knownState(ctx)}`,
     `Режим преподавателя: ${deps.teacherRegistry?.count() ? `в реестре ${deps.teacherRegistry.count()} чел.` : "реестр пуст (TEACHERS_DB) — включают только админы"} · в режиме сейчас ${deps.repo.teacherModeCount()}`,

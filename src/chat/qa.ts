@@ -314,6 +314,38 @@ export class QaBase {
     return parsed;
   }
 
+  /**
+   * Удалить заготовки, у которых один из вариантов вопроса совпадает с данным
+   * (без учёта регистра и знаков). Файл пересобирается из оставшихся записей
+   * (комментарии в нём не сохраняются), старый — рядом как .bak.
+   */
+  remove(question: string): number {
+    const want = normQa(question);
+    if (!want) return 0;
+    return this.rewrite((e) => !e.norm.includes(want));
+  }
+
+  /** Удалить заготовку по номеру в списке /qa (с единицы). */
+  removeAt(n: number): number {
+    return this.rewrite((_e, i) => i !== n - 1);
+  }
+
+  private rewrite(keepIf: (e: QaEntry, i: number) => boolean): number {
+    const all = this.entries();
+    const keep = all.filter(keepIf);
+    const removed = all.length - keep.length;
+    if (!removed) return 0;
+    const d = this.delimiter;
+    const body = [`вопрос${d}ответ${d}подсказка`, ...keep.map((e) => qaLine(e.questions, e.answer, e.hint, d))].join("\n") + "\n";
+    this.ensureDir();
+    if (existsSync(this.file)) copyFileSync(this.file, `${this.file}.bak`);
+    const tmp = `${this.file}.tmp`;
+    writeFileSync(tmp, body, "utf8");
+    renameSync(tmp, this.file);
+    this.reload();
+    return removed;
+  }
+
   /** Текст файла как есть — чтобы админ скачал, поправил и прислал обратно. */
   raw(): string | null {
     return existsSync(this.file) ? decodeText(readFileSync(this.file)) : null;

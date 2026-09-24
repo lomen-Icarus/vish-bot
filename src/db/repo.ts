@@ -959,6 +959,15 @@ export class Repo {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE teacher_mode = 1 AND blocked = 0").get() as { n: number }).n;
   }
 
+  /**
+   * База ответов первой версии бота в группах (таблица canned_replies). Теперь
+   * ответы живут в файле сценария; эти строки один раз переносятся туда при
+   * запуске (src/chat/importCanned.ts).
+   */
+  legacyCannedReplies(): Array<{ trigger: string; answer: string }> {
+    return this.db.prepare("SELECT trigger, answer FROM canned_replies ORDER BY id").all() as Array<{ trigger: string; answer: string }>;
+  }
+
   /** Сколько человек включили «усиленную анонимность» (для /health). */
   anonCount(): number {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE anon = 1").get() as { n: number }).n;

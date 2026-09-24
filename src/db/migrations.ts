@@ -286,6 +286,26 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE users ADD COLUMN teacher_view TEXT NOT NULL DEFAULT 'bold';
   `,
   `
+  -- Групповые чаты, где боту разрешено отвечать на обращения. Белый список:
+  -- бот, которого добавили в чужой чат, молчит, пока админ его не включит, —
+  -- иначе любой мог бы жечь дневной бюджет ИИ.
+  CREATE TABLE group_chats (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    added_by INTEGER,
+    created_at TEXT NOT NULL
+  );
+  -- База ответов владельца: «на такое по смыслу — отвечай вот этим». Её видит
+  -- модель в группах; точное совпадение отвечается сразу, без ИИ.
+  CREATE TABLE canned_replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  `,
+  `
   -- Режим преподавателя: вместо группы у человека — он сам. teacher_ref —
   -- ключ человека (t<id> из справочника портала или w<hash> со страницы
   -- вебинаров), teacher_name — ФИО из реестра преподавателей.
@@ -324,5 +344,13 @@ export const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   CREATE INDEX chat_log_chat_user ON chat_log (chat_id, user_id, created_at);
+  -- Эта миграция идёт после group_chats/canned_replies из первой версии
+  -- бота в группах (она уже стоит на сервере). Включённые там чаты и лимит
+  -- на чат переезжают сюда; база ответов переезжает в файл сценария при
+  -- запуске (src/chat/importCanned.ts). Старые таблицы оставлены как есть.
+  INSERT OR IGNORE INTO chat_groups (chat_id, title, enabled, present, updated_at)
+    SELECT chat_id, title, enabled, 1, created_at FROM group_chats;
+  INSERT OR IGNORE INTO meta (key, value)
+    SELECT 'chat:limit:chat', value FROM meta WHERE key = 'group:dailyLimit' AND CAST(value AS INTEGER) > 0;
   `,
 ];

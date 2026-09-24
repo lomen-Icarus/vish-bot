@@ -16,6 +16,7 @@ import type { WebinarService, WebinarTeacher } from "../portal/webinars.js";
 import { addDays, fmtHHMM, isLocalDate, mondayOf, todayMsk, weekdayName, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 import { whereNowPlain } from "../people/profile.js";
+import type { ChatTool } from "../chat/service.js";
 
 export interface AskOptions {
   model: string;
@@ -161,7 +162,7 @@ export class AskService {
     return found.length === 1 ? found[0]! : found.length > 1 ? (found.find((g) => g.key === fallback.key) ?? found[0]!) : null;
   }
 
-  private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined, mentions: AskMentions, userId: number) {
+  private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined, mentions: AskMentions, userId: number, mode: "private" | "group" = "private") {
     const service = this.service;
     const teachers = this.teachers;
     const webinars = this.webinars;
@@ -312,7 +313,19 @@ export class AskService {
       run: async () => botHelp ?? "Справка по боту недоступна.",
     });
 
-    return students ? [getSchedule, findSubject, listGroups, findTeacher, findStudent, botHelpTool] : [getSchedule, findSubject, listGroups, findTeacher, botHelpTool];
+    // В общем чате про конкретных людей не говорим вовсе: «где сейчас Беляев»
+    // в группе на сорок человек — это уже не расписание, а слежка на публике.
+    return students && mode === "private" ? [getSchedule, findSubject, listGroups, findTeacher, findStudent, botHelpTool] : [getSchedule, findSubject, listGroups, findTeacher, botHelpTool];
+  }
+
+  /**
+   * Инструменты для болталки в группах: расписание, предметы, группы,
+   * преподаватели и справка по боту — без поиска студентов: «где сейчас
+   * Беляев» в чате на сорок человек — это уже слежка на публике.
+   */
+  groupTools(input: { group: LogicalGroup | null; subgroup: number | null; userId: number; botHelp?: string }): ChatTool[] {
+    // Все они — betaZodTool, то есть обычные инструменты с input_schema.
+    return this.tools(input.group, input.subgroup, input.botHelp, emptyMentions(), input.userId, "group") as unknown as ChatTool[];
   }
 
   async answer(input: { question: string; group: LogicalGroup | null; subgroup: number | null; userId: number; botHelp?: string; self?: { name: string; lessons: Occurrence[] } }): Promise<AskResult> {
