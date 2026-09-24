@@ -111,6 +111,10 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
       return;
     case "group":
       await ctx.answerCallbackQuery();
+      if (user.teacherMode) {
+        await ctx.reply("Сейчас включён режим преподавателя: «Сегодня», «Неделя» и напоминания — по твоим парам, «👥 Студенты» — расписание любой группы. Выключить: /prepod");
+        return;
+      }
       await showGroupPicker(ctx);
       return;
     case "subgroup": {

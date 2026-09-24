@@ -84,6 +84,8 @@ function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: nu
   const desc: string[] = [opts.name];
   if (o.slot != null) desc.push(`${o.slot} пара`);
   if (o.teacher) desc.push(o.teacher);
+  // В календаре преподавателя пара идёт у групп — их и пишем.
+  if (o.groups?.length) desc.push(o.groups.join(", "));
   if (o.subgroup) desc.push(`${o.subgroup} подгруппа`);
   if (o.movedFrom) desc.push(`перенос с ${o.movedFrom.date}`);
   if (o.isDistance) desc.push("дистанционно");

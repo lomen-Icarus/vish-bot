@@ -285,4 +285,12 @@ export const MIGRATIONS: string[] = [
   -- (обычным текстом), off (не показывать вовсе).
   ALTER TABLE users ADD COLUMN teacher_view TEXT NOT NULL DEFAULT 'bold';
   `,
+  `
+  -- Режим преподавателя: вместо группы у человека — он сам. teacher_ref —
+  -- ключ человека (t<id> из справочника портала или w<hash> со страницы
+  -- вебинаров), teacher_name — ФИО из реестра преподавателей.
+  ALTER TABLE users ADD COLUMN teacher_mode INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN teacher_ref TEXT;
+  ALTER TABLE users ADD COLUMN teacher_name TEXT;
+  `,
 ];

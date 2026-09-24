@@ -42,6 +42,11 @@ export interface Deps {
    * показываются и в поиск студентов не попадают.
    */
   known: KnownPeople | null;
+  /**
+   * Реестр преподавателей «ФИО;ник» для режима преподавателя (TEACHERS_DB).
+   * Нет файла — режим включают только админы для проверки: /prepod Фамилия.
+   */
+  teacherRegistry?: KnownPeople | null;
   /** Calendar-feed server; subscription links are offered only while it listens. */
   http: Server | null;
   /**

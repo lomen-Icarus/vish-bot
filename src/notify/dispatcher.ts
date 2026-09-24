@@ -11,7 +11,9 @@ import type { Renderer } from "../render/image.js";
 import { WEBINAR_URL } from "../bot/keyboards.js";
 import type { WebinarService } from "../portal/webinars.js";
 import type { TeacherService } from "../portal/teachers.js";
-import { logicalKeyFor, type LogicalGroup } from "../schedule/groups.js";
+import { logicalKeyFor, personGroup, type LogicalGroup } from "../schedule/groups.js";
+import { parseRefKey } from "../people/ref.js";
+import { webinarRowsToLessons } from "../people/profile.js";
 import { readFileSync } from "node:fs";
 import { isUnreachable } from "../bot/errors.js";
 
@@ -401,27 +403,62 @@ export class Notifier {
     return now.minutes >= from || now.minutes < to;
   }
 
+  /**
+   * «Своё» расписание человека на дату: пары его группы, а в режиме
+   * преподавателя — его собственные (портал с кешем на 3 часа или страница
+   * вебинаров). `lessons` — только идущие пары со временем, уже по подгруппе;
+   * `all` — для текста напоминания.
+   */
+  private async ownDay(user: User, date: LocalDate, cache: Map<string, Occurrence[]>): Promise<{ group: LogicalGroup; lessons: Occurrence[]; all: Occurrence[]; subgroup: number | null; teacher: boolean } | null> {
+    if (user.teacherMode) {
+      const ref = user.teacherRef ? parseRefKey(user.teacherRef) : null;
+      if (!ref || ref.kind === "student") return null;
+      const name = user.teacherName ?? "Преподаватель";
+      let lessons: Occurrence[] = [];
+      if (ref.kind === "teacher") {
+        const day = await this.teacherDay(ref.id, name, date);
+        // Портал не ответил — напоминание не шлём: «пар нет» было бы неправдой.
+        if (!day) return null;
+        lessons = day.lessons;
+      } else {
+        lessons = webinarRowsToLessons(this.repo.webinarsBetween(date, date), name).filter((o) => o.start != null);
+      }
+      return { group: personGroup(name, `teacher:${user.teacherRef}`), lessons, all: lessons, subgroup: null, teacher: true };
+    }
+    const group = user.groupKey ? this.service.group(user.groupKey) : null;
+    if (!group) return null;
+    const k = `${group.key}|${date}`;
+    let all = cache.get(k);
+    if (!all) {
+      all = this.service.lessonsOn(group, date).filter((o) => o.status === "scheduled" && o.start != null);
+      cache.set(k, all);
+    }
+    return { group, lessons: filterSubgroup(all, user.subgroup), all, subgroup: user.subgroup, teacher: false };
+  }
+
   /** Runs every minute: first-lesson, per-lesson, distance-link and evening reminders. */
   async tickReminders(now: WallClock = wallClock()): Promise<number> {
-    const users = this.repo.listUsers({ onlyActive: true }).filter((u) => u.groupKey && (u.remindFirstMin != null || u.remindEachMin != null || u.remindDistanceMin != null || u.eveningAt));
+    const users = this.repo
+      .listUsers({ onlyActive: true })
+      .filter((u) => (u.groupKey || (u.teacherMode && u.teacherRef)) && (u.remindFirstMin != null || u.remindEachMin != null || u.remindDistanceMin != null || u.eveningAt));
     if (users.length === 0) return 0;
     const cache = new Map<string, Occurrence[]>();
-    const lessonsFor = (groupKey: string, date: LocalDate): Occurrence[] => {
-      const k = `${groupKey}|${date}`;
-      let list = cache.get(k);
-      if (!list) {
-        const g = this.service.group(groupKey);
-        list = g ? this.service.lessonsOn(g, date).filter((o) => o.status === "scheduled" && o.start != null) : [];
-        cache.set(k, list);
-      }
-      return list;
-    };
     let sent = 0;
     for (const user of users) {
-      const group = this.service.group(user.groupKey!);
-      if (!group) continue;
       if (this.inQuietHours(user, now)) continue;
-      const today = filterSubgroup(lessonsFor(group.key, now.date), user.subgroup);
+      if (user.teacherMode) {
+        // Расписание преподавателя тянется с портала: ночью, когда ни одно
+        // напоминание не может наступить, ходить туда незачем.
+        const at = user.eveningAt ? parseHHMM(user.eveningAt) : null;
+        const eveningSoon = at != null && now.minutes >= at && now.minutes < at + 15;
+        if (!eveningSoon && now.minutes < EARLIEST_LESSON_START - 180) continue;
+      }
+      const own = await this.ownDay(user, now.date, cache);
+      if (!own) continue;
+      const { group } = own;
+      const today = own.lessons;
+      // У преподавателя его же фамилия в напоминании не нужна — это он сам.
+      const view = own.teacher ? ("off" as const) : user.teacherView;
 
       if (user.remindFirstMin != null && today.length) {
         const first = Math.min(...today.map((o) => o.start!));
@@ -429,7 +466,7 @@ export class Notifier {
         if (now.minutes >= due && now.minutes < first && !this.repo.reminderSent(user.id, "first", now.date)) {
           const left = first - now.minutes;
           const head = `⏰ ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} первая пара`;
-          const body = formatDay(group, now.date, lessonsFor(group.key, now.date), this.service.weekInfo(now.date), now.date, { subgroup: user.subgroup, now, teacherView: user.teacherView });
+          const body = formatDay(group, now.date, own.all, this.service.weekInfo(now.date), now.date, { subgroup: own.subgroup, now, teacherView: view });
           this.repo.markReminderSent(user.id, "first", now.date);
           const photo = await this.maybeRenderDay(user, group, now.date, today, now);
           if (await this.send(user, `${head}\n\n${body}`, { kind: "remind-first", photo })) sent++;
@@ -444,7 +481,8 @@ export class Notifier {
             this.repo.markReminderSent(user.id, "each", ref);
             const left = o.start! - now.minutes;
             const where = o.isDistance ? "💻 дистанционно" : o.room ? `ауд. ${o.room}` : "";
-            const text = `⏱ Через ${humanMinutes(left)} — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(lessonTypeLabel(o.type))})${where ? `, ${escapeHtml(where)}` : ""} · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}`;
+            const groups = own.teacher && o.groups?.length ? ` · ${o.groups.join(", ")}` : "";
+            const text = `⏱ Через ${humanMinutes(left)} — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(lessonTypeLabel(o.type))})${where ? `, ${escapeHtml(where)}` : ""} · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${escapeHtml(groups)}`;
             const kb = o.isDistance ? new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL) : undefined;
             if (await this.send(user, text, { kind: "remind-each", replyMarkup: kb })) sent++;
           }
@@ -461,8 +499,8 @@ export class Notifier {
             this.repo.markReminderSent(user.id, "distance", ref);
             const left = o.start! - now.minutes;
             // The webinar page names the teacher and the topic of the session; add them when known.
-            const w = this.webinars?.forLesson(o, [group.title, ...group.portalNames]) ?? null;
-            const extra = [w?.teacher ? escapeHtml(w.teacher) : "", w?.title ? `📝 ${escapeHtml(w.title.length > 120 ? w.title.slice(0, 117).trimEnd() + "…" : w.title)}` : ""].filter(Boolean);
+            const w = own.teacher ? null : (this.webinars?.forLesson(o, [group.title, ...group.portalNames]) ?? null);
+            const extra = [w?.teacher ? escapeHtml(w.teacher) : "", w?.title ? `📝 ${escapeHtml(w.title.length > 120 ? w.title.slice(0, 117).trimEnd() + "…" : w.title)}` : "", own.teacher && o.groups?.length ? escapeHtml(o.groups.join(", ")) : "", own.teacher && o.topic ? `📝 ${escapeHtml(o.topic.slice(0, 120))}` : ""].filter(Boolean);
             const text = `💻 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} дистант — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(lessonTypeLabel(o.type))}) · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\nВебинар: ${WEBINAR_URL}`;
             if (await this.send(user, text, { kind: "remind-distance", replyMarkup: new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL) })) sent++;
           }
@@ -473,11 +511,13 @@ export class Notifier {
         const at = parseHHMM(user.eveningAt);
         if (at != null && now.minutes >= at && now.minutes < at + 15 && !this.repo.reminderSent(user.id, "evening", now.date)) {
           const tomorrow = addDays(now.date, 1);
-          const list = filterSubgroup(lessonsFor(group.key, tomorrow), user.subgroup);
+          const next = await this.ownDay(user, tomorrow, cache);
+          // Портал не ответил про завтра (режим преподавателя) — попробуем на следующем тике.
+          if (!next) continue;
           this.repo.markReminderSent(user.id, "evening", now.date);
-          if (list.length) {
-            const body = formatDay(group, tomorrow, lessonsFor(group.key, tomorrow), this.service.weekInfo(tomorrow), now.date, { subgroup: user.subgroup, teacherView: user.teacherView });
-            const photo = await this.maybeRenderDay(user, group, tomorrow, list, now);
+          if (next.lessons.length) {
+            const body = formatDay(next.group, tomorrow, next.all, this.service.weekInfo(tomorrow), now.date, { subgroup: next.subgroup, teacherView: view });
+            const photo = await this.maybeRenderDay(user, next.group, tomorrow, next.lessons, now);
             if (await this.send(user, `🌙 Завтра:\n\n${body}`, { kind: "remind-evening", photo })) sent++;
           }
         }
@@ -489,7 +529,7 @@ export class Notifier {
   private async maybeRenderDay(user: User, group: ReturnType<ScheduleService["group"]>, date: LocalDate, lessons: Occurrence[], now: WallClock): Promise<Buffer | undefined> {
     if (!this.renderer || !group || user.format === "text") return undefined;
     try {
-      return await this.renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: todayMsk(), now, theme: user.posterTheme ?? undefined, teacherView: user.teacherView });
+      return await this.renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: todayMsk(), now, theme: user.posterTheme ?? undefined, teacherView: user.teacherMode ? "off" : user.teacherView });
     } catch (err) {
       logger.warn({ err }, "reminder image render failed");
       return undefined;

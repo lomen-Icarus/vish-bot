@@ -80,6 +80,12 @@ export interface User {
   anon: boolean;
   /** Показывать ли преподавателя в расписании и выделять ли его. */
   teacherView: TeacherView;
+  /** Режим преподавателя: «своя группа» — это он сам (см. /prepod). */
+  teacherMode: boolean;
+  /** Ключ человека в режиме преподавателя: t<id> или w<hash>; null — в справочнике не нашёлся. */
+  teacherRef: string | null;
+  /** ФИО из реестра преподавателей. */
+  teacherName: string | null;
   notifyNotices: boolean;
   remindFirstMin: number | null;
   remindEachMin: number | null;
@@ -114,6 +120,9 @@ interface UserRow {
   want_slides: number | null;
   anon: number | null;
   teacher_view: string | null;
+  teacher_mode: number | null;
+  teacher_ref: string | null;
+  teacher_name: string | null;
   notify_notices: number;
   remind_first_min: number | null;
   remind_each_min: number | null;
@@ -150,6 +159,9 @@ function rowToUser(r: UserRow): User {
     wantSlides: r.want_slides == null ? true : r.want_slides === 1,
     anon: r.anon === 1,
     teacherView: (r.teacher_view as TeacherView) ?? "bold",
+    teacherMode: r.teacher_mode === 1,
+    teacherRef: r.teacher_ref ?? null,
+    teacherName: r.teacher_name ?? null,
     notifyNotices: r.notify_notices === 1,
     remindFirstMin: r.remind_first_min,
     remindEachMin: r.remind_each_min,
@@ -369,6 +381,9 @@ export class Repo {
       want_slides: 1,
       anon: 0,
       teacher_view: "bold",
+      teacher_mode: 0,
+      teacher_ref: null,
+      teacher_name: null,
       notify_notices: 0,
       remind_first_min: null,
       remind_each_min: null,
@@ -420,6 +435,9 @@ export class Repo {
     if (patch.wantSlides !== undefined) map.want_slides = patch.wantSlides ? 1 : 0;
     if (patch.anon !== undefined) map.anon = patch.anon ? 1 : 0;
     if (patch.teacherView !== undefined) map.teacher_view = patch.teacherView;
+    if (patch.teacherMode !== undefined) map.teacher_mode = patch.teacherMode ? 1 : 0;
+    if (patch.teacherRef !== undefined) map.teacher_ref = patch.teacherRef;
+    if (patch.teacherName !== undefined) map.teacher_name = patch.teacherName;
     if (patch.streamIntake !== undefined) map.stream_intake = patch.streamIntake;
     if (patch.calToken !== undefined) map.cal_token = patch.calToken;
     if (patch.calAlarmMin !== undefined) map.cal_alarm_min = patch.calAlarmMin;
@@ -913,6 +931,11 @@ export class Repo {
     // забанил бота, «пользователем» не считается, иначе его не позовут обратно.
     const rows = this.db.prepare("SELECT username FROM users WHERE username IS NOT NULL AND username <> '' AND anon = 0 AND blocked = 0").all() as Array<{ username: string }>;
     return new Set(rows.map((r) => r.username.toLowerCase()));
+  }
+
+  /** Сколько человек сейчас в режиме преподавателя (для /health). */
+  teacherModeCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE teacher_mode = 1 AND blocked = 0").get() as { n: number }).n;
   }
 
   /** Сколько человек включили «усиленную анонимность» (для /health). */

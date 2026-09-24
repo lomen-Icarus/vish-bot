@@ -4,7 +4,10 @@ import { BTN, groupCb, isMenuText } from "../keyboards.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { featuresText, needGroup } from "../views.js";
 import { clampHtml, esc } from "../../schedule/format.js";
-import { todayMsk } from "../../time.js";
+import { addDays, mondayOf, todayMsk } from "../../time.js";
+import type { Occurrence } from "../../schedule/model.js";
+import { ownTeacherRef } from "../teacherMode.js";
+import { loadProfile, profileLessons } from "../../people/profile.js";
 import { aiAllowance, aiLimits } from "../../ai/limits.js";
 import type { AskMentions } from "../../ai/ask.js";
 import { teacherVishTag } from "./teachers.js";
@@ -41,7 +44,8 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   inFlightByUser.set(ctx.user.id, (inFlightByUser.get(ctx.user.id) ?? 0) + 1);
   inFlightGlobal++;
   try {
-    const res = await ask.answer({ question, group: needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps) });
+    const self = ctx.user.teacherMode ? await ownTeacherContext(ctx) : undefined;
+    const res = await ask.answer({ question, group: self ? null : needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps), self });
     ctx.deps.repo.bumpAiUsage(ctx.user.id, day, res.inputTokens, res.outputTokens);
     const logId = ctx.deps.repo.logAi(ctx.user.id, question, res.text);
     // Copy the caller's rows: mutating their keyboard would move buttons between messages.
@@ -63,6 +67,23 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
     if (left > 0) inFlightByUser.set(ctx.user.id, left);
     else inFlightByUser.delete(ctx.user.id);
     inFlightGlobal = Math.max(0, inFlightGlobal - 1);
+  }
+}
+
+/** Режим преподавателя: ФИО и его пары на две недели — вместо расписания группы. */
+async function ownTeacherContext(ctx: BotContext): Promise<{ name: string; lessons: Occurrence[] } | undefined> {
+  const ref = ownTeacherRef(ctx.user);
+  const name = ctx.user.teacherName ?? "преподаватель";
+  if (!ref) return { name, lessons: [] };
+  try {
+    const profile = await loadProfile(ctx.deps, ref);
+    if (!profile) return { name, lessons: [] };
+    const from = mondayOf(todayMsk());
+    const loaded = await profileLessons(ctx.deps, profile, from, addDays(from, 13));
+    return { name: loaded.fullName ?? name, lessons: loaded.lessons };
+  } catch (err) {
+    logger.debug({ err: String(err) }, "ask: own teacher schedule failed");
+    return { name, lessons: [] };
   }
 }
 

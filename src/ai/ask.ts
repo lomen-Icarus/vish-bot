@@ -315,13 +315,19 @@ export class AskService {
     return students ? [getSchedule, findSubject, listGroups, findTeacher, findStudent, botHelpTool] : [getSchedule, findSubject, listGroups, findTeacher, botHelpTool];
   }
 
-  async answer(input: { question: string; group: LogicalGroup | null; subgroup: number | null; userId: number; botHelp?: string }): Promise<AskResult> {
+  async answer(input: { question: string; group: LogicalGroup | null; subgroup: number | null; userId: number; botHelp?: string; self?: { name: string; lessons: Occurrence[] } }): Promise<AskResult> {
     const question = input.question.slice(0, 500);
     const today = todayMsk();
     const from = mondayOf(today);
     const own = input.group ? filterSubgroup(this.service.materialize(input.group, from, addDays(from, 13)), input.subgroup) : [];
     const wi = this.service.weekInfo(today);
     const context = input.group ? fmtLessons(own, today) : "";
+    // Режим преподавателя: спрашивает сам преподаватель, «моё расписание» — его пары.
+    const about = input.self
+      ? `Я преподаватель: ${input.self.name}. Мои пары на эту и следующую неделю:\n${fmtLessons(input.self.lessons, today)}`
+      : input.group
+        ? `Моя группа: ${input.group.title}${input.subgroup ? `, подгруппа ${input.subgroup}` : ""}.\n\nРасписание моей группы на эту и следующую неделю:\n${context}`
+        : "Моя группа пока не выбрана.";
     const mentions = emptyMentions();
     const runner = this.client.beta.messages.toolRunner({
       model: this.opts.model,
@@ -336,7 +342,7 @@ export class AskService {
       messages: [
         {
           role: "user",
-          content: `Сегодня ${today} (${weekdayName(today)}${wi.week ? `, ${wi.week} учебная неделя, ${wi.parity === "odd" ? "нечётная" : "чётная"}` : ""}). ${input.group ? `Моя группа: ${input.group.title}${input.subgroup ? `, подгруппа ${input.subgroup}` : ""}.\n\nРасписание моей группы на эту и следующую неделю:\n${context}` : "Моя группа пока не выбрана."}\n\nВопрос: ${question}`,
+          content: `Сегодня ${today} (${weekdayName(today)}${wi.week ? `, ${wi.week} учебная неделя, ${wi.parity === "odd" ? "нечётная" : "чётная"}` : ""}). ${about}\n\nВопрос: ${question}`,
         },
       ],
     });
