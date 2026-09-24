@@ -1,12 +1,14 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, groupCb, groupLabel, isMenuText, mainKeyboard } from "../keyboards.js";
+import { BTN, groupCb, groupLabel, groupPicker, isMenuText, menuFor } from "../keyboards.js";
+import { nameAndPatronymic } from "../teacherMode.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
-import { showGroupPicker } from "./schedule.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
-import { teacherVishTag, webinarKey } from "./teachers.js";
+import { showPerson } from "../people.js";
+import { clearHit, hitLabel, hitShort, searchPeople, type PersonHit } from "../../people/search.js";
+import { refKey } from "../../people/ref.js";
 import { clampHtml, esc } from "../../schedule/format.js";
 import { buildInlineResults, buildPeopleResults, parseInlineQuery } from "../inline.js";
 import { findGroup } from "../../schedule/groups.js";
@@ -26,13 +28,12 @@ function knownName(ctx: BotContext): string | null {
 }
 
 /**
- * Кнопки под приветствием. Расписание и так в нижней клавиатуре, а вот про
- * «спросить своими словами» никто не догадывается — поэтому она здесь.
+ * Единственная кнопка под приветствием — «Спросить?»: расписание и так в
+ * нижнем меню, а про «спросить своими словами» никто не догадывается. Это тот
+ * же ИИ-поиск, что и «🔍 Поиск», с теми же дневными лимитами из админки.
  */
-function startActions(ctx: BotContext): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  if (ctx.deps.ask) kb.text("💬 Спросить?", "ask:open");
-  return kb.text("🧭 Что я умею", "feat:open");
+function askButton(ctx: BotContext): InlineKeyboard | null {
+  return ctx.deps.ask ? new InlineKeyboard().text("💬 Спросить?", "ask:open") : null;
 }
 
 /**
@@ -53,10 +54,10 @@ export function inlineGuide(ctx: BotContext): string {
     `• <code>@${bot} неделя</code> — своя неделя, <code>неделя след</code> — следующая`,
     `• <code>@${bot} поток 24</code> — весь поток, <code>общие</code> — общие пары`,
     "",
-    "<b>👨‍🏫 Преподаватели</b>",
-    `• <code>@${bot} преподаватель Петров</code> — его день`,
-    `• <code>@${bot} завтра препод Петров</code> · <code>@${bot} неделя препод Петров</code>`,
-    ...(poisk ? ["", "<b>🕵️ Студенты</b>", `• <code>@${bot} студент Беляев</code> — группа человека и где он должен быть сейчас`] : []),
+    "<b>👤 Люди</b>",
+    `• <code>@${bot} Петров</code> — просто фамилия: кто это, где сейчас по расписанию и его день${poisk ? " — хоть преподаватель, хоть студент" : ""}`,
+    `• <code>@${bot} Петров завтра</code> · <code>@${bot} неделя Петров</code>`,
+    `• уточнить, кого ищешь: <code>@${bot} препод Петров</code>${poisk ? `, <code>@${bot} студент Беляев</code>` : ""}`,
     "",
     "<b>🗓 Даты</b>",
     "• словом: <code>сегодня</code>, <code>завтра</code>, <code>вчера</code>, <code>послезавтра</code>, <code>позавчера</code>",
@@ -68,15 +69,22 @@ export function inlineGuide(ctx: BotContext): string {
 }
 
 miscHandlers.command("start", async (ctx) => {
-  const kb = mainKeyboard();
   const group = needGroup(ctx);
   // Кнопка над inline-списком открывает личку с «/start inline» — значит,
   // человек спрашивает именно про inline, и отвечать надо про него.
   if ((ctx.match ?? "").trim() === "inline") {
-    await ctx.reply(inlineGuide(ctx), { parse_mode: "HTML", reply_markup: kb, link_preview_options: { is_disabled: true } });
+    await ctx.reply(inlineGuide(ctx), { parse_mode: "HTML", reply_markup: menuFor(ctx.user), link_preview_options: { is_disabled: true } });
     await ctx.reply("Можно попробовать прямо сейчас — кнопка откроет выбор чата:", {
       reply_markup: new InlineKeyboard().switchInline("💬 Попробовать в чате", "неделя"),
     });
+    return;
+  }
+  const ask = askButton(ctx);
+  const askLine = ctx.deps.ask ? "\n\nМожно просто спросить словами — «когда матан», «где Беляев», «как включить напоминания»." : "";
+  // Режим преподавателя: своя «группа» — он сам, обращение по имени-отчеству.
+  if (ctx.user.teacherMode) {
+    const name = ctx.user.teacherName ? nameAndPatronymic(ctx.user.teacherName) : null;
+    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}!` : "Здравствуйте!"} Включён режим преподавателя: «📅 Сегодня» и «🗓 Неделя» — ваши пары, «👥 Студенты» — расписание любой группы.${askLine}`, { parse_mode: "HTML", reply_markup: ask ?? menuFor(ctx.user) });
     return;
   }
   // Бот может узнать человека по телеграм-нику из файла старост. ФИО у людей
@@ -84,18 +92,19 @@ miscHandlers.command("start", async (ctx) => {
   // он годичной давности, группа могла смениться, а имя — нет.
   const hello = knownName(ctx);
   if (!group) {
+    // Одно сообщение: приветствие, выбор группы и «Спросить?». Нижнее меню
+    // придёт вместе с подтверждением выбранной группы.
+    const groups = ctx.deps.service.groups();
+    const kb = groups.length ? groupPicker(groups, { selected: null }) : new InlineKeyboard();
+    if (ask) kb.row().text("💬 Спросить?", "ask:open");
     await ctx.reply(
-      `${hello ? `Привет, ${esc(hello)}! ` : "Привет! "}Я бот расписания Высшей инженерной школы ЧувГУ.\n\nПокажу пары на любой день, пришлю изменения в расписании и напомню о парах. Сначала выбери группу.`,
+      `${hello ? `Привет, ${esc(hello)}! ` : "Привет! "}Я бот расписания Высшей инженерной школы ЧувГУ.\n\nПокажу пары на любой день, пришлю изменения в расписании и напомню о парах. ${groups.length ? "Сначала выбери свою группу:" : "Список групп ещё загружается с портала — напиши /start через минуту."}`,
       { parse_mode: "HTML", reply_markup: kb },
     );
-    await showGroupPicker(ctx);
     return;
   }
-  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.`, {
-    parse_mode: "HTML",
-    reply_markup: kb,
-  });
-  await ctx.reply(ctx.deps.ask ? "Можно просто спросить словами — «когда матан», «где Беляев», «как включить напоминания»." : "Что дальше?", { reply_markup: startActions(ctx) });
+  // Одно сообщение с одной кнопкой. Нижнее меню у вернувшегося уже есть.
+  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.${askLine}`, { parse_mode: "HTML", reply_markup: ask ?? menuFor(ctx.user) });
 });
 
 /** Карта функций приходит двумя сообщениями: одним она не влезает в лимит Telegram. */
@@ -239,6 +248,10 @@ interface LocalHits {
   parts: string[];
   kb: InlineKeyboard;
   buttons: number;
+  /** Найденные люди (преподаватели и студенты). */
+  people: PersonHit[];
+  /** Кроме людей ничего не нашлось: ни групп, ни предметов. */
+  onlyPeople: boolean;
 }
 
 async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
@@ -285,57 +298,30 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
     }
   }
 
-  // 3. Teachers: the portal directory when the bot has an account, plus teachers of online lessons.
-  // Only for name-shaped input: a whole question would send every word of it to
-  // the portal search one by one.
+  // 3. Люди: преподаватели и студенты — тем же поиском, что и кнопки
+  // «👨‍🏫 Преподаватели» и «Где студент», с теми же подписями и карточкой.
+  // Только для запроса, похожего на имя: целый вопрос разослал бы каждое своё
+  // слово в поиск портала по очереди.
   const nameWords = query.trim().split(/\s+/).filter((w) => /\p{L}{3,}/u.test(w));
+  let people: PersonHit[] = [];
   if (nameWords.length > 0 && nameWords.length <= 3) {
-    const names: string[] = [];
     try {
-      for (const t of deps.teachers ? await deps.teachers.search(query, 5) : []) {
-        names.push(t.name);
-        kb.text(`👨‍🏫 ${t.name}${teacherVishTag(deps.repo, t.id, t.name)}`, `t:${t.id}`);
-        if (++buttons % 2 === 0) kb.row();
-      }
+      // Журнал «сыска» ведётся и на промахах; если по тому же запросу сработает
+      // ещё и инструмент ИИ, repo.logPoisk склеит это в одну запись.
+      people = (await searchPeople(deps, query, { scope: "all", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск", limit: 6 })).hits;
     } catch (err) {
-      logger.warn({ err: String(err) }, "search: teachers failed");
+      logger.warn({ err: String(err) }, "search: people failed");
     }
-    for (const t of deps.webinars?.search(query, 4) ?? []) {
-      if (names.some((n) => n.toLowerCase().startsWith(t.name.toLowerCase().slice(0, 12)))) continue;
-      names.push(`${t.name} (дистант)`);
-      kb.text(`👨‍🏫 ${t.name}`, webinarKey(t.name));
-      if (++buttons % 2 === 0) kb.row();
-    }
-    if (names.length) parts.push(`<b>Преподаватели</b>: ${names.map(esc).join("; ")}`);
-    if (buttons % 2) kb.row();
-  }
-
-  // 4. Студенты — когда включён глобальный поиск. Тот же лимит и тот же журнал,
-  // что и у «Где студент»: через поиск базу выкачать не проще.
-  const students = deps.students;
-  if (students && nameWords.length > 0 && nameWords.length <= 3) {
-    const limit = deps.config.POISK_DAILY_LIMIT;
-    const day = todayMsk();
-    const allowed = limit <= 0 || ctx.isAdmin || deps.repo.poiskUsage(ctx.user.id, day) < limit;
-    if (allowed) {
-      const hits = students.search(query, 4);
-      // Журнал ведём всегда, в том числе на промахах: иначе базу можно было бы
-      // перебирать по фамилиям бесплатно и без следов. Если по тому же запросу
-      // сработает ещё и инструмент ИИ, repo.logPoisk склеит это в одну запись.
-      deps.repo.logPoisk(ctx.user.id, day, `поиск: ${query}`, hits[0]?.student.id ?? null);
-      if (hits.length) {
-        const guess = hits.every((h) => h.fuzzy);
-        parts.push(`<b>Студенты ВИШ</b>${guess ? " (похожие по написанию)" : ""}: ${hits.map((h) => `${esc(h.student.name)} — ${esc(h.student.groupTitle)}`).join("; ")}`);
-        for (const h of hits) {
-          kb.text(`🕵️ ${h.student.name}`.slice(0, 40), `pop:${h.student.id}`);
-          if (++buttons % 2 === 0) kb.row();
-        }
-        if (buttons % 2) kb.row();
-      }
+    if (people.length) {
+      const guess = people.every((h) => h.fuzzy);
+      parts.push(`<b>Люди</b>${guess ? " (похожие по написанию)" : ""}: ${people.map((h) => esc(hitShort(h))).join("; ")}`);
+      if (buttons % 3) kb.row();
+      for (const h of people) kb.text(hitLabel(h), `ppo:${refKey(h.ref)}`).row();
+      buttons += people.length;
     }
   }
 
-  return { parts, kb, buttons };
+  return { parts, kb, buttons, people, onlyPeople: people.length > 0 && parts.length === 1 };
 }
 
 /**
@@ -346,6 +332,13 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
 async function runSearch(ctx: BotContext, query: string): Promise<void> {
   const deps = ctx.deps;
   const hits = await localSearch(ctx, query);
+  // Нашёлся ровно один человек и больше ничего — сразу его карточка, та же, что
+  // из кнопок «Преподаватели» и «Где студент»: кто это, где сейчас, день.
+  const person = hits.onlyPeople ? clearHit(hits.people) : null;
+  if (person) {
+    await showPerson(ctx, person.ref, todayMsk());
+    return;
+  }
   if (deps.ask) {
     const outcome = await askAi(ctx, query, { extraButtons: hits.buttons ? hits.kb : undefined });
     if (outcome === "answered") return;

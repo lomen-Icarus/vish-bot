@@ -1,7 +1,7 @@
 import { Composer, InputFile } from "grammy";
 import type { BotContext } from "../context.js";
 import type { LogicalGroup } from "../../schedule/groups.js";
-import { BTN, intakePicker, mainKeyboard, streamDayNav, streamKeyboard } from "../keyboards.js";
+import { BTN, intakePicker, menuFor, streamDayNav, streamKeyboard } from "../keyboards.js";
 import { editPhoto, isPhotoMessage, needGroup } from "../views.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, formatStreamWeek, mergeStream, shortGroupLabel, type StreamRow } from "../../schedule/stream.js";
 import type { Occurrence } from "../../schedule/model.js";
@@ -218,5 +218,5 @@ async function renderCommonWeek(ctx: BotContext, intake: number, monday: LocalDa
 }
 
 streamHandlers.hears(BTN.backToMenu, async (ctx) => {
-  await ctx.reply("Главное меню.", { reply_markup: mainKeyboard() });
+  await ctx.reply("Главное меню.", { reply_markup: menuFor(ctx.user) });
 });

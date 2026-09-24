@@ -59,6 +59,8 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       opts.repo.pruneChangeEvents(30);
       // Журнал «сыска» — это аудит: держим полгода, потом чистим.
       opts.repo.prunePoiskLog(180);
+      // Реплики болталки нужны только как контекст разговора: трёх дней хватает.
+      opts.repo.pruneChatLog(3);
       // Слайды занимают мегабайты: старше четырёх месяцев они никому не нужны.
       for (const file of opts.repo.pruneSlideDecks(120)) {
         try {

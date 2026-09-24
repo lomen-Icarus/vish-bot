@@ -13,6 +13,7 @@ import { TOPIC_LABELS, TOPICS, type Topic } from "../bot/keyboards.js";
 import { esc } from "../schedule/format.js";
 import { sleep } from "../time.js";
 import { logger } from "../logger.js";
+import { isUnreachable } from "../bot/errors.js";
 
 export interface ScanOptions {
   lookbackHours: number;
@@ -41,6 +42,9 @@ const Classification = z.object({
   ),
 });
 
+/** Сколько часов неразложенный пост ждёт повторной классификации. */
+const RETRY_HOURS = 72;
+
 const SYSTEM = `Ты сортируешь посты для студентов Высшей инженерной школы (ВИШ) ЧувГУ, Чебоксары.
 Категории:
 - contests — конкурсы, олимпиады, хакатоны, гранты, стипендии, конференции, стажировки, вакансии и другие возможности для студентов, куда можно подать заявку.
@@ -64,7 +68,7 @@ export class NewsScanner {
     private readonly api: Api<RawApi>,
     private readonly opts: ScanOptions,
   ) {
-    this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
+    this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 300_000 });
   }
 
   scan(): Promise<ScanReport> {
@@ -80,6 +84,7 @@ export class NewsScanner {
     const report: ScanReport = { sources: 0, fetched: 0, fresh: 0, classified: {}, sent: 0, errors: [], durationMs: 0 };
     const sources = this.repo.listNewsSources(true);
     report.sources = sources.length;
+    // Новые посты этого скана и те, что прошлые сканы не смогли разложить.
     const newItems: Array<{ id: number; source: NewsSource; text: string }> = [];
 
     for (const source of sources) {
@@ -102,6 +107,16 @@ export class NewsScanner {
         this.repo.markSourceScanned(source.id, msg);
         logger.warn({ err: msg, source: source.ref }, "news source failed");
       }
+    }
+
+    // Посты, которые прошлый скан сохранил, но не разложил (классификатор упал):
+    // даём им ещё шанс, пока они не старше трёх суток.
+    const retrySince = new Date(Date.now() - Math.max(this.opts.lookbackHours, RETRY_HOURS) * 3_600_000).toISOString();
+    for (const item of this.repo.unclassifiedNewsItems(retrySince)) {
+      if (newItems.some((i) => i.id === item.id)) continue;
+      const source = this.repo.newsSource(item.sourceId);
+      if (!source?.enabled) continue;
+      newItems.push({ id: item.id, source, text: item.text });
     }
 
     if (newItems.length) {
@@ -135,17 +150,21 @@ export class NewsScanner {
       try {
         const res = await this.client.messages.parse({
           model: this.opts.model,
-          max_tokens: 4000,
+          // max_tokens ограничивает и размышление модели, и сам JSON: с запасом,
+          // иначе на пачке из 30 постов ответ обрезается и пачка теряется.
+          max_tokens: 16000,
           system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
           output_config: { effort: "low", format: zodOutputFormat(Classification) },
           messages: [{ role: "user", content: `Посты за последние сутки:\n\n${payload}\n\nВерни категорию и заголовок для каждого id.` }],
         });
+        if (res.stop_reason === "max_tokens") throw new Error("classifier hit max_tokens");
         const parsed = res.parsed_output;
         if (!parsed) throw new Error("classifier returned no JSON");
         const known = new Set(batch.map((b) => b.id));
         for (const v of parsed.items) if (known.has(v.id)) out.push({ id: v.id, topic: v.topic, title: v.title.slice(0, 80) });
       } catch (err) {
-        logger.error({ err: String(err) }, "news classification failed; batch skipped");
+        // Посты пачки остаются неразложенными (topic IS NULL) и попадут в следующий скан.
+        logger.error({ err: String(err) }, "news classification failed; batch will be retried on the next scan");
       }
     }
     return out;
@@ -183,9 +202,8 @@ export class NewsScanner {
       await this.api.sendMessage(u.id, text, { parse_mode: "HTML", reply_markup: kb, link_preview_options: { is_disabled: !item.url } });
       return true;
     } catch (err) {
-      const msg = String(err);
-      if (/blocked|deactivated|chat not found/i.test(msg)) this.repo.updateUser(u.id, { blocked: true });
-      else logger.warn({ err: msg, userId: u.id }, "news delivery failed");
+      if (isUnreachable(err)) this.repo.updateUser(u.id, { blocked: true });
+      else logger.warn({ err: String(err), userId: u.id }, "news delivery failed");
       return false;
     }
   }

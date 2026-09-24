@@ -21,6 +21,9 @@ import { KnownPeople } from "./students/known.js";
 import { resolveStudentGroup, whereNowText } from "./students/locate.js";
 import { filterSubgroup } from "./schedule/format.js";
 import { todayMsk } from "./time.js";
+import { QaBase } from "./chat/qa.js";
+import { ChatService } from "./chat/service.js";
+import { importLegacyCanned } from "./chat/importCanned.js";
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -59,6 +62,9 @@ async function main(): Promise<void> {
   // Узнавание по нику — отдельный файл и отдельный модуль: ники не должны
   // попасть в поиск студентов даже по ошибке. Нет файла — никого не узнаём.
   const known = new KnownPeople(config.KNOWN_DB);
+  // Реестр преподавателей для режима преподавателя: тот же формат «ФИО;ник».
+  const teacherRegistry = new KnownPeople(config.TEACHERS_DB);
+  logger.info({ count: teacherRegistry.count(), file: config.TEACHERS_DB }, teacherRegistry.count() ? "teacher registry loaded" : "teacher registry is empty or missing: режим преподавателя — только для админов (/prepod Фамилия)");
   logger.info({ count: known.count(), file: config.KNOWN_DB }, known.count() ? "known people loaded" : "known people file is empty or missing: бот никого не узнаёт по имени");
   if (students) {
     const st = students.stats();
@@ -95,9 +101,26 @@ async function main(): Promise<void> {
     : null;
   const ask = config.ANTHROPIC_API_KEY ? new AskService(config.ANTHROPIC_API_KEY, service, { model: config.AI_MODEL }, teachers, webinars, studentLookup) : null;
 
-  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, known, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
+  // Болталка в группах: свой ключ (свой счёт) или общий; сценарий «вопрос → ответ» — файл на хостинге.
+  const chatKey = config.CHAT_ANTHROPIC_API_KEY ?? config.ANTHROPIC_API_KEY;
+  const chat =
+    config.CHAT_AI && chatKey
+      ? new ChatService(chatKey, { model: config.CHAT_AI_MODEL ?? config.AI_MODEL, contextMessages: config.CHAT_CONTEXT_MESSAGES, botUsername: null }, new QaBase(config.CHAT_QA_DB))
+      : null;
+  if (config.CHAT_AI && !chatKey) logger.warn("болталка в группах выключена: нет ни CHAT_ANTHROPIC_API_KEY, ни ANTHROPIC_API_KEY");
+  else if (chat) {
+    // Ответы, добавленные через /reply_add в первой версии, переезжают в сценарий.
+    importLegacyCanned(repo, chat.qa);
+    logger.info({ model: chat.model, qa: chat.qa.stats().count, file: config.CHAT_QA_DB }, "group chat enabled");
+  } else logger.info("group chat disabled (CHAT_AI=FALSE)");
+
+  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, known, teacherRegistry, chat, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
   const bot = createBot(deps);
   await bot.init();
+  chat?.setBotUsername(bot.botInfo.username ?? null);
+  // Без этого «@бот привет» в группе до бота не дойдёт: Telegram присылает
+  // в privacy mode только команды и ответы на сообщения бота.
+  if (chat && !bot.botInfo.can_read_all_group_messages) logger.warn("group chat: privacy mode is ON — бот не увидит «@бот привет» в группах. @BotFather → /setprivacy → Disable, затем удалить и заново добавить бота в группу (или сделать его админом группы)");
   deps.news = config.ANTHROPIC_API_KEY
     ? new NewsScanner(config.ANTHROPIC_API_KEY, repo, bot.api, { lookbackHours: config.NEWS_LOOKBACK_HOURS, maxPerTopic: config.NEWS_MAX_PER_TOPIC, vkToken: config.VK_SERVICE_TOKEN, model: config.AI_MODEL })
     : null;

@@ -429,9 +429,11 @@ describe("преподаватель в расписании", () => {
 
   it("настройка управляет и текстом, и выделением", () => {
     const byDate = new Map([[today, [lsn(1, "Физика", "Иванов Иван Иванович")]]]);
-    const bold = formatWeek(g, mondayOf(today), byDate, info, today, { teacherView: "bold" });
-    const plain = formatWeek(g, mondayOf(today), byDate, info, today, { teacherView: "plain" });
-    const off = formatWeek(g, mondayOf(today), byDate, info, today, { teacherView: "off" });
+    // Подпись преподавателя неразрывная (NBSP): для сравнения возвращаем обычные пробелы.
+    const sp = (s: string): string => s.replace(/\u00a0/g, " ");
+    const bold = sp(formatWeek(g, mondayOf(today), byDate, info, today, { teacherView: "bold" }));
+    const plain = sp(formatWeek(g, mondayOf(today), byDate, info, today, { teacherView: "plain" }));
+    const off = sp(formatWeek(g, mondayOf(today), byDate, info, today, { teacherView: "off" }));
     expect(bold).toContain("<b>Иванов И. И.</b>");
     expect(plain).toContain("Иванов И. И.");
     expect(plain).not.toContain("<b>Иванов И. И.</b>");
@@ -440,16 +442,17 @@ describe("преподаватель в расписании", () => {
 
   it("неделя — две строки на пару: предмет, под ним тип, аудитория и препод", () => {
     const byDate = new Map([[today, [lsn(1, "Физика", "Иванов Иван Иванович")]]]);
-    const lines = formatWeek(g, mondayOf(today), byDate, info, today, {}).split("\n");
+    const lines = formatWeek(g, mondayOf(today), byDate, info, today, {}).replace(/\u00a0/g, " ").split("\n");
     const subj = lines.findIndex((l) => l.includes("Физика"));
-    expect(lines[subj]).not.toContain("лекция");
-    expect(lines[subj + 1]).toContain("лекция");
+    expect(lines[subj]).not.toContain("ЛК");
+    expect(lines[subj + 1]).toContain("ЛК");
     expect(lines[subj + 1]).toContain("Иванов И. И.");
   });
 
   it("день показывает препода там же, где аудиторию", () => {
     const text = formatDay(g, today, [lsn(1, "Физика", "Иванов Иван Иванович")], info, today, { teacherView: "bold" });
-    expect(text).toContain("<b>Иванов И. И.</b>");
+    // Одна строка «ЛК · ауд. … · Иванов И. И.», подпись неразрывная.
+    expect(text).toContain("ЛК · ауд. Т-310 · <b>Иванов\u00a0И.\u00a0И.</b>");
     expect(formatDay(g, today, [lsn(1, "Физика", "Иванов Иван Иванович")], info, today, { teacherView: "off" })).not.toContain("Иванов");
   });
 });

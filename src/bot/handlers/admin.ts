@@ -1,8 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { clampHtml, esc, plural } from "../../schedule/format.js";
-import { groupDailyLimit } from "./group.js";
+import { esc, plural } from "../../schedule/format.js";
 import { pruneFalseChangeEvents } from "../../db/cleanup.js";
 import { isMenuText, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
@@ -11,6 +10,7 @@ import { todayMsk } from "../../time.js";
 import type { User } from "../../db/repo.js";
 import { logger } from "../../logger.js";
 import { sleep } from "../../time.js";
+import { isUnreachable } from "../errors.js";
 
 export const adminHandlers = new Composer<BotContext>();
 
@@ -30,8 +30,10 @@ function adminMenu(): InlineKeyboard {
     .text("📌 Доска объявлений", "adm:board")
     .text("👥 Группы", "adm:groups")
     .row()
-    .text("🤖 Лимиты ИИ", "adm:ai")
-    .text("📰 Источники", "adm:sources");
+    .text("🤖 Лимиты «Спросить»", "adm:ai")
+    .text("📰 Источники", "adm:sources")
+    .row()
+    .text("💬 Болталка в группах", "adm:chat");
 }
 
 adminOnly.command("admin", async (ctx) => {
@@ -111,13 +113,10 @@ function healthText(ctx: BotContext): string {
     `Доска объявлений: ${deps.repo.activeAnnouncements().length} активных`,
     `Лимиты ИИ: ${aiLimits(deps.repo, deps.config, todayMsk()).perUser}/чел, ${aiLimits(deps.repo, deps.config, todayMsk()).global} общих · потрачено сегодня ${deps.repo.aiUsageGlobal(todayMsk())}`,
     `Inline-режим: ${deps.inline ? "включён" : "ВЫКЛЮЧЕН — включи в @BotFather: /setinline, затем /setinlinefeedback"}`,
+    `Болталка в группах: ${deps.chat ? `${esc(deps.chat.model)} · чатов включено ${deps.repo.chatGroups().filter((g) => g.enabled).length + deps.config.CHAT_GROUP_IDS.length} · сценарий ${deps.chat.qa.stats().count} · сегодня ответов ${deps.repo.chatUsage({}, todayMsk())} · privacy mode ${ctx.me.can_read_all_group_messages ? "выключен" : "ВКЛЮЧЁН — «@бот …» может не доходить, ответы на сообщения бота работают (/chats)"}` : deps.config.CHAT_AI ? "нет ключа Anthropic" : "выключена (CHAT_AI=FALSE)"}`,
     `Сыск (поиск студентов): ${poiskState(ctx)}`,
     `Узнавание по нику: ${knownState(ctx)}`,
-    `Групповые чаты: ${(() => {
-      const chats = deps.repo.groupChats().filter((c) => c.enabled);
-      const used = chats.reduce((n, c) => n + deps.repo.aiUsage(c.chatId, todayMsk()), 0);
-      return chats.length ? `${chats.length} включено · ответов ИИ сегодня ${used} · база ответов ${deps.repo.cannedReplies().length}` : "ни одного (/chats)";
-    })()}`,
+    `Режим преподавателя: ${deps.teacherRegistry?.count() ? `в реестре ${deps.teacherRegistry.count()} чел.` : "реестр пуст (TEACHERS_DB) — включают только админы"} · в режиме сейчас ${deps.repo.teacherModeCount()}`,
     `Карта преподавателей: ${(() => {
       const m = deps.repo.teacherMapStats();
       return `${m.vish} из ${m.total} помечены как ВИШ, проверено ${m.checked}`;
@@ -150,7 +149,8 @@ function aiLimitsScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     .text("♻️ Как в .env", "ail:reset")
     .text("🔄 Обновить", "ail:show");
   const text = [
-    "<b>🤖 Лимиты ИИ</b>",
+    "<b>🤖 Лимиты «Спросить?»</b>",
+    "Кнопка «💬 Спросить?» в приветствии /start, «🔍 Поиск» и /ask — это один ИИ-поиск с общим лимитом.",
     ctx.deps.ask ? `Модель: <code>${esc(ctx.deps.config.AI_MODEL)}</code>` : "ИИ выключен: не задан ANTHROPIC_API_KEY.",
     "",
     `На человека в сутки: <b>${l.perUser}</b>${l.bonusUser ? ` (${l.baseUser} + ${l.bonusUser} на сегодня)` : ""}${l.userOverridden ? ` · в .env ${l.envUser}` : ""}`,
@@ -204,98 +204,6 @@ function chunkLines(lines: string[], limit: number): string[] {
  * Честно разделяет «не пользуется» и «сказать нечего»: если телеграма человека
  * в списке старост не было, бот про него не знает ничего.
  */
-// ---- бот в групповых чатах: база ответов, белый список, лимит ----
-
-const REPLIES_HELP = [
-  // «>» в тексте Telegram-HTML обязан быть сущностью: голый символ даёт
-  // «can't parse entities», и подсказка не придёт вообще.
-  "Добавить: <code>/reply_add триггер =&gt; ответ</code>",
-  "Например: <code>/reply_add сосал? =&gt; …твой ответ…</code>",
-  "Триггер — это смысл, а не точная фраза: ИИ ответит этим текстом и на «ты чё, сосал что ли», и на «сосал???». Совпало слово в слово — ответ приходит сразу, без ИИ и без лимита.",
-].join("\n");
-
-function repliesScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
-  const list = ctx.deps.repo.cannedReplies();
-  const kb = new InlineKeyboard();
-  const lines = ["<b>💬 База ответов для групп</b>", ""];
-  if (!list.length) lines.push("Пока пусто.");
-  for (const r of list) {
-    lines.push(`#${r.id} «${esc(r.trigger.slice(0, 60))}» → «${esc(r.answer.slice(0, 120))}»`);
-    kb.text(`🗑 #${r.id} ${r.trigger.slice(0, 24)}`, `crd:${r.id}`).row();
-  }
-  lines.push("", REPLIES_HELP);
-  return { text: clampHtml(lines.join("\n")), kb };
-}
-
-adminOnly.command("replies", async (ctx) => {
-  const { text, kb } = repliesScreen(ctx);
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
-});
-
-adminOnly.command("reply_add", async (ctx) => {
-  const raw = ctx.match ?? "";
-  const cut = raw.indexOf("=>");
-  const trigger = cut >= 0 ? raw.slice(0, cut).trim() : "";
-  const answer = cut >= 0 ? raw.slice(cut + 2).trim() : "";
-  if (!trigger || !answer) return void (await ctx.reply(REPLIES_HELP, { parse_mode: "HTML" }));
-  if (trigger.length > 200 || answer.length > 1000) return void (await ctx.reply("Слишком длинно: триггер до 200 символов, ответ до 1000."));
-  const id = ctx.deps.repo.addCannedReply(trigger, answer);
-  await ctx.reply(`Добавил #${id}: «${esc(trigger)}» → «${esc(answer)}». Все ответы: /replies`, { parse_mode: "HTML" });
-});
-
-adminOnly.command("reply_del", async (ctx) => {
-  const id = Number((ctx.match ?? "").trim().replace(/^#/, ""));
-  if (!id) return void (await ctx.reply("Укажи номер: /reply_del 3"));
-  await ctx.reply(ctx.deps.repo.deleteCannedReply(id) ? `Ответ #${id} удалён.` : `Ответа #${id} нет.`);
-});
-
-adminOnly.callbackQuery(/^crd:(\d+)$/, async (ctx) => {
-  const id = Number(ctx.match[1]);
-  ctx.deps.repo.deleteCannedReply(id);
-  await ctx.answerCallbackQuery({ text: `Ответ #${id} удалён` });
-  const { text, kb } = repliesScreen(ctx);
-  await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => undefined);
-});
-
-function chatsScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
-  const repo = ctx.deps.repo;
-  const day = todayMsk();
-  const limit = groupDailyLimit(repo);
-  const kb = new InlineKeyboard();
-  const lines = ["<b>👥 Групповые чаты</b>", `Лимит ответов ИИ на чат в день: <b>${limit}</b> (поменять: <code>/chatlimit 100</code>). Ответы из базы не считаются.`, ""];
-  const chats = repo.groupChats();
-  if (!chats.length) lines.push("Пока ни одного. Добавь бота в чат — если это сделаешь ты, он включится сам; иначе придёт вопрос сюда. Или напиши в чате /chaton.");
-  for (const c of chats) {
-    lines.push(`${c.enabled ? "✅" : "⏸"} ${esc(c.title ?? String(c.chatId))} — сегодня ${repo.aiUsage(c.chatId, day)} из ${limit}`);
-    kb.text(`${c.enabled ? "⏸ Выключить" : "▶️ Включить"} ${(c.title ?? String(c.chatId)).slice(0, 22)}`, `gch:${c.enabled ? "off" : "on"}:${c.chatId}`).row();
-  }
-  return { text: lines.join("\n"), kb };
-}
-
-adminOnly.command("chats", async (ctx) => {
-  const { text, kb } = chatsScreen(ctx);
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
-});
-
-adminOnly.command("chatlimit", async (ctx) => {
-  const n = Number((ctx.match ?? "").trim());
-  if (!Number.isInteger(n) || n < 0 || n > 5000) return void (await ctx.reply(`Сейчас: ${groupDailyLimit(ctx.deps.repo)} ответов ИИ на чат в день. Поменять: /chatlimit 100 (0 — только база ответов, без ИИ).`));
-  ctx.deps.repo.setMeta("group:dailyLimit", String(n));
-  await ctx.reply(n ? `Готово: до ${n} ответов ИИ на чат в день. Общий дневной бюджет (/ailimit) действует поверх.` : "Готово: в группах бот отвечает только по базе ответов, ИИ выключен.");
-});
-
-adminOnly.callbackQuery(/^gch:(on|off):(-?\d+)$/, async (ctx) => {
-  const on = ctx.match[1] === "on";
-  const chatId = Number(ctx.match[2]);
-  const repo = ctx.deps.repo;
-  if (on) repo.enableGroupChat(chatId, repo.groupChats().find((c) => c.chatId === chatId)?.title ?? null, ctx.from.id);
-  else repo.disableGroupChat(chatId);
-  await ctx.answerCallbackQuery({ text: on ? "Включил: отвечаю в этом чате" : "Выключил: в этом чате молчу" });
-  if (on) await ctx.api.sendMessage(chatId, `Привет! Зовите меня <code>@${ctx.me.username}</code> — отвечу про пары, преподавателей и вообще.`, { parse_mode: "HTML" }).catch(() => undefined);
-  const { text, kb } = chatsScreen(ctx);
-  await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => undefined);
-});
-
 /**
  * Ручная уборка ложных «изменений» — на случай, если после очередной правки
  * правил в разделе снова осело то, чего по нынешним правилам не бывает.
@@ -616,8 +524,7 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go|topic:\w+|c\d)$/, async (ctx)
       ok++;
     } catch (err) {
       failed++;
-      const msg = String(err);
-      if (msg.includes("blocked") || msg.includes("deactivated") || msg.includes("chat not found")) ctx.deps.repo.updateUser(u.id, { blocked: true });
+      if (isUnreachable(err)) ctx.deps.repo.updateUser(u.id, { blocked: true });
       logger.warn({ err, userId: u.id }, "broadcast delivery failed");
     }
     await sleep(40);

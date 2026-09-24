@@ -104,11 +104,12 @@ export class Portal {
   }
 
   private async fetchWebinarPage(date: string, facultyId: number): Promise<string> {
-    const [y, m, d] = date.split("-");
+    // Портал ждёт дату как ГГГГ-ММ-ДД: это значения в его списке дат
+    // (<select name="seldate">), так же её шлют бот и chuvsu-js.
     const res = await this.request(`${PORTAL_BASE}/webinar`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ seldate: `${d}.${m}.${y}`, selfac: String(facultyId), pertt: "1" }).toString(),
+      body: new URLSearchParams({ seldate: date, selfac: String(facultyId), pertt: "1" }).toString(),
     });
     if (res.status >= 300 && res.status < 400 && res.location) {
       const follow = await this.request(new URL(res.location, PORTAL_BASE).toString(), { method: "GET" });

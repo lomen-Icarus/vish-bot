@@ -28,6 +28,30 @@ interface NewsSourceRow {
   last_scanned_at: string | null;
   last_error: string | null;
 }
+/** Момент «ms назад» в том же ISO-формате, в котором в базе лежат все created_at. */
+function isoAgo(ms: number): string {
+  return new Date(Date.now() - ms).toISOString();
+}
+
+/** Групповой чат, куда добавлен бот, и можно ли ему там болтать. */
+export interface ChatGroup {
+  chatId: number;
+  title: string | null;
+  /** Админ бота разрешил отвечать в этом чате. */
+  enabled: boolean;
+  /** Бот сейчас в чате (его не удалили). */
+  present: boolean;
+}
+interface ChatGroupRow {
+  chat_id: number;
+  title: string | null;
+  enabled: number;
+  present: number;
+}
+function rowToChatGroup(r: ChatGroupRow): ChatGroup {
+  return { chatId: r.chat_id, title: r.title, enabled: r.enabled === 1, present: r.present === 1 };
+}
+
 function rowToSource(r: NewsSourceRow): NewsSource {
   return { id: r.id, kind: r.kind as NewsSource["kind"], ref: r.ref, title: r.title, enabled: r.enabled === 1, lastScannedAt: r.last_scanned_at, lastError: r.last_error };
 }
@@ -75,6 +99,12 @@ export interface User {
   anon: boolean;
   /** Показывать ли преподавателя в расписании и выделять ли его. */
   teacherView: TeacherView;
+  /** Режим преподавателя: «своя группа» — это он сам (см. /prepod). */
+  teacherMode: boolean;
+  /** Ключ человека в режиме преподавателя: t<id> или w<hash>; null — в справочнике не нашёлся. */
+  teacherRef: string | null;
+  /** ФИО из реестра преподавателей. */
+  teacherName: string | null;
   notifyNotices: boolean;
   remindFirstMin: number | null;
   remindEachMin: number | null;
@@ -109,6 +139,9 @@ interface UserRow {
   want_slides: number | null;
   anon: number | null;
   teacher_view: string | null;
+  teacher_mode: number | null;
+  teacher_ref: string | null;
+  teacher_name: string | null;
   notify_notices: number;
   remind_first_min: number | null;
   remind_each_min: number | null;
@@ -145,6 +178,9 @@ function rowToUser(r: UserRow): User {
     wantSlides: r.want_slides == null ? true : r.want_slides === 1,
     anon: r.anon === 1,
     teacherView: (r.teacher_view as TeacherView) ?? "bold",
+    teacherMode: r.teacher_mode === 1,
+    teacherRef: r.teacher_ref ?? null,
+    teacherName: r.teacher_name ?? null,
     notifyNotices: r.notify_notices === 1,
     remindFirstMin: r.remind_first_min,
     remindEachMin: r.remind_each_min,
@@ -340,6 +376,51 @@ export class Repo {
     this.updateUser(id, { calToken: token });
     return token;
   }
+  /**
+   * Пользователь для апдейтов не из лички (inline-запрос, сообщение в группе):
+   * запись из базы, если человек уже писал боту, иначе временная — в базу она
+   * не попадает. Иначе каждый, кто хоть раз набрал «@бот» в чате, числился бы
+   * пользователем: попадал бы в рассылки, которые ему нельзя доставить, и
+   * раздувал статистику. И пометку «заблокировал бота» такой апдейт снимать
+   * не должен: писать человеку в личку по-прежнему нельзя.
+   */
+  peekUser(id: number, username: string | null, firstName: string | null): User {
+    const existing = this.getUser(id);
+    if (existing) return existing;
+    const ts = nowIso();
+    return rowToUser({
+      id,
+      username,
+      first_name: firstName,
+      group_key: null,
+      subgroup: null,
+      format: "both",
+      notify_changes: 0,
+      notify_session: 0,
+      want_slides: 1,
+      anon: 0,
+      teacher_view: "bold",
+      teacher_mode: 0,
+      teacher_ref: null,
+      teacher_name: null,
+      notify_notices: 0,
+      remind_first_min: null,
+      remind_each_min: null,
+      remind_distance_min: null,
+      evening_at: null,
+      quiet_from: null,
+      quiet_to: null,
+      topics: "[]",
+      stream_intake: null,
+      cal_token: null,
+      cal_alarm_min: null,
+      poster_theme: null,
+      blocked: 0,
+      created_at: ts,
+      last_seen_at: ts,
+    });
+  }
+
   touchUser(id: number, username: string | null, firstName: string | null): User {
     const ts = nowIso();
     this.db
@@ -373,6 +454,9 @@ export class Repo {
     if (patch.wantSlides !== undefined) map.want_slides = patch.wantSlides ? 1 : 0;
     if (patch.anon !== undefined) map.anon = patch.anon ? 1 : 0;
     if (patch.teacherView !== undefined) map.teacher_view = patch.teacherView;
+    if (patch.teacherMode !== undefined) map.teacher_mode = patch.teacherMode ? 1 : 0;
+    if (patch.teacherRef !== undefined) map.teacher_ref = patch.teacherRef;
+    if (patch.teacherName !== undefined) map.teacher_name = patch.teacherName;
     if (patch.streamIntake !== undefined) map.stream_intake = patch.streamIntake;
     if (patch.calToken !== undefined) map.cal_token = patch.calToken;
     if (patch.calAlarmMin !== undefined) map.cal_alarm_min = patch.calAlarmMin;
@@ -720,6 +804,8 @@ export class Repo {
         // ai_usage stays: it is spend accounting and also backs the global daily
         // budget, so a wipe must not hand anyone a fresh quota.
         "DELETE FROM ai_log WHERE user_id = ?",
+        // chat_usage остаётся по той же причине, что ai_usage; реплики — нет.
+        "DELETE FROM chat_log WHERE user_id = ?",
         "DELETE FROM news_complaints WHERE user_id = ?",
         "DELETE FROM users WHERE id = ?",
       ]) {
@@ -868,54 +954,18 @@ export class Repo {
     return new Set(rows.map((r) => r.username.toLowerCase()));
   }
 
-  // ---- групповые чаты (белый список) ----
-
-  enableGroupChat(chatId: number, title: string | null, addedBy: number | null): void {
-    this.db
-      .prepare(
-        `INSERT INTO group_chats (chat_id, title, enabled, added_by, created_at) VALUES (?, ?, 1, ?, ?)
-         ON CONFLICT(chat_id) DO UPDATE SET enabled = 1, title = COALESCE(excluded.title, group_chats.title)`,
-      )
-      .run(chatId, title, addedBy, nowIso());
+  /** Сколько человек сейчас в режиме преподавателя (для /health). */
+  teacherModeCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE teacher_mode = 1 AND blocked = 0").get() as { n: number }).n;
   }
 
-  /** Запомнить чат (выключенным), чтобы в /chats было видно его название. */
-  rememberGroupChat(chatId: number, title: string | null): void {
-    this.db
-      .prepare(
-        `INSERT INTO group_chats (chat_id, title, enabled, created_at) VALUES (?, ?, 0, ?)
-         ON CONFLICT(chat_id) DO UPDATE SET title = COALESCE(excluded.title, group_chats.title)`,
-      )
-      .run(chatId, title, nowIso());
-  }
-
-  disableGroupChat(chatId: number): boolean {
-    return this.db.prepare("UPDATE group_chats SET enabled = 0 WHERE chat_id = ?").run(chatId).changes > 0;
-  }
-
-  groupChatEnabled(chatId: number): boolean {
-    const r = this.db.prepare("SELECT enabled FROM group_chats WHERE chat_id = ?").get(chatId) as { enabled: number } | undefined;
-    return r?.enabled === 1;
-  }
-
-  groupChats(): Array<{ chatId: number; title: string | null; enabled: boolean }> {
-    const rows = this.db.prepare("SELECT chat_id, title, enabled FROM group_chats ORDER BY created_at").all() as Array<{ chat_id: number; title: string | null; enabled: number }>;
-    return rows.map((r) => ({ chatId: r.chat_id, title: r.title, enabled: r.enabled === 1 }));
-  }
-
-  // ---- база ответов ----
-
-  addCannedReply(trigger: string, answer: string): number {
-    const r = this.db.prepare("INSERT INTO canned_replies (trigger, answer, created_at) VALUES (?, ?, ?)").run(trigger.trim(), answer.trim(), nowIso());
-    return Number(r.lastInsertRowid);
-  }
-
-  deleteCannedReply(id: number): boolean {
-    return this.db.prepare("DELETE FROM canned_replies WHERE id = ?").run(id).changes > 0;
-  }
-
-  cannedReplies(): Array<{ id: number; trigger: string; answer: string }> {
-    return this.db.prepare("SELECT id, trigger, answer FROM canned_replies ORDER BY id").all() as Array<{ id: number; trigger: string; answer: string }>;
+  /**
+   * База ответов первой версии бота в группах (таблица canned_replies). Теперь
+   * ответы живут в файле сценария; эти строки один раз переносятся туда при
+   * запуске (src/chat/importCanned.ts).
+   */
+  legacyCannedReplies(): Array<{ trigger: string; answer: string }> {
+    return this.db.prepare("SELECT trigger, answer FROM canned_replies ORDER BY id").all() as Array<{ trigger: string; answer: string }>;
   }
 
   /** Сколько человек включили «усиленную анонимность» (для /health). */
@@ -931,8 +981,8 @@ export class Repo {
   /** Кого ещё не проверяли (или проверяли давно) — для фонового обхода справочника. */
   teacherMapStale(limit: number, olderThanDays = 30): number[] {
     const rows = this.db
-      .prepare("SELECT teacher_id FROM teacher_map WHERE teacher_id IS NOT NULL AND (checked_at IS NULL OR checked_at < datetime('now', ?)) ORDER BY checked_at IS NOT NULL, checked_at LIMIT ?")
-      .all(`-${olderThanDays} days`, limit) as Array<{ teacher_id: number }>;
+      .prepare("SELECT teacher_id FROM teacher_map WHERE teacher_id IS NOT NULL AND (checked_at IS NULL OR checked_at < ?) ORDER BY checked_at IS NOT NULL, checked_at LIMIT ?")
+      .all(isoAgo(olderThanDays * 86_400_000), limit) as Array<{ teacher_id: number }>;
     return rows.map((r) => r.teacher_id);
   }
 
@@ -983,8 +1033,11 @@ export class Repo {
     // быстрее, а в журнале была бы одна и та же строка дважды.
     const text = query.slice(0, 200);
     const recent = this.db
-      .prepare("SELECT id FROM poisk_log WHERE user_id = ? AND day = ? AND created_at > datetime('now', '-2 minutes') AND replace(replace(query, 'ии: ', ''), 'поиск: ', '') = ? ORDER BY id DESC LIMIT 1")
-      .get(userId, day, text.replace(/^(ии|поиск): /, "")) as { id: number } | undefined;
+      // created_at хранится как ISO («…T…Z»), а datetime('now') отдаёт «… …» с
+      // пробелом: такое сравнение строк верно лишь до даты, и «две минуты»
+      // превращались в «весь день». Границу считаем здесь, в том же формате.
+      .prepare("SELECT id FROM poisk_log WHERE user_id = ? AND day = ? AND created_at > ? AND replace(replace(query, 'ии: ', ''), 'поиск: ', '') = ? ORDER BY id DESC LIMIT 1")
+      .get(userId, day, isoAgo(2 * 60_000), text.replace(/^(ии|поиск): /, "")) as { id: number } | undefined;
     if (recent) {
       if (student) this.db.prepare("UPDATE poisk_log SET student = COALESCE(student, ?) WHERE id = ?").run(student, recent.id);
       return;
@@ -1007,13 +1060,14 @@ export class Repo {
   }
   /** Старые пачки слайдов: записи и пути к файлам, чтобы их можно было удалить с диска. */
   pruneSlideDecks(olderThanDays = 120): string[] {
-    const rows = this.db.prepare("SELECT file FROM slide_decks WHERE created_at < datetime('now', ?)").all(`-${olderThanDays} days`) as Array<{ file: string }>;
-    this.db.prepare("DELETE FROM slide_decks WHERE created_at < datetime('now', ?)").run(`-${olderThanDays} days`);
+    const cutoff = isoAgo(olderThanDays * 86_400_000);
+    const rows = this.db.prepare("SELECT file FROM slide_decks WHERE created_at < ?").all(cutoff) as Array<{ file: string }>;
+    this.db.prepare("DELETE FROM slide_decks WHERE created_at < ?").run(cutoff);
     return rows.map((r) => r.file);
   }
 
   prunePoiskLog(olderThanDays = 180): void {
-    this.db.prepare("DELETE FROM poisk_log WHERE created_at < datetime('now', ?)").run(`-${olderThanDays} days`);
+    this.db.prepare("DELETE FROM poisk_log WHERE created_at < ?").run(isoAgo(olderThanDays * 86_400_000));
   }
 
   aiUsage(userId: number, day: string): number {
@@ -1033,6 +1087,76 @@ export class Repo {
          ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1, input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens`,
       )
       .run(userId, day, inputTokens, outputTokens);
+  }
+
+  // ---------- болталка в группах ----------
+  chatGroup(chatId: number): ChatGroup | null {
+    const r = this.db.prepare("SELECT * FROM chat_groups WHERE chat_id = ?").get(chatId) as ChatGroupRow | undefined;
+    return r ? rowToChatGroup(r) : null;
+  }
+
+  chatGroups(): ChatGroup[] {
+    return (this.db.prepare("SELECT * FROM chat_groups ORDER BY present DESC, enabled DESC, updated_at DESC").all() as ChatGroupRow[]).map(rowToChatGroup);
+  }
+
+  /** Запомнить чат (название, есть ли там бот); enabled — только если передан явно. */
+  upsertChatGroup(chatId: number, patch: { title?: string | null; present?: boolean; enabled?: boolean }): ChatGroup {
+    const cur = this.chatGroup(chatId);
+    const title = patch.title !== undefined ? patch.title : (cur?.title ?? null);
+    const present = patch.present ?? cur?.present ?? true;
+    const enabled = patch.enabled ?? cur?.enabled ?? false;
+    this.db
+      .prepare(
+        `INSERT INTO chat_groups (chat_id, title, enabled, present, updated_at) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, enabled = excluded.enabled, present = excluded.present, updated_at = excluded.updated_at`,
+      )
+      .run(chatId, title, enabled ? 1 : 0, present ? 1 : 0, nowIso());
+    return { chatId, title, enabled, present };
+  }
+
+  chatUsage(scope: { userId?: number; chatId?: number }, day: string): number {
+    const where = ["day = ?"];
+    const args: unknown[] = [day];
+    if (scope.userId != null) {
+      where.push("user_id = ?");
+      args.push(scope.userId);
+    }
+    if (scope.chatId != null) {
+      where.push("chat_id = ?");
+      args.push(scope.chatId);
+    }
+    const r = this.db.prepare(`SELECT COALESCE(SUM(count), 0) AS c FROM chat_usage WHERE ${where.join(" AND ")}`).get(...args) as { c: number };
+    return r.c;
+  }
+
+  chatTokens(day: string): { input: number; output: number } {
+    const r = this.db.prepare("SELECT COALESCE(SUM(input_tokens), 0) AS i, COALESCE(SUM(output_tokens), 0) AS o FROM chat_usage WHERE day = ?").get(day) as { i: number; o: number };
+    return { input: r.i, output: r.o };
+  }
+
+  bumpChatUsage(chatId: number, userId: number, day: string, inputTokens: number, outputTokens: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO chat_usage (chat_id, user_id, day, count, input_tokens, output_tokens) VALUES (?, ?, ?, 1, ?, ?)
+         ON CONFLICT(chat_id, user_id, day) DO UPDATE SET count = count + 1, input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens`,
+      )
+      .run(chatId, userId, day, inputTokens, outputTokens);
+  }
+
+  logChat(chatId: number, userId: number, question: string, answer: string): void {
+    this.db.prepare("INSERT INTO chat_log (chat_id, user_id, question, answer, created_at) VALUES (?, ?, ?, ?, ?)").run(chatId, userId, question.slice(0, 2000), answer.slice(0, 4000), nowIso());
+  }
+
+  /** Последние обмены репликами с этим человеком в этом чате, старые первыми. */
+  recentChat(chatId: number, userId: number, withinMs: number, limit: number): Array<{ question: string; answer: string; createdAt: string }> {
+    const rows = this.db
+      .prepare("SELECT question, answer, created_at FROM chat_log WHERE chat_id = ? AND user_id = ? AND created_at > ? ORDER BY id DESC LIMIT ?")
+      .all(chatId, userId, isoAgo(withinMs), limit) as Array<{ question: string; answer: string; created_at: string }>;
+    return rows.reverse().map((r) => ({ question: r.question, answer: r.answer, createdAt: r.created_at }));
+  }
+
+  pruneChatLog(olderThanDays = 3): void {
+    this.db.prepare("DELETE FROM chat_log WHERE created_at < ?").run(isoAgo(olderThanDays * 86_400_000));
   }
 
   // ---------- AI log ----------
@@ -1080,6 +1204,23 @@ export class Repo {
       .prepare("INSERT INTO news_items (source_id, external_id, url, published_at, text, photo_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(item.sourceId, item.externalId, item.url, item.publishedAt, item.text, item.photoUrl, nowIso());
     return r.lastInsertRowid;
+  }
+
+  /**
+   * Посты, которые ещё не разложены по темам: классификатор упал или вернул
+   * не всё. Без повторной попытки они терялись бы навсегда — при следующем
+   * скане insertNewsItem считает их уже виденными.
+   */
+  unclassifiedNewsItems(sinceIso: string, limit = 120): NewsItem[] {
+    const rows = this.db
+      .prepare("SELECT i.* FROM news_items i JOIN news_sources s ON s.id = i.source_id WHERE i.topic IS NULL AND i.created_at >= ? ORDER BY i.id LIMIT ?")
+      .all(sinceIso, limit) as NewsItemRow[];
+    return rows.map(rowToItem);
+  }
+
+  newsSource(id: number): NewsSource | null {
+    const r = this.db.prepare("SELECT * FROM news_sources WHERE id = ?").get(id) as NewsSourceRow | undefined;
+    return r ? rowToSource(r) : null;
   }
 
   setNewsTopic(id: number, topic: string | null, title: string | null): void {

@@ -305,4 +305,52 @@ export const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   `,
+  `
+  -- Режим преподавателя: вместо группы у человека — он сам. teacher_ref —
+  -- ключ человека (t<id> из справочника портала или w<hash> со страницы
+  -- вебинаров), teacher_name — ФИО из реестра преподавателей.
+  ALTER TABLE users ADD COLUMN teacher_mode INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN teacher_ref TEXT;
+  ALTER TABLE users ADD COLUMN teacher_name TEXT;
+  `,
+  `
+  -- Болталка в групповых чатах. chat_groups — чаты, где бот есть, и можно ли
+  -- ему там отвечать (включает админ бота). chat_usage — расход по дням: и
+  -- лимиты, и учёт токенов; как ai_usage, переживает /soon. chat_log — ответы
+  -- бота людям в чатах: из них собирается контекст разговора; живёт 3 дня.
+  CREATE TABLE chat_groups (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    present INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE chat_usage (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    day TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id, day)
+  );
+  CREATE INDEX chat_usage_day ON chat_usage (day);
+  CREATE TABLE chat_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX chat_log_chat_user ON chat_log (chat_id, user_id, created_at);
+  -- Эта миграция идёт после group_chats/canned_replies из первой версии
+  -- бота в группах (она уже стоит на сервере). Включённые там чаты и лимит
+  -- на чат переезжают сюда; база ответов переезжает в файл сценария при
+  -- запуске (src/chat/importCanned.ts). Старые таблицы оставлены как есть.
+  INSERT OR IGNORE INTO chat_groups (chat_id, title, enabled, present, updated_at)
+    SELECT chat_id, title, enabled, 1, created_at FROM group_chats;
+  INSERT OR IGNORE INTO meta (key, value)
+    SELECT 'chat:limit:chat', value FROM meta WHERE key = 'group:dailyLimit' AND CAST(value AS INTEGER) > 0;
+  `,
 ];

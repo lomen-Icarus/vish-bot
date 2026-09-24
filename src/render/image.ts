@@ -161,17 +161,21 @@ function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number
       "div",
       { display: "flex", flexDirection: "column", flex: 1 },
       text(o.subject, { fontSize: 34, fontWeight: 700, color: THEME.fg, lineHeight: 1.2, textDecoration: moved ? "line-through" : "none" }),
-      text(meta.join("  ·  "), { fontSize: 24, fontWeight: 500, color: THEME.muted, marginTop: 10 }),
-      // Преподаватель — отдельной строкой: его ищут глазами, и выделение
-      // (или его отсутствие) человек выбирает в настройках.
-      teacher
-        ? text(teacher, {
-            fontSize: 24,
-            fontWeight: opts.teacherView === "plain" ? 500 : 700,
-            color: opts.teacherView === "plain" ? THEME.muted : THEME.fg,
-            marginTop: 8,
-          })
-        : null,
+      // Преподаватель — в той же строке, что тип и аудитория: с короткими
+      // «ЛК/ПР/ЛБ» он туда помещается. Не поместился — уходит на следующую
+      // строку целиком (подпись неразрывная), а не рвётся посередине.
+      h(
+        "div",
+        { display: "flex", flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", marginTop: 10 },
+        text(meta.join("  ·  "), { fontSize: 24, fontWeight: 500, color: THEME.muted, marginRight: 12 }),
+        teacher
+          ? text(`·\u00a0${teacher}`, {
+              fontSize: 24,
+              fontWeight: opts.teacherView === "plain" ? 500 : 700,
+              color: opts.teacherView === "plain" ? THEME.muted : THEME.fg,
+            })
+          : null,
+      ),
       badges.length
         ? h(
             "div",

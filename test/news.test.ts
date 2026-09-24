@@ -74,10 +74,10 @@ describe("ics export", () => {
     expect(ics).toContain("BEGIN:VCALENDAR");
     expect(ics).toContain("DTSTART:20260914T084000Z");
     expect(ics).toContain("DTEND:20260914T100000Z");
-    expect(ics).toContain("SUMMARY:Машиностроительное оборудование (лекция)");
+    expect(ics).toContain("SUMMARY:Машиностроительное оборудование (ЛК)");
     expect(ics).toContain("LOCATION:ауд. Т-310\\, ЧувГУ");
     expect(ics).toContain("TRIGGER:-PT30M");
-    expect(ics).toContain("SUMMARY:Отменено: Отменённая (лекция)");
+    expect(ics).toContain("SUMMARY:Отменено: Отменённая (ЛК)");
     expect(ics).toContain("STATUS:CANCELLED");
     expect(ics.split("BEGIN:VEVENT").length - 1).toBe(2);
     expect(ics.split("BEGIN:VALARM").length - 1).toBe(1); // no alarm on the cancelled one

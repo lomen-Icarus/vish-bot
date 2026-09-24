@@ -12,18 +12,23 @@ import type { InlineQueryResultArticle } from "grammy/types";
 import type { Deps } from "./context.js";
 import type { User } from "../db/repo.js";
 import { dayView, weekView } from "./views.js";
-import { resolveStudentGroup, whereNowText } from "../students/locate.js";
-import { findGroup, personGroup, type LogicalGroup } from "../schedule/groups.js";
-import { clampHtml, esc, filterSubgroup, formatDay, formatWebinarTeacher, formatWeek } from "../schedule/format.js";
+import { findGroup, type LogicalGroup } from "../schedule/groups.js";
+import { clampHtml, esc, filterSubgroup } from "../schedule/format.js";
+import { loadProfile, personDayView, personWeekView, type PersonView } from "../people/profile.js";
+import { hitShort, searchPeople, type PeopleScope, type PersonHit } from "../people/search.js";
+import { refKey } from "../people/ref.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, mergeStream } from "../schedule/stream.js";
 import type { Occurrence } from "../schedule/model.js";
 import { addDays, fmtDDMM, mondayOf, parseDayWord, parseRuDate, todayMsk, weekdayShort, type LocalDate } from "../time.js";
 
 export type InlineMode = "auto" | "day" | "week" | "stream" | "common";
 
-/** «студент Беляев», «завтра преподаватель Петров» — запрос про человека. */
+/**
+ * Запрос про человека: «студент Беляев», «завтра преподаватель Петров» или
+ * просто «Беляев завтра» (any — кто бы он ни был: преподаватель или студент).
+ */
 export interface InlinePerson {
-  kind: "student" | "teacher";
+  kind: "student" | "teacher" | "any";
   /** Фамилия (и имя), которые остались после служебных слов и даты. */
   query: string;
 }
@@ -50,7 +55,7 @@ const COMMON_WORDS = /^(общ[а-яё]+|вместе|common)$/iu;
 const DAY_WORDS = /^(пара|пары|день|дня)$/iu;
 
 /** Подсказка в inline-списке: что вообще можно написать. */
-export const INLINE_HINT = "12-23 завтра · неделя · поток 24 · общие · преподаватель Петров · студент Беляев · 25.09";
+export const INLINE_HINT = "12-23 завтра · неделя · поток 24 · общие · Беляев завтра · 25.09";
 const STUDENT_WORDS = /^(студент[а-яё]*|студ|стд|student)$/iu;
 const TEACHER_WORDS = /^(препод[а-яё]*|препа?|учител[а-яё]*|педагог[а-яё]*|teacher)$/iu;
 
@@ -115,6 +120,11 @@ export function parseInlineQuery(deps: Deps, query: string, user: User | null): 
     return { mode, date, groups: [], intake: null, unknownGroup: false, empty: words.length === 0, person: { kind: person, query: groupQuery } };
   }
   const groups = groupQuery ? findGroup(deps.service.groups(), groupQuery) : [];
+  // «Беляев завтра»: цифр нет, группой это не стало, а букв хватает на фамилию —
+  // значит, спрашивают про человека, кто бы он ни был.
+  if (groupQuery && !groups.length && !/\d/.test(groupQuery) && /\p{L}{3,}/u.test(groupQuery)) {
+    return { mode, date, groups: [], intake: null, unknownGroup: false, empty: false, person: { kind: "any", query: groupQuery } };
+  }
   // «поток 24» — это год набора, а не группа. Берём первое двузначное слово,
   // которое действительно есть среди наборов: в «поток 12 26» год — это «26».
   const intakes = deps.service.intakes();
@@ -272,11 +282,100 @@ export function buildInlineResults(deps: Deps, req: InlineRequest, user: User | 
 }
 
 
-// ---- inline про людей: «студент Беляев», «завтра преподаватель Петров» ----
+// ---- inline про людей: «Беляев завтра», «студент Беляев», «неделя препод Петров» ----
 
-/** Короткий устойчивый id по имени: id inline-результата ограничен 64 байтами. */
-function nameId(name: string): string {
-  return createHash("sha1").update(name.toLowerCase()).digest("base64url").slice(0, 12);
+/** Короче этого запрос про студента людей не показывает. */
+export const MIN_STUDENT_QUERY = 4;
+
+const person3 = (q: string): string => createHash("sha1").update(q.toLowerCase()).digest("base64url").slice(0, 8);
+
+/**
+ * Результаты по человеку — та же карточка, что в личке (кто это, где сейчас по
+ * расписанию, день или неделя), и тот же поиск с его правилами: опечатка —
+ * «возможно, это», студенты — только с POISK, от 4 букв, в журнале и в лимите.
+ * Портал inline не трогает: запрос прилетает на каждую букву, поэтому
+ * преподаватели ищутся по своей карте, а расписание тянется только у первого.
+ */
+export async function buildPeopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean } = {}): Promise<InlineQueryResultArticle[]> {
+  const person = req.person;
+  if (!person) return [];
+  const q = person.query.trim();
+  const today = todayMsk();
+  if (q.length < 3) {
+    const hint = {
+      student: ["🕵️ Напиши фамилию студента", "Например: <code>студент Беляев</code>. Бот найдёт группу человека и покажет, где он должен быть по расписанию."],
+      teacher: ["👨‍🏫 Напиши фамилию преподавателя", "Например: <code>преподаватель Петров</code> или <code>завтра препод Петров</code>, <code>неделя препод Петров</code>."],
+      any: ["👤 Напиши фамилию", "Например: <code>Беляев завтра</code> — покажу расписание человека, будь то преподаватель или студент."],
+    }[person.kind];
+    return [article(`p:hint:${person.kind}`, hint[0]!, hint[1]!)];
+  }
+  const scope: PeopleScope = person.kind === "any" ? "all" : person.kind;
+  if (scope === "student" && !(deps.config.POISK && deps.students?.ready())) {
+    return [article("p:off", "🕵️ Поиск людей выключен", "В этом боте поиск студентов не включён. Расписание групп работает: попробуй <code>12-23 завтра</code>.")];
+  }
+  const res = await searchPeople(deps, q, { scope, viewerId: user?.id ?? 0, isAdmin: opts.isAdmin === true, source: "inline", localOnly: true, minStudentQuery: MIN_STUDENT_QUERY, limit: 5 });
+  if (scope === "student" && res.students === "limit") return [article("p:limit", "🕵️ Лимит на сегодня исчерпан", `Поиск людей ограничен: ${deps.config.POISK_DAILY_LIMIT} в день. Завтра снова можно.`)];
+  // По трём буквам людей не показываем вовсе: такой запрос не записывался бы
+  // в журнал и не тратил лимит, и реестр можно было бы перебрать по слогам.
+  if (scope === "student" && res.students === "short") return [article(`p:short:${person3(q)}`, "🕵️ Допиши фамилию", `Напиши хотя бы ${MIN_STUDENT_QUERY} буквы фамилии — тогда покажу, кто это и где он по расписанию.`)];
+  if (!res.hits.length) {
+    const notes: string[] = [];
+    if (!deps.teachers && scope !== "student") notes.push("Преподавателей без учётки портала бот знает только по онлайн-парам ВИШ.");
+    if (scope === "all" && res.students === "short") notes.push(`Студентов ищу от ${MIN_STUDENT_QUERY} букв фамилии.`);
+    if (scope === "all" && res.students === "limit") notes.push("Студентов сегодня больше не ищу: дневной лимит исчерпан.");
+    if (deps.teachers && scope !== "student") notes.push("Преподавателя можно поискать и в самом боте: там он спросит портал.");
+    return [article(`p:nf:${person3(q)}`, "🤷 Никого не нашёл", `По «${esc(q)}» никого нет.${notes.length ? ` ${notes.join(" ")}` : ""}`)];
+  }
+  return peopleArticles(deps, req, user, res.hits, q, today);
+}
+
+/** Одна карточка на найденного; у преподавателей портала — только у первого. */
+async function peopleArticles(deps: Deps, req: InlineRequest, user: User | null, hits: PersonHit[], q: string, today: LocalDate): Promise<InlineQueryResultArticle[]> {
+  const out: InlineQueryResultArticle[] = [];
+  const viewer = { teacherView: user?.teacherView ?? ("bold" as const) };
+  const others: PersonHit[] = [];
+  let portalShown = false;
+  for (const hit of hits) {
+    // Портальное расписание тянем у одного человека: каждая буква запроса не
+    // должна превращаться в поход на портал. Остальные — строкой «похожи ещё».
+    if (hit.ref.kind === "teacher" && portalShown) {
+      others.push(hit);
+      continue;
+    }
+    const profile = await loadProfile(deps, hit.ref, user?.id ?? null);
+    if (!profile) continue;
+    if (hit.ref.kind === "teacher") portalShown = true;
+    // Совпало только с опечаткой — так и говорим: «Салодилин» не должен молча
+    // открыть расписание Солодилина, как будто это точный ответ.
+    const guess = hit.fuzzy ? "Возможно, это " : "";
+    const icon = profile.role === "teacher" ? "👨‍🏫" : "🎓";
+    const who = profile.role === "teacher" ? `${profile.name}${profile.vish ? " (ВИШ)" : ""}` : `${profile.name} · ${profile.group?.title ?? profile.student?.groupTitle ?? ""}`;
+    const key = refKey(profile.ref);
+    const loading = hit.ref.kind === "teacher" ? 6000 : 0;
+    if (req.mode === "week") {
+      const view = loading ? await withTimeout(personWeekView(deps, profile, req.date, viewer), loading) : await personWeekView(deps, profile, req.date, viewer);
+      if (!view) out.push(article(`pl:${key}`, `${icon} ${who} · расписание грузится`, `Портал отвечает медленно. Набери запрос ещё раз через пару секунд — расписание ${esc(profile.name)} уже будет готово.`));
+      else out.push(article(`pw:${key}:${view.monday}`, `${icon} ${guess}${who} · неделя ${fmtDDMM(view.monday)}`, inlineText(view)));
+      continue;
+    }
+    const view = loading ? await withTimeout(personDayView(deps, profile, req.date, viewer), loading) : await personDayView(deps, profile, req.date, viewer);
+    if (!view) {
+      out.push(article(`pl:${key}`, `${icon} ${who} · расписание грузится`, `Портал отвечает медленно. Набери запрос ещё раз через пару секунд — расписание ${esc(profile.name)} уже будет готово.`));
+      continue;
+    }
+    const when = req.date === today ? "сегодня" : `${weekdayShort(req.date)} ${fmtDDMM(req.date)}`;
+    out.push(article(`pd:${key}:${req.date}`, `${icon} ${guess}${who} · ${when}`.slice(0, 120), inlineText(view)));
+  }
+  if (others.length) {
+    const names = others.map(hitShort);
+    out.push(article(`p:more:${person3(q)}`, `👥 Похожие: ${names.join(", ")}`.slice(0, 60), `По «${esc(q)}» похожи ещё: ${esc(names.join("; "))}. Напиши фамилию точнее — покажу расписание нужного.`));
+  }
+  return out;
+}
+
+/** В inline кнопок нет: выбор группы для студента — только в личке. */
+function inlineText(view: PersonView): string {
+  return view.needsGroup ? view.text.replace(/ — выбери:$/, ". Выбрать группу можно в личке с ботом.") : view.text;
 }
 
 /** Ждём портал ограниченное время: inline-ответ Telegram ждать долго не станет. */
@@ -292,115 +391,4 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
-
-/**
- * Результаты по человеку. Отдельно от расписания групп: тут нужен и портал
- * (расписание преподавателя), и реестр студентов с его лимитом на день.
- */
-export async function buildPeopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean } = {}): Promise<InlineQueryResultArticle[]> {
-  const person = req.person;
-  if (!person) return [];
-  const q = person.query.trim();
-  const today = todayMsk();
-  if (q.length < 3) {
-    return [
-      article(
-        `p:hint:${person.kind}`,
-        person.kind === "student" ? "🕵️ Напиши фамилию студента" : "👨‍🏫 Напиши фамилию преподавателя",
-        person.kind === "student"
-          ? "Например: <code>студент Беляев</code>. Бот найдёт группу человека и покажет, где он должен быть по расписанию."
-          : "Например: <code>преподаватель Петров</code> или <code>завтра препод Петров</code>, <code>неделя препод Петров</code>.",
-      ),
-    ];
-  }
-  return person.kind === "student" ? studentResults(deps, req, user, q, today, opts.isAdmin === true) : teacherResults(deps, req, q, today);
-}
-
-function studentResults(deps: Deps, req: InlineRequest, user: User | null, q: string, today: LocalDate, isAdmin: boolean): InlineQueryResultArticle[] {
-  const dir = deps.students;
-  if (!deps.config.POISK || !dir?.ready()) {
-    return [article("p:off", "🕵️ Поиск людей выключен", "В этом боте поиск студентов не включён. Расписание групп работает: попробуй <code>12-23 завтра</code>.")];
-  }
-  const limit = deps.config.POISK_DAILY_LIMIT;
-  if (user && limit > 0 && !isAdmin && deps.repo.poiskUsage(user.id, today) >= limit) {
-    return [article("p:limit", "🕵️ Лимит на сегодня исчерпан", `Поиск людей ограничен: ${limit} в день. Завтра снова можно.`)];
-  }
-  const hits = dir.search(q, 5);
-  if (!hits.length) {
-    return [article(`p:nf:${q}`, "🤷 Никого не нашёл", `В реестре ВИШ никого похожего на «${esc(q)}» нет. Первокурсников в реестре нет вовсе.`)];
-  }
-  // В журнал пишем найденного, а не набранный текст: иначе каждая буква
-  // «Б», «Бе», «Бел» съедала бы отдельный поиск из дневного лимита. Префикс
-  // ровно такой же, как у обычного поиска: logPoisk гасит повтор, сравнивая
-  // строки без него, и один и тот же человек не считается дважды.
-  // Совсем короткие обрывки не логируем: там верхний кандидат ещё скачет.
-  if (user && q.length >= 4) deps.repo.logPoisk(user.id, today, `поиск: ${hits[0]!.student.name}`, hits[0]!.student.id);
-  const out: InlineQueryResultArticle[] = [];
-  for (const h of hits) {
-    const st = h.student;
-    const { group } = resolveStudentGroup(deps.service.groups(), st);
-    const head = `🕵️ <b>${esc(st.name)}</b>\nГруппа: <b>${esc(st.groupTitle)}</b>${st.subgroup ? ` · ${st.subgroup} подгруппа` : ""}`;
-    if (!group) {
-      out.push(article(`ps:${st.id}`, `🕵️ ${st.name} · ${st.groupTitle}`, `${head}\n\nРасписания этой группы в боте нет.`));
-      continue;
-    }
-    if (req.mode === "week") {
-      const { text, monday } = weekView(deps, group, req.date, st.subgroup, user?.teacherView ?? "bold");
-      out.push(article(`psw:${st.id}:${monday}`, `🕵️ ${st.name} · неделя ${fmtDDMM(monday)}`, `${head}\n\n${text}`));
-      continue;
-    }
-    const { text, lessons } = dayView(deps, group, req.date, st.subgroup, user?.teacherView ?? "bold");
-    const where = whereNowText(lessons, req.date, today, st.subgroup);
-    out.push(article(`ps:${st.id}:${req.date}`, `🕵️ ${st.name} · ${st.groupTitle}`, `${head}\n\n${where}\n\n${text}`));
-  }
-  return out;
-}
-
-async function teacherResults(deps: Deps, req: InlineRequest, q: string, today: LocalDate): Promise<InlineQueryResultArticle[]> {
-  const out: InlineQueryResultArticle[] = [];
-  // Преподаватели дистанта известны без учётки портала и без единого запроса.
-  for (const hit of deps.webinars?.searchScored(q, 3) ?? []) {
-    const t = hit.teacher;
-    out.push(article(`pwt:${nameId(t.name)}`, `👨‍🏫 ${hit.fuzzy ? "Возможно, это " : ""}${t.name} (ВИШ, дистант)`, formatWebinarTeacher(t, deps.webinars!.upcoming(t, 8), false)));
-  }
-  const teachers = deps.teachers;
-  if (!teachers) {
-    if (!out.length) out.push(article(`pt:nf:${q}`, "🤷 Не нашёл", `Полное расписание преподавателей портал показывает только авторизованным, а у бота нет учётки. Про «${esc(q)}» в онлайн-парах ВИШ ничего нет.`));
-    return out;
-  }
-  const local = teachers.searchLocal(q, 5);
-  if (!local.length) {
-    if (!out.length) out.push(article(`pt:nf:${q}`, "🤷 Не нашёл", `В карте преподавателей «${esc(q)}» нет. Попробуй одну фамилию без имени — или открой бота и поищи там: он спросит портал.`));
-    return out;
-  }
-  // Расписание тянем только у первого — каждая буква запроса не должна
-  // превращаться в поход на портал. Остальные идут строкой «кто ещё похож».
-  const best = local[0]!;
-  // Совпало только с опечаткой — так и говорим. Иначе «Салодилин» молча
-  // откроет расписание Солодилина, как будто это точный ответ.
-  const guess = best.fuzzy ? "Возможно, это " : "";
-  // По трём буквам в портал не ходим: это ещё не фамилия, а середина набора.
-  if (q.length < 4) {
-    out.push(article(`pt:pick:${q}`, `👨‍🏫 ${local.map((x) => x.ref.name.split(" ")[0]).join(", ")}`.slice(0, 60), `Допиши фамилию — покажу расписание. Похожи: ${esc(local.map((x) => `${x.ref.name}${x.vish ? " (ВИШ)" : ""}`).join("; "))}.`));
-    return out;
-  }
-  const monday = mondayOf(req.date);
-  const [from, to] = req.mode === "week" ? [monday, addDays(monday, 6)] : [req.date, req.date];
-  const loaded = await withTimeout(teachers.lessons(best.ref, from, to), 6000);
-  const title = `${loaded?.fullName ?? best.ref.name}${best.vish ? " (ВИШ)" : ""}`;
-  if (!loaded) {
-    out.push(article(`pt:wait:${best.ref.id}`, `👨‍🏫 ${title} · расписание грузится`, `Портал отвечает медленно. Набери запрос ещё раз через пару секунд — расписание ${esc(title)} уже будет готово.`));
-  } else if (req.mode === "week") {
-    const byDate = new Map<LocalDate, Occurrence[]>();
-    for (const o of loaded.lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
-    out.push(article(`ptw:${best.ref.id}:${monday}`, `👨‍🏫 ${guess}${title} · неделя ${fmtDDMM(monday)}`, formatWeek(personGroup(title, `teacher:${best.ref.id}`), monday, byDate, deps.service.weekInfo(monday), today)));
-  } else {
-    out.push(article(`ptd:${best.ref.id}:${req.date}`, `👨‍🏫 ${guess}${title} · ${req.date === today ? "сегодня" : `${weekdayShort(req.date)} ${fmtDDMM(req.date)}`}`, formatDay(personGroup(title, `teacher:${best.ref.id}`), req.date, loaded.lessons, deps.service.weekInfo(req.date), today, {})));
-  }
-  if (local.length > 1) {
-    const others = local.slice(1).map((x) => `${x.ref.name}${x.vish ? " (ВИШ)" : ""}`);
-    out.push(article(`pt:more:${q}`, `👥 Похожие: ${others.join(", ")}`.slice(0, 60), `По «${esc(q)}» похожи ещё: ${esc(others.join("; "))}. Напиши фамилию точнее — покажу расписание нужного.`));
-  }
-  return out;
 }

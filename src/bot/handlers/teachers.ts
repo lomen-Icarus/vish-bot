@@ -1,20 +1,18 @@
-import { Composer, InlineKeyboard, InputFile } from "grammy";
-import { createHash } from "node:crypto";
+/**
+ * Кнопка «👨‍🏫 Преподаватели». Сам поиск, карточка и кнопки у преподавателя
+ * и студента общие — они живут в src/bot/people.ts; здесь только вход.
+ */
+import { Composer } from "grammy";
 import type { BotContext } from "../context.js";
-import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, isMenuText, teacherDayNav, teacherWeekNav } from "../keyboards.js";
-import { clampHtml, esc, formatDay, formatWebinarTeacher, formatWeek } from "../../schedule/format.js";
-import { personGroup, type LogicalGroup } from "../../schedule/groups.js";
-import type { Occurrence } from "../../schedule/model.js";
-import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../../time.js";
-import { teacherMapKey, type TeacherRef } from "../../portal/teachers.js";
-import { samePerson } from "../../text/match.js";
-import type { WebinarTeacher } from "../../portal/webinars.js";
-import { logger } from "../../logger.js";
+import { BTN } from "../keyboards.js";
+import { teacherMapKey } from "../../portal/teachers.js";
+import { promptPeople } from "../people.js";
+import { webinarNameKey } from "../../people/ref.js";
 
 export const teacherHandlers = new Composer<BotContext>();
 
-const UNAVAILABLE = "Расписание преподавателей портал показывает только авторизованным. Попроси админа добавить учётку портала в настройки бота (PORTAL_LOGIN / PORTAL_PASSWORD), и раздел заработает.";
+teacherHandlers.command("teachers", (ctx) => promptPeople(ctx, "teacher"));
+teacherHandlers.hears(BTN.teachers, (ctx) => promptPeople(ctx, "teacher"));
 
 /**
  * Callback key for a teacher known only from the webinar page (no portal id).
@@ -22,257 +20,14 @@ const UNAVAILABLE = "Расписание преподавателей порт�
  * Cyrillic surnames would otherwise share a truncated prefix.
  */
 export function webinarKey(name: string): string {
-  return `wtc:${createHash("sha1").update(name.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim()).digest("base64url").slice(0, 16)}`;
-}
-
-function findWebinarTeacher(ctx: BotContext, key: string): WebinarTeacher | null {
-  return (ctx.deps.webinars?.teachers() ?? []).find((t) => webinarKey(t.name) === key) ?? null;
-}
-
-async function showWebinarTeacher(ctx: BotContext, t: WebinarTeacher): Promise<void> {
-  const webinars = ctx.deps.webinars;
-  const upcoming = webinars ? webinars.upcoming(t, 8) : [];
-  const text = clampHtml(formatWebinarTeacher(t, upcoming, false));
-  const kb = new InlineKeyboard().text("🔎 Другой преподаватель", "t:search");
-  await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => ctx.reply(text.replace(/<[^>]+>/g, ""), { reply_markup: kb }));
-}
-
-/**
- * Карточка преподавателя из карты: по id, а если его ещё не обходили — по имени
- * (так находятся преподаватели дистанта, у которых id нет вовсе).
- */
-export function teacherVishTag(repo: BotContext["deps"]["repo"], teacherId: number | null, name: string): string {
-  const row = (teacherId != null ? repo.teacherMapById(teacherId) : null) ?? repo.teacherMapByKey(teacherMapKey(null, name));
-  return row?.vish ? " (ВИШ)" : "";
-}
-
-function mapRow(ctx: BotContext, teacherId: number | null, name: string) {
-  return (teacherId != null ? ctx.deps.repo.teacherMapById(teacherId) : null) ?? ctx.deps.repo.teacherMapByKey(teacherMapKey(null, name));
+  return `wtc:${webinarNameKey(name)}`;
 }
 
 /**
  * «(ВИШ)» рядом с фамилией. В университете есть полные тёзки, и без пометки
  * невозможно понять, кто из них ведёт у нашей школы.
  */
-function vishTag(ctx: BotContext, teacherId: number | null, name: string): string {
-  return mapRow(ctx, teacherId, name)?.vish ? " (ВИШ)" : "";
-}
-
-/**
- * Фото преподавателя — ПОСЛЕДНИМ сообщением, уже после расписания: наверх
- * никто не листает, а так и картинка видна, и расписание прямо над ней.
- */
-async function sendTeacherPhoto(ctx: BotContext, t: TeacherRef, fullName: string | null): Promise<void> {
-  const teachers = ctx.deps.teachers;
-  if (!teachers) return;
-  try {
-    const photo = await teachers.photo(t.id);
-    const row = photo.row;
-    const caption = [`👨‍🏫 <b>${esc(fullName ?? t.name)}</b>${row?.vish ? " (ВИШ)" : ""}`, [row?.degree, row?.department].filter(Boolean).map((x) => esc(String(x))).join(" · ")].filter(Boolean).join("\n");
-    if (photo.fileId) {
-      try {
-        await ctx.replyWithPhoto(photo.fileId, { caption, parse_mode: "HTML", disable_notification: true });
-        return;
-      } catch (err) {
-        // file_id живёт внутри одного бота: после смены токена он перестаёт
-        // работать, и фото пропало бы навсегда. Забываем и качаем заново.
-        logger.debug({ err: String(err), teacher: t.id }, "stale photo file_id, refetching");
-        teachers.forgetPhotoFileId(photo.key);
-        const fresh = await teachers.photo(t.id);
-        if (!fresh.bytes) return;
-        const again = await ctx.replyWithPhoto(new InputFile(fresh.bytes, `teacher-${t.id}.jpg`), { caption, parse_mode: "HTML", disable_notification: true });
-        const id = again.photo?.[again.photo.length - 1]?.file_id;
-        if (id) ctx.deps.repo.setTeacherPhotoFileId(fresh.key, id);
-        return;
-      }
-    }
-    if (!photo.bytes) return;
-    const sent = await ctx.replyWithPhoto(new InputFile(photo.bytes, `teacher-${t.id}.jpg`), { caption, parse_mode: "HTML", disable_notification: true });
-    // Второй раз качать с портала незачем: Telegram отдаст ту же картинку по file_id.
-    const fileId = sent.photo?.[sent.photo.length - 1]?.file_id;
-    if (fileId && photo.key) ctx.deps.repo.setTeacherPhotoFileId(photo.key, fileId);
-  } catch (err) {
-    logger.debug({ err: String(err), teacher: t.id }, "teacher photo send failed");
-  }
-}
-
-function pseudoGroup(t: TeacherRef, fullName: string | null): LogicalGroup {
-  return personGroup(fullName ?? t.name, `teacher:${t.id}`);
-}
-
-async function askName(ctx: BotContext): Promise<void> {
-  if (!ctx.deps.teachers && !ctx.deps.webinars) return void (await ctx.reply(UNAVAILABLE));
-  setPending(ctx.deps, ctx.user.id, { kind: "teacher" }, 3 * 60_000);
-  const limited = !ctx.deps.teachers ? "\n\nПока без учётки портала бот знает преподавателей только по дистанционным парам: очные портал показывает лишь авторизованным." : "";
-  await ctx.reply(`Напиши фамилию преподавателя, можно с именем или инициалами в любом порядке: <code>Иванова</code>, <code>Дарья Иванова</code>, <code>Иванова Д.А.</code> Отмена: /cancel${limited}`, { parse_mode: "HTML" });
-}
-
-teacherHandlers.command("teachers", askName);
-teacherHandlers.hears(BTN.teachers, askName);
-teacherHandlers.callbackQuery("t:search", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await askName(ctx);
-});
-
-teacherHandlers.on("message:text", async (ctx, next) => {
-  const pending = takePending(ctx.deps, ctx.user.id);
-  if (!pending || pending.kind !== "teacher") return next();
-  if (ctx.msg.text.startsWith("/")) return next();
-  if (isMenuText(ctx.msg.text)) {
-    clearPending(ctx.deps, ctx.user.id);
-    return next();
-  }
-  clearPending(ctx.deps, ctx.user.id);
-  const teachers = ctx.deps.teachers;
-  const query = ctx.msg.text;
-  await ctx.replyWithChatAction("typing");
-  const scored = teachers ? await teachers.searchScored(query) : [];
-  const found = scored.map((x) => x.ref);
-  // Teachers of online lessons are readable without a portal account; keep them as a fallback.
-  const webinarHits = (ctx.deps.webinars?.searchScored(query, 5) ?? []).filter((w) => !found.some((t) => samePerson(t.name, w.teacher.name)));
-  const fromWebinars = webinarHits.map((w) => w.teacher);
-  if (!found.length && !fromWebinars.length) {
-    const err = teachers?.lastError();
-    const hint = err && ctx.isAdmin ? `\n\n<i>Админу: последняя ошибка портала — ${esc(err)}</i>` : "";
-    const noAccount = !teachers ? "\n\nСейчас бот знает только преподавателей дистанционных пар: полный справочник портал отдаёт лишь авторизованным." : "";
-    return void (await ctx.reply(`Никого не нашёл по «${esc(query)}» — даже с поправкой на опечатки. Попробуй одну фамилию без имени или первые буквы фамилии; имя и фамилию можно в любом порядке.${noAccount}${hint}`, { parse_mode: "HTML" }));
-  }
-  // Совпало только с опечатками — не открываем чужое расписание молча, а спрашиваем.
-  // Без учётки портала scored пуст, поэтому судим и по преподавателям дистанта.
-  const guess = [...scored, ...webinarHits].every((x) => x.fuzzy);
-  if (!guess && found.length === 1 && !fromWebinars.length) return showTeacherDay(ctx, found[0]!, todayMsk());
-  if (!guess && !found.length && fromWebinars.length === 1) return showWebinarTeacher(ctx, fromWebinars[0]!);
-  // Пометку «(ВИШ)» ставит карта, а ночной обход портала до нужной фамилии
-  // мог ещё не дойти: проверяем тех, кого прямо сейчас показываем. Портал
-  // медленный, поэтому не больше трёх — и «печатает…» заново, чтобы человек
-  // видел, что бот занят, а не завис.
-  if (teachers) {
-    await ctx.replyWithChatAction("typing").catch(() => undefined);
-    await teachers.ensureMapped(found);
-  }
-  const kb = new InlineKeyboard();
-  // Тёзки встречаются, поэтому «наши» помечены — и идут в самом низу списка,
-  // у поля ввода: до верхних кнопок палец не тянется, а нужны обычно наши.
-  const ranked = [...found].sort((a, b) => Number(!!vishTag(ctx, a.id, a.name)) - Number(!!vishTag(ctx, b.id, b.name)));
-  for (const t of ranked) kb.text(`${t.name}${vishTag(ctx, t.id, t.name)}`, `t:${t.id}`).row();
-  for (const t of fromWebinars) kb.text(`${t.name} (ВИШ, дистант)`, webinarKey(t.name)).row();
-  kb.text("🔎 Искать другого", "t:search");
-  await ctx.reply(guess ? `Точного совпадения с «${esc(query)}» нет. Может быть, кто-то из них?` : "Кого показать?", { parse_mode: "HTML", reply_markup: kb });
-});
-
-teacherHandlers.callbackQuery(/^wtc:(.+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
-  const t = findWebinarTeacher(ctx, `wtc:${ctx.match[1]!}`);
-  if (!t) return void (await ctx.reply("Преподаватель не найден, поищи заново: " + BTN.teachers));
-  await showWebinarTeacher(ctx, t);
-});
-
-teacherHandlers.callbackQuery(/^t:(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
-  const t = await ctx.deps.teachers?.byId(Number(ctx.match[1]));
-  if (!t) return void (await ctx.reply("Преподаватель не найден, поищи заново: " + BTN.teachers));
-  await showTeacherDay(ctx, t, todayMsk());
-});
-
-teacherHandlers.callbackQuery(/^td:(\d+):(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
-  const t = await ctx.deps.teachers?.byId(Number(ctx.match[1]));
-  if (!t) return;
-  await showTeacherDay(ctx, t, ctx.match[2]!, true);
-});
-
-teacherHandlers.callbackQuery(/^tw:(\d+):(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
-  const t = await ctx.deps.teachers?.byId(Number(ctx.match[1]));
-  if (!t) return;
-  await showTeacherWeek(ctx, t, ctx.match[2]!, true);
-});
-
-teacherHandlers.callbackQuery(/^twf:(\d+)$/, async (ctx) => {
-  const id = Number(ctx.match[1]);
-  // Имя берём из своей базы: поход в справочник портала может занять минуту,
-  // а Telegram ждёт ответа на нажатие несколько секунд и иначе «морозит» кнопку.
-  const known = ctx.deps.repo.teacherMapById(id)?.name ?? ctx.deps.repo.watchedTeachers(ctx.user.id).find((w) => w.teacherId === id)?.name;
-  const name = known ?? `#${id}`;
-  const following = ctx.deps.repo.toggleWatchTeacher(ctx.user.id, id, name);
-  await ctx.answerCallbackQuery({
-    text: following ? "Слежу: пришлю его расписание вечером и за 2 часа до первой пары" : "Больше не слежу за этим преподавателем",
-    show_alert: following,
-  });
-  try {
-    const msg = ctx.callbackQuery.message;
-    const data = msg && "reply_markup" in msg ? msg.reply_markup : undefined;
-    // Перерисовываем ту же клавиатуру, только с новой надписью на кнопке.
-    if (data?.inline_keyboard) {
-      const rows = data.inline_keyboard.map((row) =>
-        row.map((b) => ("callback_data" in b && b.callback_data === `twf:${id}` ? { ...b, text: following ? "🔕 Не следить за преподом" : "👁 Следить за преподом" } : b)),
-      );
-      await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: rows } });
-    }
-  } catch {
-    /* сообщение могло устареть */
-  }
-});
-
-async function showTeacherDay(ctx: BotContext, t: TeacherRef, date: LocalDate, edit = false): Promise<void> {
-  const teachers = ctx.deps.teachers!;
-  // В try — только портал: если не отправится сообщение, это не его вина,
-  // и писать студенту «портал не ответил» было бы враньём.
-  let loaded: { lessons: Occurrence[]; fullName: string | null };
-  try {
-    loaded = await teachers.lessons(t, date, date);
-  } catch (err) {
-    logger.warn({ err: String(err), teacher: t.id }, "teacher schedule failed");
-    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
-    return;
-  }
-  {
-    const { lessons, fullName } = loaded;
-    // Страница преподавателя называет группы его пар: отмечаем «нашего» сразу,
-    // не дожидаясь ночного обхода справочника.
-    teachers.noteFromLessons(t.id, fullName ?? t.name, lessons);
-    const title = `${fullName ?? t.name}${vishTag(ctx, t.id, fullName ?? t.name)}`;
-    const text = formatDay(pseudoGroup(t, title), date, lessons, ctx.deps.service.weekInfo(date), todayMsk(), { now: wallClock() });
-    const kb = teacherDayNav(t.id, date, { following: ctx.deps.repo.watchesTeacher(ctx.user.id, t.id) });
-    if (edit) {
-      try {
-        await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
-        return;
-      } catch (err) {
-        if (String(err).includes("message is not modified")) return;
-      }
-    }
-    await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: kb });
-    if (!edit) await sendTeacherPhoto(ctx, t, fullName);
-  }
-}
-
-async function showTeacherWeek(ctx: BotContext, t: TeacherRef, anyDate: LocalDate, edit = false): Promise<void> {
-  const teachers = ctx.deps.teachers!;
-  const monday = mondayOf(anyDate);
-  let loaded: { lessons: Occurrence[]; fullName: string | null };
-  try {
-    loaded = await teachers.lessons(t, monday, addDays(monday, 6));
-  } catch (err) {
-    logger.warn({ err: String(err), teacher: t.id }, "teacher week failed");
-    await ctx.reply(`Не удалось загрузить расписание ${esc(t.name)}: портал не ответил. Попробуй позже.`, { parse_mode: "HTML" });
-    return;
-  }
-  {
-    const { lessons, fullName } = loaded;
-    teachers.noteFromLessons(t.id, fullName ?? t.name, lessons);
-    const byDate = new Map<LocalDate, Occurrence[]>();
-    for (const o of lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
-    const text = formatWeek(pseudoGroup(t, `${fullName ?? t.name}${vishTag(ctx, t.id, fullName ?? t.name)}`), monday, byDate, ctx.deps.service.weekInfo(monday), todayMsk());
-    const kb = teacherWeekNav(t.id, monday, { following: ctx.deps.repo.watchesTeacher(ctx.user.id, t.id) });
-    if (edit) {
-      try {
-        await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
-        return;
-      } catch (err) {
-        if (String(err).includes("message is not modified")) return;
-      }
-    }
-    await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: kb });
-  }
+export function teacherVishTag(repo: BotContext["deps"]["repo"], teacherId: number | null, name: string): string {
+  const row = (teacherId != null ? repo.teacherMapById(teacherId) : null) ?? repo.teacherMapByKey(teacherMapKey(null, name));
+  return row?.vish ? " (ВИШ)" : "";
 }

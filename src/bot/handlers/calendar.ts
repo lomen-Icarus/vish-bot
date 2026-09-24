@@ -3,7 +3,11 @@ import type { BotContext } from "../context.js";
 import { groupRequiredText, needGroup } from "../views.js";
 import { BTN } from "../keyboards.js";
 import { icsFileName } from "../../schedule/ics.js";
-import { changesCalendar, groupCalendar } from "../../schedule/calendar.js";
+import { calendarWindow, changesCalendar, groupCalendar } from "../../schedule/calendar.js";
+import { buildIcs } from "../../schedule/ics.js";
+import { ownTeacherRef } from "../teacherMode.js";
+import { loadProfile, profileLessons } from "../../people/profile.js";
+import { shortName } from "../../text/match.js";
 import type { ChangeEvent } from "../../schedule/diff.js";
 import { esc, plural } from "../../schedule/format.js";
 import { calendarPath } from "../../http/server.js";
@@ -13,7 +17,22 @@ export const calendarHandlers = new Composer<BotContext>();
 
 function subscriptionsEnabled(ctx: BotContext): boolean {
   // A busy port or a failed listen() must not leave the bot handing out dead links.
-  return !!ctx.deps.config.PUBLIC_URL && ctx.deps.http?.listening === true;
+  // Лента подписки строится по группе, поэтому в режиме преподавателя — только файл.
+  return !!ctx.deps.config.PUBLIC_URL && ctx.deps.http?.listening === true && !ctx.user.teacherMode;
+}
+
+/** Календарь преподавателя (режим преподавателя): его пары до конца семестра. */
+async function teacherCalendar(ctx: BotContext, alarm: number | null): Promise<{ ics: string; count: number; to: string; name: string } | null> {
+  const ref = ownTeacherRef(ctx.user);
+  if (!ref) return null;
+  const profile = await loadProfile(ctx.deps, ref).catch(() => null);
+  if (!profile) return null;
+  const { from, to } = calendarWindow(ctx.deps.service);
+  const loaded = await profileLessons(ctx.deps, profile, from, to);
+  if (loaded.failed) return null;
+  const name = shortName(loaded.fullName ?? profile.name);
+  const ics = buildIcs({ name: `${name} — пары`, lessons: loaded.lessons, alarmMinutes: alarm });
+  return { ics, count: loaded.lessons.filter((o) => o.status === "scheduled").length, to, name };
 }
 
 export function calendarKeyboard(ctx: BotContext): InlineKeyboard {
@@ -28,7 +47,7 @@ function alarmKeyboard(prefix: string): InlineKeyboard {
 
 async function offer(ctx: BotContext): Promise<void> {
   const group = needGroup(ctx);
-  if (!group) return void (await ctx.reply(groupRequiredText()));
+  if (!group && !ctx.user.teacherMode) return void (await ctx.reply(groupRequiredText()));
   const lines = ["<b>📆 Пары в календарь телефона</b>", ""];
   if (subscriptionsEnabled(ctx)) {
     lines.push("<b>Подписка</b> — лучший вариант: телефон сам подтягивает расписание, переносы и отмены появляются в календаре без твоего участия, ничего не дублируется.", "");
@@ -47,6 +66,17 @@ calendarHandlers.callbackQuery("ics:menu", async (ctx) => {
 
 // ---- one-off file ----
 calendarHandlers.callbackQuery(/^ics:(\d{1,3})$/, async (ctx) => {
+  if (ctx.user.teacherMode) {
+    const alarm = Number(ctx.match[1]);
+    await ctx.answerCallbackQuery({ text: "Собираю календарь…" });
+    const cal = await teacherCalendar(ctx, alarm > 0 ? alarm : null);
+    if (!cal) return void (await ctx.reply("Не получилось собрать календарь: твоего расписания сейчас не видно (портал не ответил или тебя нет в справочнике). Попробуй позже."));
+    const today = todayMsk();
+    await ctx.replyWithDocument(new InputFile(Buffer.from(cal.ics, "utf8"), icsFileName(cal.name, today)), {
+      caption: `${cal.name}: ${cal.count} ${plural(cal.count, "пара", "пары", "пар")} с ${fmtDDMM(today)} по ${fmtDDMM(cal.to)}${alarm ? `, напоминание за ${alarm} мин` : ""}.\n\nОткрой файл → «Добавить в календарь». Расписание меняется: раз в пару недель обновляй файл, перед этим удалив старые события.`,
+    });
+    return;
+  }
   const group = needGroup(ctx);
   if (!group) return void (await ctx.answerCallbackQuery({ text: "Сначала выбери группу", show_alert: true }));
   const alarm = Number(ctx.match[1]);
