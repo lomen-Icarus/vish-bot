@@ -39,6 +39,8 @@ function makeDeps(): Deps {
   const service = {
     group: (k: string) => (k === group.key ? group : null),
     groups: () => [group],
+    intakes: () => [23],
+    stream: () => [group],
     lessonsOn: () => [lesson],
     materialize: () => [lesson],
     weekInfo: () => ({ week: 3, parity: "odd" as const, semester: 1 as const }),
@@ -165,5 +167,42 @@ describe("ИИ присылает карточку, только если чел
     expect(soleExactPerson({ teachers: [{ id: 1, name: "Иванов И.И.", exact: true }], webinarTeachers: [], groupKeys: [], students: [{ id: "a", name: "A", groupTitle: "g", exact: true }] })).toBeNull();
     // Один и тот же человек из справочника и со страницы вебинаров — один.
     expect(soleExactPerson({ teachers: [{ id: 5, name: "Петрова А. С.", exact: true }], webinarTeachers: [{ name: "Петрова Анна Сергеевна", exact: true }], groupKeys: [], students: [] })).toEqual({ kind: "teacher", id: 5 });
+  });
+});
+
+describe("inline: просто фамилия", () => {
+  const user = { id: 7, groupKey: group.key, subgroup: null, teacherView: "bold" } as never;
+
+  it("«Беляев завтра» — человек, а не ненайденная группа", async () => {
+    const { parseInlineQuery } = await import("../src/bot/inline.js");
+    const deps = makeDeps();
+    const req = parseInlineQuery(deps, "Беляев завтра", user);
+    expect(req.person).toEqual({ kind: "any", query: "Беляев" });
+    expect(req.unknownGroup).toBe(false);
+    expect(req.mode).toBe("day");
+    // Цифры по-прежнему означают группу.
+    expect(parseInlineQuery(deps, "99-99 завтра", user).unknownGroup).toBe(true);
+  });
+
+  it("показывает студента и преподавателя одной и той же карточкой", async () => {
+    const { parseInlineQuery, buildPeopleResults } = await import("../src/bot/inline.js");
+    const deps = makeDeps();
+    const student = await buildPeopleResults(deps, parseInlineQuery(deps, "Беляев", user), user);
+    const teacher = await buildPeopleResults(deps, parseInlineQuery(deps, "Петрова", user), user);
+    const body = (r: { input_message_content: unknown }[]): string => (r[0]!.input_message_content as { message_text: string }).message_text;
+    expect(body(student)).toContain("🎓 <b>Беляев Иван Петрович</b>");
+    expect(body(student)).toContain("📍");
+    expect(body(teacher)).toContain("👨‍🏫 <b>Петрова Анна Сергеевна</b> (ВИШ)");
+    expect(body(teacher)).toContain("📍");
+    // Студент в inline тоже записан в журнал «сыска».
+    expect(deps.repo.poiskUsage(7, today)).toBe(1);
+  });
+
+  it("по трём буквам студентов не показывает", async () => {
+    const { parseInlineQuery, buildPeopleResults } = await import("../src/bot/inline.js");
+    const deps = makeDeps();
+    const res = await buildPeopleResults(deps, parseInlineQuery(deps, "Бел", user), user);
+    expect(JSON.stringify(res)).not.toContain("Беляев Иван");
+    expect(deps.repo.poiskUsage(7, today)).toBe(0);
   });
 });
