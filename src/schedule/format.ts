@@ -115,16 +115,25 @@ export const shortTeacher = shortName;
 /** Один и тот же преподаватель, как бы его ни записали в двух местах портала. */
 export const sameTeacher = samePerson;
 
+/**
+ * «Иванова И. И.» с неразрывными пробелами: фамилия и инициалы — одно целое.
+ * Не влезла строка — переносится вся подпись, а не «Иванова» здесь и «И. И.»
+ * на следующей строке.
+ */
+export function unbreakable(s: string): string {
+  return s.replace(/ /g, "\u00a0");
+}
+
 /** Подпись преподавателя на постере: коротко, либо ничего, если выключено. */
 export function posterTeacher(name: string | null | undefined, view: TeacherView | undefined): string | null {
   if (!name || view === "off") return null;
-  return shortTeacher(name);
+  return unbreakable(shortTeacher(name));
 }
 
 /** Подпись преподавателя в строке расписания с учётом настройки. */
 export function teacherLabel(name: string | null | undefined, view: TeacherView = "bold"): string {
   if (!name || view === "off") return "";
-  const short = esc(shortTeacher(name));
+  const short = esc(unbreakable(shortTeacher(name)));
   return view === "bold" ? `<b>${short}</b>` : short;
 }
 

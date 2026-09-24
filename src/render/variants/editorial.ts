@@ -165,6 +165,9 @@ function lessonRow(o: Occurrence, accent: string, ongoing: boolean, view: Teache
   const meta: El[] = [typeMark(o.type, 24, moved ? MUTED : INK)];
   meta.push(text(o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", { fontSize: 24, fontWeight: 500, color: MUTED, marginRight: 22 }));
   if (o.subgroup) meta.push(text(`${o.subgroup} подгруппа`, { fontSize: 24, fontWeight: 500, color: MUTED, marginRight: 22 }));
+  // Преподаватель в той же строке, что тип и аудитория; не влез — переносится целиком.
+  const who = posterTeacher(o.teacher, view);
+  if (who) meta.push(text(who, { fontSize: 24, fontWeight: view === "plain" ? 400 : 700, color: view === "plain" ? MUTED : INK, marginRight: 22 }));
 
   return row(
     { width: "100%", position: "relative", padding: "24px 0 26px 0", borderTop: `1px solid ${RULE}`, opacity: moved ? 0.55 : 1 },
@@ -174,7 +177,6 @@ function lessonRow(o: Occurrence, accent: string, ongoing: boolean, view: Teache
       { flex: 1, minWidth: 0 },
       text(o.subject, { fontSize: 36, fontWeight: 700, color: INK, lineHeight: 1.15, letterSpacing: -0.8, textDecoration: moved ? "line-through" : "none" }),
       row({ flexWrap: "wrap", alignItems: "center", marginTop: 12 }, ...meta),
-      posterTeacher(o.teacher, view) ? text(posterTeacher(o.teacher, view)!, { fontSize: 24, fontWeight: view === "plain" ? 400 : 700, color: view === "plain" ? MUTED : INK, marginTop: 6 }) : null,
       badges.length ? row({ flexWrap: "wrap", marginTop: 4 }, ...badges) : null,
     ),
   );
