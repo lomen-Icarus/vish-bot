@@ -45,7 +45,10 @@ export function createBot(deps: Deps): Bot<BotContext> {
       return;
     }
     if (!from || from.is_bot) return;
-    ctx.user = deps.repo.touchUser(from.id, from.username ?? null, from.first_name ?? null);
+    // Пользователем бот считает того, кто пишет ему в личку (или жмёт кнопки
+    // там). Inline-запрос и реплика в группе — ещё не знакомство.
+    const privateChat = ctx.chat?.type === "private";
+    ctx.user = privateChat ? deps.repo.touchUser(from.id, from.username ?? null, from.first_name ?? null) : deps.repo.peekUser(from.id, from.username ?? null, from.first_name ?? null);
     ctx.isAdmin = deps.config.ADMIN_IDS.includes(from.id);
     await next();
   });

@@ -13,6 +13,7 @@ import type { WebinarService } from "../portal/webinars.js";
 import type { TeacherService } from "../portal/teachers.js";
 import { logicalKeyFor, type LogicalGroup } from "../schedule/groups.js";
 import { readFileSync } from "node:fs";
+import { isUnreachable } from "../bot/errors.js";
 
 /** За сколько минут до первой пары преподавателя писать подписчикам. */
 const TEACHER_LEAD_MIN = 120;
@@ -110,7 +111,7 @@ export class Notifier {
         this.repo.logNotification(user.id, "slides", false, msg.slice(0, 200));
         // Telegram отдаёт «удалённый аккаунт» и «чат не найден» кодом 400,
         // а не 403 — считаем их такой же недоступностью, как и блокировку.
-        if (err instanceof GrammyError && (err.error_code === 403 || /blocked|deactivated|chat not found/i.test(msg))) this.repo.updateUser(user.id, { blocked: true });
+        if (isUnreachable(err)) this.repo.updateUser(user.id, { blocked: true });
       }
     }
     this.repo.markDeckSent(deck.deckId, fileId, sent);
@@ -222,7 +223,7 @@ export class Notifier {
     } catch (err) {
       const msg = err instanceof GrammyError ? err.description : String(err);
       this.repo.logNotification(user.id, opts.kind, false, msg.slice(0, 200));
-      if (err instanceof GrammyError && (err.error_code === 403 || /chat not found|deactivated/i.test(err.description))) {
+      if (isUnreachable(err)) {
         this.repo.updateUser(user.id, { blocked: true });
         logger.info({ userId: user.id }, "user unreachable, marked blocked");
       } else {
@@ -428,7 +429,7 @@ export class Notifier {
         if (now.minutes >= due && now.minutes < first && !this.repo.reminderSent(user.id, "first", now.date)) {
           const left = first - now.minutes;
           const head = `⏰ ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} первая пара`;
-          const body = formatDay(group, now.date, lessonsFor(group.key, now.date), this.service.weekInfo(now.date), now.date, { subgroup: user.subgroup, now });
+          const body = formatDay(group, now.date, lessonsFor(group.key, now.date), this.service.weekInfo(now.date), now.date, { subgroup: user.subgroup, now, teacherView: user.teacherView });
           this.repo.markReminderSent(user.id, "first", now.date);
           const photo = await this.maybeRenderDay(user, group, now.date, today, now);
           if (await this.send(user, `${head}\n\n${body}`, { kind: "remind-first", photo })) sent++;
@@ -475,7 +476,7 @@ export class Notifier {
           const list = filterSubgroup(lessonsFor(group.key, tomorrow), user.subgroup);
           this.repo.markReminderSent(user.id, "evening", now.date);
           if (list.length) {
-            const body = formatDay(group, tomorrow, lessonsFor(group.key, tomorrow), this.service.weekInfo(tomorrow), now.date, { subgroup: user.subgroup });
+            const body = formatDay(group, tomorrow, lessonsFor(group.key, tomorrow), this.service.weekInfo(tomorrow), now.date, { subgroup: user.subgroup, teacherView: user.teacherView });
             const photo = await this.maybeRenderDay(user, group, tomorrow, list, now);
             if (await this.send(user, `🌙 Завтра:\n\n${body}`, { kind: "remind-evening", photo })) sent++;
           }

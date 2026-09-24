@@ -274,6 +274,11 @@ export function buildInlineResults(deps: Deps, req: InlineRequest, user: User | 
 
 // ---- inline про людей: «студент Беляев», «завтра преподаватель Петров» ----
 
+/** Короче этого запрос про студента людей не показывает (см. studentResults). */
+export const MIN_STUDENT_QUERY = 4;
+
+const person3 = (q: string): string => createHash("sha1").update(q.toLowerCase()).digest("base64url").slice(0, 8);
+
 /** Короткий устойчивый id по имени: id inline-результата ограничен 64 байтами. */
 function nameId(name: string): string {
   return createHash("sha1").update(name.toLowerCase()).digest("base64url").slice(0, 12);
@@ -326,16 +331,21 @@ function studentResults(deps: Deps, req: InlineRequest, user: User | null, q: st
   if (user && limit > 0 && !isAdmin && deps.repo.poiskUsage(user.id, today) >= limit) {
     return [article("p:limit", "🕵️ Лимит на сегодня исчерпан", `Поиск людей ограничен: ${limit} в день. Завтра снова можно.`)];
   }
+  // По трём буквам людей не показываем вовсе: такой запрос не записывался бы
+  // в журнал и не тратил лимит, и реестр можно было бы перебрать по слогам.
+  if (q.length < MIN_STUDENT_QUERY) {
+    return [article(`p:short:${person3(q)}`, "🕵️ Допиши фамилию", `Напиши хотя бы ${MIN_STUDENT_QUERY} буквы фамилии — тогда покажу, кто это и где он по расписанию.`)];
+  }
   const hits = dir.search(q, 5);
   if (!hits.length) {
     return [article(`p:nf:${q}`, "🤷 Никого не нашёл", `В реестре ВИШ никого похожего на «${esc(q)}» нет. Первокурсников в реестре нет вовсе.`)];
   }
   // В журнал пишем найденного, а не набранный текст: иначе каждая буква
-  // «Б», «Бе», «Бел» съедала бы отдельный поиск из дневного лимита. Префикс
-  // ровно такой же, как у обычного поиска: logPoisk гасит повтор, сравнивая
-  // строки без него, и один и тот же человек не считается дважды.
-  // Совсем короткие обрывки не логируем: там верхний кандидат ещё скачет.
-  if (user && q.length >= 4) deps.repo.logPoisk(user.id, today, `поиск: ${hits[0]!.student.name}`, hits[0]!.student.id);
+  // «Бел», «Беля», «Беляев» съедала бы отдельный поиск из дневного лимита.
+  // Префикс ровно такой же, как у обычного поиска: logPoisk гасит повтор,
+  // сравнивая строки без него, и один и тот же человек не считается дважды.
+  // Каждый ответ, где видны люди, записан и учтён в лимите.
+  if (user) deps.repo.logPoisk(user.id, today, `поиск: ${hits[0]!.student.name}`, hits[0]!.student.id);
   const out: InlineQueryResultArticle[] = [];
   for (const h of hits) {
     const st = h.student;

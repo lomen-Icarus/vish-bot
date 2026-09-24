@@ -10,6 +10,7 @@ import { todayMsk } from "../../time.js";
 import type { User } from "../../db/repo.js";
 import { logger } from "../../logger.js";
 import { sleep } from "../../time.js";
+import { isUnreachable } from "../errors.js";
 
 export const adminHandlers = new Composer<BotContext>();
 
@@ -518,8 +519,7 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go|topic:\w+|c\d)$/, async (ctx)
       ok++;
     } catch (err) {
       failed++;
-      const msg = String(err);
-      if (msg.includes("blocked") || msg.includes("deactivated") || msg.includes("chat not found")) ctx.deps.repo.updateUser(u.id, { blocked: true });
+      if (isUnreachable(err)) ctx.deps.repo.updateUser(u.id, { blocked: true });
       logger.warn({ err, userId: u.id }, "broadcast delivery failed");
     }
     await sleep(40);
