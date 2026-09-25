@@ -88,6 +88,9 @@ export async function trustedNewsSender(ctx: BotContext): Promise<boolean> {
 newsHandlers.on("message", async (ctx, next) => {
   const deps = ctx.deps;
   if (ctx.chat.type === "private" || !deps.config.NEWS_CHANNEL_IDS.includes(ctx.chat.id)) return next();
+  // Автопересылка из привязанного канала, который сам в источниках: пост уже
+  // ушёл подписчикам как channel_post — второй раз не шлём.
+  if (ctx.msg.is_automatic_forward && ctx.msg.sender_chat && deps.config.NEWS_CHANNEL_IDS.includes(ctx.msg.sender_chat.id)) return;
   const text = ctx.msg.text ?? ctx.msg.caption ?? "";
   if (!(await trustedNewsSender(ctx))) {
     if (topicsForText(text) === "all" || (topicsForText(text) as Topic[]).length) logger.info({ chat: ctx.chat.id, from: ctx.from?.id }, "news: пост с хэштегом не от админа чата, не пересылаю");

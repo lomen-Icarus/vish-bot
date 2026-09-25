@@ -507,7 +507,7 @@ describe("пасхалка и тёзки: правки по второму ре�
     let asked = 0;
     for (const [q, teachers] of [["спорторг", ["Ершов Пётр Ильич"]], ["кто такой Ершов", ["Ежов Иван Петрович"]]] as const) {
       const deps = withTeachers([...teachers]);
-      deps.ask = { answer: async () => (asked++, { text: "x", inputTokens: 1, outputTokens: 1, mentions: { teachers: [], webinarTeachers: [], groups: [] } }) } as unknown as Deps["ask"];
+      deps.ask = { answer: async () => (asked++, { text: "x", inputTokens: 1, outputTokens: 1, mentions: { teachers: [], webinarTeachers: [], groupKeys: [], students: [] } }) } as unknown as Deps["ask"];
       const { ctx, calls } = directCtx(deps);
       expect(await askAi(ctx, q)).toBe("answered");
       expect(all(calls)).toContain("Кирилл Ершов");
@@ -563,5 +563,28 @@ describe("пасхалка и тёзки: правки по второму ре�
     const pressOn = (messageId: number): Update => ({ update_id: 9, callback_query: { id: "3", from: { id: 7, is_bot: false, first_name: "U" }, chat_instance: "1", data: "tmode:t1", message: { message_id: messageId, date: 0, chat: { id: 7, type: "private", first_name: "U" }, text: "x" } as never } });
     await runAdmin(pressOn(first));
     expect(deps.repo.getUser(7)).toMatchObject({ teacherMode: true, teacherName: "Петров Павел Петрович", teacherRef: "t1" });
+  });
+});
+
+describe("ИИ: лимит не пробивается параллельными вопросами", () => {
+  it("остался один вопрос, пришли два разом — к модели уходит один", async () => {
+    const { askAi } = await import("../src/bot/handlers/ask.js");
+    const deps = makeDeps();
+    deps.config = { ...deps.config, AI_DAILY_LIMIT_PER_USER: 1 } as Deps["config"];
+    let asked = 0;
+    deps.ask = { answer: async () => (asked++, await new Promise((r) => setTimeout(r, 20)), { text: "ответ", inputTokens: 1, outputTokens: 1, mentions: { teachers: [], webinarTeachers: [], groupKeys: [], students: [] } }) } as unknown as Deps["ask"];
+    const mk = () => {
+      const api = new Api("123:FAKE");
+      // «печатает…» отвечает не сразу — как настоящий Telegram.
+      api.config.use(async () => (await new Promise((r) => setTimeout(r, 10)), { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never }));
+      const ctx = new Context(text("x"), api, ME) as BotContext;
+      ctx.deps = deps;
+      ctx.user = deps.repo.touchUser(7, "u", "U");
+      ctx.isAdmin = false;
+      return ctx;
+    };
+    const outcomes = await Promise.all([askAi(mk(), "что завтра?"), askAi(mk(), "а послезавтра?")]);
+    expect(asked).toBe(1);
+    expect(outcomes.sort()).toEqual(["answered", "limit-user"]);
   });
 });

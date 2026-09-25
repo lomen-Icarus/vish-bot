@@ -220,10 +220,13 @@ export class ChatService {
     let outputTokens = 0;
     let message: Anthropic.Message;
     for (let round = 0; ; round++) {
-      message = await this.call({ ...request, messages });
+      // Последний круг — без инструментов: иначе модель могла снова попросить
+      // инструмент, и человек получал «Сейчас гляну…» вместо ответа.
+      const last = round >= MAX_TOOL_ROUNDS;
+      message = await this.call({ ...request, messages, ...(last && request.tools?.length ? { tool_choice: { type: "none" as const } } : {}) });
       inputTokens += message.usage.input_tokens + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0);
       outputTokens += message.usage.output_tokens;
-      if (message.stop_reason !== "tool_use" || round >= MAX_TOOL_ROUNDS) break;
+      if (message.stop_reason !== "tool_use" || last) break;
       // Ответ модели уходит обратно как есть (с блоками размышлений), следом — результаты инструментов.
       messages.push({ role: "assistant", content: message.content as Anthropic.ContentBlockParam[] });
       const results: Anthropic.ToolResultBlockParam[] = [];

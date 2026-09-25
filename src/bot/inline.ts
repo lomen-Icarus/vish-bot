@@ -95,11 +95,16 @@ export function parseInlineQuery(deps: Deps, query: string, user: User | null): 
       mode = "common";
       continue;
     }
+    // «пары», «день» — не человек и не группа: просто «покажи день».
+    if (DAY_WORDS.test(w)) {
+      if (mode === "auto") mode = "day";
+      continue;
+    }
     const offset = parseDayWord(w);
     if (offset !== null) {
       date = addDays(today, offset);
       dateSet = true;
-      if (mode === "auto" && !DAY_WORDS.test(w)) mode = "day";
+      if (mode === "auto") mode = "day";
       continue;
     }
     const parsed = parseRuDate(w, today);
@@ -343,6 +348,7 @@ async function peopleArticles(deps: Deps, req: InlineRequest, user: User | null,
   const out: InlineQueryResultArticle[] = [];
   const viewer = { teacherView: user?.teacherView ?? ("bold" as const) };
   const others: PersonHit[] = [];
+  const seen = new Set<string>();
   let portalShown = false;
   for (const hit of hits) {
     // Портальное расписание тянем у одного человека: каждая буква запроса не
@@ -351,16 +357,27 @@ async function peopleArticles(deps: Deps, req: InlineRequest, user: User | null,
       others.push(hit);
       continue;
     }
-    const profile = await loadProfile(deps, hit.ref, user?.id ?? null);
+    // Преподаватель со страницы вебинаров тоже может оказаться портальным
+    // (профиль находит его в справочнике), поэтому решаем по профилю, а сам
+    // профиль ждём не дольше, чем Telegram ждёт inline-ответ.
+    const profile = await withTimeout(loadProfile(deps, hit.ref, user?.id ?? null), 6000);
     if (!profile) continue;
-    if (hit.ref.kind === "teacher") portalShown = true;
+    const fromPortal = profile.ref.kind === "teacher";
+    if (fromPortal && portalShown) {
+      others.push(hit);
+      continue;
+    }
+    // Два совпадения об одном человеке дали бы одинаковые id, и Telegram отверг бы весь ответ.
+    if (seen.has(refKey(profile.ref))) continue;
+    seen.add(refKey(profile.ref));
+    if (fromPortal) portalShown = true;
     // Совпало только с опечаткой — так и говорим: «Салодилин» не должен молча
     // открыть расписание Солодилина, как будто это точный ответ.
     const guess = hit.fuzzy ? "Возможно, это " : "";
     const icon = profile.role === "teacher" ? "👨‍🏫" : "🎓";
     const who = profile.role === "teacher" ? `${profile.name}${profile.vish ? " (ВИШ)" : ""}` : `${profile.name} · ${profile.group?.title ?? profile.student?.groupTitle ?? ""}`;
     const key = refKey(profile.ref);
-    const loading = hit.ref.kind === "teacher" ? 6000 : 0;
+    const loading = fromPortal ? 6000 : 0;
     if (req.mode === "week") {
       const view = loading ? await withTimeout(personWeekView(deps, profile, req.date, viewer), loading) : await personWeekView(deps, profile, req.date, viewer);
       if (!view) out.push(article(`pl:${key}`, `${icon} ${who} · расписание грузится`, `Портал отвечает медленно. Набери запрос ещё раз через пару секунд — расписание ${esc(profile.name)} уже будет готово.`));

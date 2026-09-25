@@ -90,7 +90,7 @@ const HEADER_INNER = W - 2 * PAD - SHADOW - 2 * BORDER - 60;
  * ("ВИШ-11-23 (РЗИАЭС)") next to a long date range cannot overflow the block.
  * Every step stays above the 22 px legibility floor.
  */
-function headerRowSizes(dateLine: string, rel: string | undefined, groupTitle: string): { date: number; chip: number } {
+function headerRowSizes(dateLine: string, rel: string | undefined, groupTitle: string): { date: number; chip: number; label: string } {
   const relW = rel ? approxWidth(up(rel), 24, 2) + 28 + 16 : 0;
   for (const [date, chip] of [
     [38, 32],
@@ -100,9 +100,14 @@ function headerRowSizes(dateLine: string, rel: string | undefined, groupTitle: s
     [28, 24],
   ] as const) {
     const chipW = approxWidth(up(groupTitle), chip, chip >= 30 ? 1 : 2) + (chip >= 30 ? 40 : 28) + 16;
-    if (approxWidth(up(dateLine), date) + relW + chipW <= HEADER_INNER) return { date, chip };
+    if (approxWidth(up(dateLine), date) + relW + chipW <= HEADER_INNER) return { date, chip, label: groupTitle };
   }
-  return { date: 28, chip: 24 };
+  // Не влезло и на самых мелких размерах (полное ФИО преподавателя на его
+  // постере): подпись укорачиваем с «…», иначе она вылезала за блок и
+  // обрезалась краем картинки.
+  const room = HEADER_INNER - approxWidth(up(dateLine), 28) - relW - 28 - 16;
+  const fit = Math.max(4, Math.floor(room / (24 * 0.62 + 2)));
+  return { date: 28, chip: 24, label: groupTitle.length > fit ? `${groupTitle.slice(0, fit - 1).trimEnd()}…` : groupTitle };
 }
 
 /**
@@ -145,7 +150,7 @@ function header(opts: { title: string; dateLine: string; rel?: string; groupTitl
         text(up(opts.dateLine), { fontSize: size.date, fontWeight: 800, color: INK, letterSpacing: 0, lineHeight: 1, flexShrink: 0 }),
         opts.rel ? inkChip(opts.rel, p.color, 24, 16) : null,
         h("div", { display: "flex", flex: 1, minWidth: 16 }),
-        inkChip(opts.groupTitle, p.color, size.chip, 16),
+        inkChip(size.label, p.color, size.chip, 16),
       ),
     ),
     strip,

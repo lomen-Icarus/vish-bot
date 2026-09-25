@@ -25,6 +25,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync
 import path from "node:path";
 import { editDistance, typoBudget } from "../text/match.js";
 import { logger } from "../logger.js";
+import { decodeText } from "../text/decode.js";
 
 export interface QaEntry {
   /** Варианты вопроса как в файле. */
@@ -53,13 +54,7 @@ const CHECK_EVERY_MS = 5000;
  * Текст файла: UTF-8, а если это не UTF-8 — Windows-1251 (так сохраняет CSV
  * русский Excel, если не выбрать «CSV UTF-8»).
  */
-export function decodeText(buf: Uint8Array): string {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(buf).replace(/^\uFEFF/, "");
-  } catch {
-    return new TextDecoder("windows-1251").decode(buf);
-  }
-}
+export { decodeText };
 
 /** Нижний регистр, ё → е, всё, кроме букв и цифр, — пробел. */
 export function normQa(s: string): string {
@@ -292,7 +287,9 @@ export class QaBase {
     this.ensureDir();
     const exists = existsSync(this.file);
     const current = exists ? decodeText(readFileSync(this.file)) : "";
-    const delimiter = exists ? this.delimiter : ";";
+    // Разделитель — того файла, что лежит сейчас: его могли заменить на хостинге
+    // (с «;» на «,»), а в памяти ещё прежний.
+    const delimiter = exists && current.trim() ? detectDelimiter(current.replace(/^\uFEFF/, "")) : ";";
     const head = exists ? (current && !current.endsWith("\n") ? "\n" : "") : `вопрос${delimiter}ответ${delimiter}подсказка\n`;
     writeFileSync(this.file, `${current}${head}${qaLine(questions, answer, hint, delimiter)}\n`, "utf8");
     this.reload();
@@ -331,6 +328,11 @@ export class QaBase {
   }
 
   private rewrite(keepIf: (e: QaEntry, i: number) => boolean): number {
+    this.reload();
+    // Файл пересобирается из разобранных записей. Если часть строк не
+    // разобралась или база упёрлась в предел — пересборка молча выбросила бы
+    // их навсегда (.bak живёт только до следующей правки). Тогда не трогаем.
+    if (this.skipped > 0) throw new Error(`в файле есть строки, которые бот не разобрал (${this.skipped}); удали заготовку в самом файле`);
     const all = this.entries();
     const keep = all.filter(keepIf);
     const removed = all.length - keep.length;
