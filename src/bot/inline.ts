@@ -19,7 +19,7 @@ import { hitShort, searchPeople, type PeopleScope, type PersonHit } from "../peo
 import { refKey } from "../people/ref.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, mergeStream } from "../schedule/stream.js";
 import type { Occurrence } from "../schedule/model.js";
-import { ERSHOV_CARD, ERSHOV_SURNAME, isErshovQuery } from "./easter.js";
+import { ERSHOV_CARD, ershovNamesakes, isErshovQuery } from "./easter.js";
 import { addDays, fmtDDMM, mondayOf, parseDayWord, parseRuDate, todayMsk, weekdayShort, type LocalDate } from "../time.js";
 
 export type InlineMode = "auto" | "day" | "week" | "stream" | "common";
@@ -299,10 +299,10 @@ const person3 = (q: string): string => createHash("sha1").update(q.toLowerCase()
  */
 export async function buildPeopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean } = {}): Promise<InlineQueryResultArticle[]> {
   if (!req.person || req.person.kind === "student" || !isErshovQuery(req.person.query)) return peopleResults(deps, req, user, opts);
-  // Пасхалка — первой карточкой, следом настоящие однофамильцы (по фамилии,
-  // а не по всему запросу: иначе «Кирилл Ершов» дал бы любого Кирилла).
-  const namesakes = await peopleResults(deps, { ...req, person: { ...req.person, query: ERSHOV_SURNAME } }, user, opts);
-  return [article("p:ershov", "🏅 Кирилл Ершов — спорторг ВИШ", ERSHOV_CARD), ...namesakes.filter((r) => !r.id.startsWith("p:nf:"))];
+  // Пасхалка — первой карточкой, следом настоящие однофамильцы, если есть.
+  const namesakes = await ershovNamesakes(deps, req.person.query, { id: user?.id ?? 0, isAdmin: opts.isAdmin === true });
+  const card = article("p:ershov", "🏅 Кирилл Ершов — спорторг ВИШ", ERSHOV_CARD);
+  return namesakes.length ? [card, ...(await peopleArticles(deps, req, user, namesakes, req.person.query, todayMsk()))] : [card];
 }
 
 async function peopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean }): Promise<InlineQueryResultArticle[]> {

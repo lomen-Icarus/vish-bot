@@ -15,13 +15,13 @@ import { clearPending, setPending, takePending } from "./context.js";
 import { BTN, groupCb, isMenuText } from "./keyboards.js";
 import { esc } from "../schedule/format.js";
 import { courseFor, parseGroupName, personGroup, shortGroupTitle } from "../schedule/groups.js";
-import type { Occurrence } from "../schedule/model.js";
+import { groupByDate } from "../schedule/model.js";
 import { addDays, fmtDDMM, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
 import { posterPlan, sendPoster } from "./views.js";
 import { shortName } from "../text/match.js";
 import { logger } from "../logger.js";
-import { ERSHOV_SURNAME, isErshovQuery, sendErshovCard } from "./easter.js";
-import { chooseStudentGroup, groupByDate, loadProfile, personDayView, personWeekView, studentsEnabled, type PersonProfile, type PersonView } from "../people/profile.js";
+import { ershovNamesakes, isErshovQuery, sendErshovCard } from "./easter.js";
+import { chooseStudentGroup, loadProfile, personDayView, personWeekView, studentsEnabled, type PersonProfile, type PersonView } from "../people/profile.js";
 import { parseRefKey, refKey, webinarNameKey, type PersonRef } from "../people/ref.js";
 import { clearHit, hitLabel, searchPeople, studentSearchAllowed, tiedWith, type PeopleScope, type PersonHit } from "../people/search.js";
 
@@ -65,20 +65,65 @@ function scopeOfProfile(p: PersonProfile): PeopleScope {
   return p.role === "student" ? "student" : "teacher";
 }
 
-/** Тёзки под карточкой: кому их показывали и когда. Память процесса, на час. */
-const ties = new Map<number, { key: string; others: PersonHit[]; at: number }>();
+/**
+ * Тёзки под карточкой: для каждого показанного человека — кто подошёл так же
+ * точно. Помним по человеку, а не «последний список»: стрелки старой карточки
+ * и переход к тёзке кнопки не теряют. Память процесса: запись живёт час с
+ * последнего обращения, у одного пользователя — не больше 20 карточек.
+ */
+interface Ties {
+  /** Сам человек с карточки — чтобы у открытого тёзки была кнопка обратно. */
+  self: PersonHit | null;
+  others: PersonHit[];
+  at: number;
+}
+const ties = new Map<number, Map<string, Ties>>();
 const TIES_TTL_MS = 60 * 60_000;
+const TIES_PER_USER = 20;
+let tiesSweptAt = 0;
 
-function tiesFor(userId: number, key: string, opts: { others?: PersonHit[]; edit?: boolean }): PersonHit[] {
-  if (opts.others?.length) {
-    ties.set(userId, { key, others: opts.others.slice(0, 4), at: Date.now() });
-    return opts.others.slice(0, 4);
+function rememberTies(userId: number, key: string, self: PersonHit | null, others: PersonHit[]): void {
+  const now = Date.now();
+  // Раз в 10 минут выметаем протухшее у всех, иначе карта росла бы до перезапуска.
+  if (now - tiesSweptAt > 10 * 60_000) {
+    tiesSweptAt = now;
+    for (const [id, cards] of ties) {
+      for (const [k, t] of cards) if (now - t.at >= TIES_TTL_MS) cards.delete(k);
+      if (!cards.size) ties.delete(id);
+    }
   }
-  const saved = ties.get(userId);
-  if (opts.edit && saved && saved.key === key && Date.now() - saved.at < TIES_TTL_MS) return saved.others;
-  // Новая карточка без тёзок — прежний список к ней не относится.
-  if (!opts.edit) ties.delete(userId);
-  return [];
+  const cards = ties.get(userId) ?? new Map<string, Ties>();
+  // Порядок в Map — порядок обращений: самая старая карточка первой уходит за предел.
+  cards.delete(key);
+  cards.set(key, { self, others, at: now });
+  while (cards.size > TIES_PER_USER) cards.delete(cards.keys().next().value!);
+  ties.set(userId, cards);
+}
+
+function fresh(t: Ties | undefined): t is Ties {
+  return !!t && Date.now() - t.at < TIES_TTL_MS;
+}
+
+function tiesFor(userId: number, key: string, opts: { others?: PersonHit[]; self?: PersonHit }): PersonHit[] {
+  if (opts.others?.length) {
+    const others = opts.others.slice(0, 4);
+    rememberTies(userId, key, opts.self ?? null, others);
+    return others;
+  }
+  const saved = ties.get(userId)?.get(key);
+  if (!fresh(saved)) return [];
+  saved.at = Date.now();
+  return saved.others;
+}
+
+/** Тёзку открыли кнопкой под карточкой: у него — кнопки к первому и к остальным. */
+function tiesAround(userId: number, key: string): { self: PersonHit; others: PersonHit[] } | null {
+  const cards = [...(ties.get(userId)?.values() ?? [])].reverse();
+  for (const t of cards) {
+    const hit = t.others.find((h) => refKey(h.ref) === key);
+    if (hit && fresh(t)) return { self: hit, others: [...(t.self ? [t.self] : []), ...t.others.filter((h) => h !== hit)] };
+  }
+  return null;
 }
 
 /** Кнопки под карточкой человека (день или неделя). */
@@ -117,7 +162,7 @@ function isTextMessage(ctx: BotContext): boolean {
  * Открыть человека. `edit` — листаем карточку на месте (стрелки, «Неделя»),
  * иначе новое сообщение, а у преподавателя с учёткой следом приходит фото.
  */
-export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDate, opts: { mode?: "day" | "week"; edit?: boolean; others?: PersonHit[] } = {}): Promise<boolean> {
+export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDate, opts: { mode?: "day" | "week"; edit?: boolean; others?: PersonHit[]; self?: PersonHit } = {}): Promise<boolean> {
   const mode = opts.mode ?? "day";
   if (ref.kind === "student" && !studentsEnabled(ctx.deps)) return false;
   let p: PersonProfile | null;
@@ -135,7 +180,7 @@ export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDat
   const kb = view.needsGroup ? groupChoiceKeyboard(p) : personKeyboard(ctx, p, date, mode);
   // Одинаково подходили и другие — они кнопками под карточкой, чтобы тёзку
   // можно было открыть, не придумывая другой запрос. Стрелки и «Неделя»
-  // перерисовывают карточку, поэтому список помним, пока листают того же человека.
+  // перерисовывают карточку, поэтому список помним по человеку.
   for (const h of tiesFor(ctx.user.id, refKey(p.ref), opts)) kb.row().text(hitLabel(h), `ppo:${refKey(h.ref)}`);
   // Картинкой — как расписание группы, если человек выбрал формат «картинка».
   if (await deliverPersonPoster(ctx, p, view, { mode, date, kb, edit: !!opts.edit })) {
@@ -186,7 +231,7 @@ export async function deliverPersonPoster(
       png = await renderer.renderDay({ group, date: opts.date, lessons, weekInfo: ctx.deps.service.weekInfo(opts.date), today, now: wallClock(), theme, teacherView, labels });
     } else {
       const monday = mondayOf(opts.date);
-      const byDate = view.byDate ?? groupByDate(lessons);
+      const byDate = groupByDate(lessons);
       png = await renderer.renderWeek({ group, monday, byDate, weekInfo: ctx.deps.service.weekInfo(monday), today, subgroup: null, theme, teacherView, labels });
     }
   } catch (err) {
@@ -293,10 +338,14 @@ async function replyNotFound(ctx: BotContext, query: string, scope: PeopleScope,
  */
 export async function runPeopleSearch(ctx: BotContext, query: string, scope: PeopleScope): Promise<PersonHit[]> {
   const deps = ctx.deps;
-  const easter = scope !== "student" && isErshovQuery(query);
-  if (easter) await sendErshovCard(ctx);
-  // После пасхалки ищем только однофамильцев: иначе «Кирилл Ершов» открыл бы любого Кирилла.
-  if (easter) query = ERSHOV_SURNAME;
+  if (scope !== "student" && isErshovQuery(query)) {
+    // Пасхалка. Однофамильцы — только кнопками: сам открытый «Ершов П.» из
+    // расписания выглядел бы ответом на «спорторг».
+    await sendErshovCard(ctx);
+    const namesakes = await ershovNamesakes(deps, query, { id: ctx.user.id, isAdmin: ctx.isAdmin });
+    if (namesakes.length) await ctx.reply("А это однофамильцы в расписании:", { reply_markup: candidatesKeyboard(namesakes, "teacher") });
+    return namesakes;
+  }
   await ctx.replyWithChatAction("typing").catch(() => undefined);
   const res = await searchPeople(deps, query, { scope, viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск" });
   if (scope === "student" && res.students === "limit") {
@@ -308,13 +357,12 @@ export async function runPeopleSearch(ctx: BotContext, query: string, scope: Peo
     return [];
   }
   if (!res.hits.length) {
-    // Пасхалка уже ответила — «никого не нашёл» после неё звучало бы странно.
-    if (!easter) await replyNotFound(ctx, query, scope, res.students);
+    await replyNotFound(ctx, query, scope, res.students);
     return [];
   }
   const clear = clearHit(res.hits);
   if (clear) {
-    await showPerson(ctx, clear.ref, todayMsk(), { others: tiedWith(res.hits, clear) });
+    await showPerson(ctx, clear.ref, todayMsk(), { others: tiedWith(res.hits, clear), self: clear });
     return res.hits;
   }
   const exact = res.hits.some((h) => !h.fuzzy);
@@ -345,7 +393,8 @@ peopleHandlers.callbackQuery(new RegExp(`^ppo:${KEY}$`), async (ctx) => {
   if (!ref) return;
   // В журнале должен стоять тот, кого реально открыли, а не первый из подсказок.
   if (ref.kind === "student" && studentsEnabled(ctx.deps)) ctx.deps.repo.markPoiskChoice(ctx.user.id, todayMsk(), ref.id);
-  await showPerson(ctx, ref, todayMsk());
+  const around = tiesAround(ctx.user.id, refKey(ref));
+  await showPerson(ctx, ref, todayMsk(), around ?? {});
 });
 
 // Выбор конкретной группы, когда под одним номером их несколько.

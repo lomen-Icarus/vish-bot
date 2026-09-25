@@ -7,7 +7,7 @@ import { featuresSections, featuresText, needGroup } from "../views.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
 import { candidatesKeyboard, showPerson } from "../people.js";
-import { ERSHOV_SURNAME, isErshovQuery, sendErshovCard } from "../easter.js";
+import { ershovNamesakes, isErshovQuery, sendErshovCard } from "../easter.js";
 import { clearHit, hitLabel, hitShort, searchPeople, tiedWith, type PersonHit } from "../../people/search.js";
 import { refKey } from "../../people/ref.js";
 import { clampHtml, esc } from "../../schedule/format.js";
@@ -337,8 +337,8 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   if (isErshovQuery(query)) {
     // Пасхалка. Настоящих однофамильцев не прячем — кнопками следом, но без ИИ.
     await sendErshovCard(ctx);
-    const found = await searchPeople(deps, ERSHOV_SURNAME, { scope: "teacher", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск" });
-    if (found.hits.length) await ctx.reply("А это однофамильцы в расписании:", { reply_markup: candidatesKeyboard(found.hits, "teacher") });
+    const namesakes = await ershovNamesakes(deps, query, { id: ctx.user.id, isAdmin: ctx.isAdmin });
+    if (namesakes.length) await ctx.reply("А это однофамильцы в расписании:", { reply_markup: candidatesKeyboard(namesakes, "teacher") });
     return;
   }
   const hits = await localSearch(ctx, query);
@@ -346,7 +346,7 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   // из кнопок «Преподаватели» и «Где студент»: кто это, где сейчас, день.
   const person = hits.onlyPeople ? clearHit(hits.people) : null;
   if (person) {
-    await showPerson(ctx, person.ref, todayMsk(), { others: tiedWith(hits.people, person) });
+    await showPerson(ctx, person.ref, todayMsk(), { others: tiedWith(hits.people, person), self: person });
     return;
   }
   if (deps.ask) {
