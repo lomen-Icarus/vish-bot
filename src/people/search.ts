@@ -14,6 +14,7 @@ import { shortName, samePerson } from "../text/match.js";
 import { todayMsk } from "../time.js";
 import { teacherMapKey } from "../portal/teachers.js";
 import { studentsEnabled } from "./profile.js";
+import { shortGroupTitle } from "../schedule/groups.js";
 import { webinarNameKey, type PersonRef, type PersonRole } from "./ref.js";
 
 export type PeopleScope = "teacher" | "student" | "all";
@@ -123,9 +124,14 @@ export function clearHit(hits: PersonHit[]): PersonHit | null {
   return null;
 }
 
+/** Кто подходил так же точно, как выбранный: их показывают кнопками под карточкой. */
+export function tiedWith(hits: PersonHit[], chosen: PersonHit): PersonHit[] {
+  return hits.filter((h) => h !== chosen && !h.fuzzy && h.score === chosen.score);
+}
+
 /** «ВИШ-12-23» → «12-23»: короче в кнопке. */
 function shortGroup(title: string | undefined): string {
-  return (title ?? "").replace(/^ВИШ-/, "").replace(/\s*\((.*?)\)\s*$/, " $1");
+  return shortGroupTitle(title ?? "");
 }
 
 /** Подпись кнопки с человеком — одна и та же в любом разделе бота. */

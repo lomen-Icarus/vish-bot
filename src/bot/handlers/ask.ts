@@ -12,7 +12,7 @@ import { aiAllowance, aiLimits } from "../../ai/limits.js";
 import type { AskMentions } from "../../ai/ask.js";
 import { teacherVishTag } from "./teachers.js";
 import { showPerson, webinarRef } from "../people.js";
-import { hitLabel } from "../../people/search.js";
+import { hitLabel, searchPeople } from "../../people/search.js";
 import { refKey, type PersonRef } from "../../people/ref.js";
 import { samePerson } from "../../text/match.js";
 import { logger } from "../../logger.js";
@@ -37,12 +37,14 @@ let inFlightGlobal = 0;
  */
 export async function askAi(ctx: BotContext, question: string, opts: { extraButtons?: InlineKeyboard } = {}): Promise<AskOutcome> {
   const ask = ctx.deps.ask;
-  if (!ask) return "disabled";
-  // Пасхалка про того, с чьей подачи в боте появились преподаватели.
+  // Пасхалка про того, с чьей подачи в боте появились преподаватели. Если в
+  // расписании есть настоящий однофамилец, вопрос идёт дальше, к ИИ.
   if (isErshovQuery(question)) {
     await sendErshovCard(ctx);
-    return "answered";
+    const real = await searchPeople(ctx.deps, question, { scope: "teacher", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "ии", localOnly: true }).catch(() => null);
+    if (!ask || !real?.hits.length) return "answered";
   }
+  if (!ask) return "disabled";
   const day = todayMsk();
   const { verdict } = aiAllowance(ctx.deps.repo, ctx.deps.config, ctx.user.id, ctx.isAdmin, day, { user: inFlightByUser.get(ctx.user.id) ?? 0, global: inFlightGlobal });
   if (verdict !== "ok") return verdict;

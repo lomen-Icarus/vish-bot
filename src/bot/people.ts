@@ -13,8 +13,8 @@ import { Composer, InlineKeyboard, InputFile } from "grammy";
 import type { BotContext } from "./context.js";
 import { clearPending, setPending, takePending } from "./context.js";
 import { BTN, groupCb, isMenuText } from "./keyboards.js";
-import { esc, literalLabel } from "../schedule/format.js";
-import { courseFor, parseGroupName, personGroup } from "../schedule/groups.js";
+import { esc } from "../schedule/format.js";
+import { courseFor, parseGroupName, personGroup, shortGroupTitle } from "../schedule/groups.js";
 import type { Occurrence } from "../schedule/model.js";
 import { addDays, fmtDDMM, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
 import { posterPlan, sendPoster } from "./views.js";
@@ -23,7 +23,7 @@ import { logger } from "../logger.js";
 import { isErshovQuery, sendErshovCard } from "./easter.js";
 import { chooseStudentGroup, loadProfile, personDayView, personWeekView, studentsEnabled, type PersonProfile, type PersonView } from "../people/profile.js";
 import { parseRefKey, refKey, webinarNameKey, type PersonRef } from "../people/ref.js";
-import { clearHit, hitLabel, searchPeople, studentSearchAllowed, type PeopleScope, type PersonHit } from "../people/search.js";
+import { clearHit, hitLabel, searchPeople, studentSearchAllowed, tiedWith, type PeopleScope, type PersonHit } from "../people/search.js";
 
 export const peopleHandlers = new Composer<BotContext>();
 
@@ -66,10 +66,6 @@ function scopeOfProfile(p: PersonProfile): PeopleScope {
 }
 
 /** «ВИШ-12-23» → «12-23» для подписи кнопки. */
-function groupShort(title: string): string {
-  return title.replace(/^ВИШ-/, "").replace(/\s*\((.*?)\)\s*$/, " $1");
-}
-
 /** Кнопки под карточкой человека (день или неделя). */
 export function personKeyboard(ctx: BotContext, p: PersonProfile, date: LocalDate, mode: "day" | "week"): InlineKeyboard {
   const key = refKey(p.ref);
@@ -86,7 +82,7 @@ export function personKeyboard(ctx: BotContext, p: PersonProfile, date: LocalDat
     kb.text("📅 День", `pp:${key}:${monday}`).text("🔎 Найти другого", other).row();
   }
   if (p.ref.kind === "teacher") kb.text(ctx.deps.repo.watchesTeacher(ctx.user.id, p.ref.id) ? "🔕 Не следить за преподом" : "👁 Следить за преподом", `twf:${p.ref.id}`);
-  else if (p.role === "student" && p.group) kb.text(`📅 Вся группа ${groupShort(p.group.title)}`, groupCb("pdn", p.group.key, mode === "day" ? date : mondayOf(date)));
+  else if (p.role === "student" && p.group) kb.text(`📅 Вся группа ${shortGroupTitle(p.group.title)}`, groupCb("pdn", p.group.key, mode === "day" ? date : mondayOf(date)));
   return kb;
 }
 
@@ -106,7 +102,7 @@ function isTextMessage(ctx: BotContext): boolean {
  * Открыть человека. `edit` — листаем карточку на месте (стрелки, «Неделя»),
  * иначе новое сообщение, а у преподавателя с учёткой следом приходит фото.
  */
-export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDate, opts: { mode?: "day" | "week"; edit?: boolean } = {}): Promise<boolean> {
+export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDate, opts: { mode?: "day" | "week"; edit?: boolean; others?: PersonHit[] } = {}): Promise<boolean> {
   const mode = opts.mode ?? "day";
   if (ref.kind === "student" && !studentsEnabled(ctx.deps)) return false;
   let p: PersonProfile | null;
@@ -122,6 +118,9 @@ export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDat
   }
   const view = mode === "day" ? await personDayView(ctx.deps, p, date, ctx.user) : await personWeekView(ctx.deps, p, date, ctx.user);
   const kb = view.needsGroup ? groupChoiceKeyboard(p) : personKeyboard(ctx, p, date, mode);
+  // Одинаково подходили и другие — они кнопками под карточкой, чтобы тёзку
+  // можно было открыть, не придумывая другой запрос.
+  for (const h of opts.others?.slice(0, 4) ?? []) kb.row().text(hitLabel(h), `ppo:${refKey(h.ref)}`);
   // Картинкой — как расписание группы, если человек выбрал формат «картинка».
   if (await deliverPersonPoster(ctx, p, view, { mode, date, kb, edit: !!opts.edit })) {
     if (!opts.edit && p.ref.kind === "teacher") await sendTeacherPhoto(ctx, p);
@@ -141,13 +140,6 @@ export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDat
   return true;
 }
 
-/** «ВИШ-12-23 (ЭиЭА)» → «12-23 ЭиЭА»: на постере места мало. */
-function posterGroups(groups: string[] | undefined): string | null {
-  if (!groups?.length) return null;
-  const short = groups.map((g) => g.replace(/^ВИШ-/, "").replace(/\s*\((.*?)\)\s*$/, " $1").trim());
-  return short.length > 3 ? `${short.slice(0, 3).join(", ")}…` : short.join(", ");
-}
-
 /**
  * Карточка человека постером — по той же настройке формата, что и расписание
  * группы (текст / картинка / оба). У преподавателя вместо фамилии в строке
@@ -161,29 +153,26 @@ export async function deliverPersonPoster(
   opts: { mode: "day" | "week"; date: LocalDate; kb: InlineKeyboard; edit: boolean },
 ): Promise<boolean> {
   const renderer = ctx.deps.renderer;
-  if (!renderer || view.failed || view.needsGroup) return false;
+  // Студент без группы в расписании: пустой постер читался бы как «пар нет».
+  if (!renderer || view.failed || view.needsGroup || (p.role === "student" && !p.group)) return false;
   const plan = posterPlan(ctx, { edit: opts.edit }, view.lessons.length > 0);
   if (!plan.image) return false;
-  const teacher = p.role === "teacher";
-  const lessons = teacher
-    ? view.lessons.map((o) => {
-        const g = posterGroups(o.groups);
-        return { ...o, teacher: g ? literalLabel(g) : null };
-      })
-    : view.lessons;
-  const teacherView = teacher ? ("plain" as const) : ctx.user.teacherView;
+  // У преподавателя в строке пары — группы: фамилия там его же.
+  const labels = p.role === "teacher" ? ("groups" as const) : undefined;
+  const lessons = view.lessons;
+  const teacherView = ctx.user.teacherView;
   const group = personGroup(shortName(p.name), refKey(p.ref));
   const theme = ctx.user.posterTheme ?? undefined;
   const today = todayMsk();
   let png: Buffer;
   try {
     if (opts.mode === "day") {
-      png = await renderer.renderDay({ group, date: opts.date, lessons, weekInfo: ctx.deps.service.weekInfo(opts.date), today, now: wallClock(), theme, teacherView });
+      png = await renderer.renderDay({ group, date: opts.date, lessons, weekInfo: ctx.deps.service.weekInfo(opts.date), today, now: wallClock(), theme, teacherView, labels });
     } else {
       const monday = mondayOf(opts.date);
       const byDate = new Map<LocalDate, Occurrence[]>();
       for (const o of lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
-      png = await renderer.renderWeek({ group, monday, byDate, weekInfo: ctx.deps.service.weekInfo(monday), today, subgroup: null, theme, teacherView });
+      png = await renderer.renderWeek({ group, monday, byDate, weekInfo: ctx.deps.service.weekInfo(monday), today, subgroup: null, theme, teacherView, labels });
     }
   } catch (err) {
     logger.warn({ err: String(err) }, "people: poster render failed, falling back to text");
@@ -308,7 +297,7 @@ export async function runPeopleSearch(ctx: BotContext, query: string, scope: Peo
   }
   const clear = clearHit(res.hits);
   if (clear) {
-    await showPerson(ctx, clear.ref, todayMsk());
+    await showPerson(ctx, clear.ref, todayMsk(), { others: tiedWith(res.hits, clear) });
     return res.hits;
   }
   const exact = res.hits.some((h) => !h.fuzzy);
