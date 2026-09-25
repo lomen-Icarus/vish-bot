@@ -353,4 +353,10 @@ export const MIGRATIONS: string[] = [
   INSERT OR IGNORE INTO meta (key, value)
     SELECT 'chat:limit:chat', value FROM meta WHERE key = 'group:dailyLimit' AND CAST(value AS INTEGER) > 0;
   `,
+  // Журнал отправок растёт с каждой рассылкой: индексы, чтобы /soon (удаление
+  // по пользователю) и ночная чистка (по дате) не перебирали всю таблицу.
+  `
+  CREATE INDEX IF NOT EXISTS notifications_log_user ON notifications_log (user_id);
+  CREATE INDEX IF NOT EXISTS notifications_log_sent ON notifications_log (sent_at);
+  `,
 ];

@@ -62,14 +62,17 @@ const optOutKey = (userId: number): string => `tmode:off:${userId}`;
 
 /**
  * Выключил ли человек режим сам. До этой метки /prepod только снимал
- * teacher_mode, поэтому «ФИО есть, режима нет» у тех, кто выключал его раньше,
- * — тоже отказ (кроме ожидания выбора себя из тёзок на /start).
+ * teacher_mode, поэтому у тех, кто выключал его раньше, осталось «ФИО и
+ * преподаватель из справочника есть, режима нет» — это тоже отказ.
+ *
+ * ФИО без преподавателя из справочника — не отказ: так выглядел брошенный
+ * выбор себя из тёзок (до метки tmode:fio ФИО клали в teacher_name). Реже так
+ * выглядит и режим, включённый без находки в справочнике и потом выключенный,
+ * — такого человека /start встретит ещё раз, а /prepod выключит уже насовсем.
  */
 function optedOut(ctx: BotContext): boolean {
   if (ctx.deps.repo.getMeta(optOutKey(ctx.user.id))) return true;
-  // Исключение — выбор себя из тёзок, начатый до метки tmode:fio: тогда ФИО
-  // ещё клали в teacher_name.
-  return !!ctx.user.teacherName && !ctx.user.teacherMode && !ctx.deps.repo.getMeta(pendingWelcomeKey(ctx.user.id));
+  return !!ctx.user.teacherName && !!ctx.user.teacherRef && !ctx.user.teacherMode && !ctx.deps.repo.getMeta(pendingWelcomeKey(ctx.user.id));
 }
 
 function switchOn(ctx: BotContext, fio: string, ref: PersonRef | null): void {
@@ -127,10 +130,10 @@ teacherModeHandlers.command("prepod", async (ctx) => {
     // Несколько полных тёзок — пусть человек сам скажет, кто он.
     const kb = new InlineKeyboard();
     for (const h of hits.slice(0, 6)) kb.text(`👨‍🏫 ${h.name}${h.vish ? " (ВИШ)" : ""}`.slice(0, 60), `tmode:${refKey(h.ref)}`).row();
+    const sent = await ctx.reply(`В справочнике несколько «${esc(fio)}». Кто из них ты?`, { parse_mode: "HTML", reply_markup: kb });
     // ФИО до выбора — в отдельной метке: в teacher_name оно значило бы «режим
     // уже включали», и /start счёл бы, что человек сам его выключил.
-    deps.repo.setMeta(pendingFioKey(ctx.user.id), fio);
-    await ctx.reply(`В справочнике несколько «${esc(fio)}». Кто из них ты?`, { parse_mode: "HTML", reply_markup: kb });
+    savePendingFio(ctx, sent.message_id, fio);
     return;
   }
   await enable(ctx, fio, hits[0]?.ref ?? null);
@@ -138,7 +141,7 @@ teacherModeHandlers.command("prepod", async (ctx) => {
 
 teacherModeHandlers.callbackQuery(/^tmode:([tw][A-Za-z0-9_-]{1,16})$/, async (ctx) => {
   const ref = parseRefKey(ctx.match[1]!);
-  const fio = ctx.deps.repo.getMeta(pendingFioKey(ctx.user.id)) || ctx.deps.repo.getUser(ctx.user.id)?.teacherName || registryName(ctx);
+  const fio = pendingFio(ctx, ctx.callbackQuery.message?.message_id) || ctx.deps.repo.getUser(ctx.user.id)?.teacherName || registryName(ctx);
   if (!ref || !fio) return void (await ctx.answerCallbackQuery());
   // Двойной тап: второй апдейт видит уже включённый режим и ничего не шлёт.
   const fresh = ctx.deps.repo.getUser(ctx.user.id);
@@ -156,8 +159,39 @@ teacherModeHandlers.callbackQuery(/^tmode:([tw][A-Za-z0-9_-]{1,16})$/, async (ct
 
 /** Полные тёзки в справочнике: приветствие ждёт, пока преподаватель выберет себя. */
 const pendingWelcomeKey = (userId: number): string => `tmode:welcome:${userId}`;
-/** ФИО из реестра, пока преподаватель выбирает себя из тёзок. */
+/**
+ * ФИО, пока преподаватель выбирает себя из тёзок, — по сообщению с кнопками:
+ * админ может открыть два выбора подряд (/prepod Петров, /prepod Иванов), и
+ * кнопка из первого не должна получить ФИО из второго. Хранятся последние 5.
+ */
 const pendingFioKey = (userId: number): string => `tmode:fio:${userId}`;
+
+function pendingFios(ctx: BotContext): Record<string, string> {
+  const raw = ctx.deps.repo.getMeta(pendingFioKey(ctx.user.id));
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function savePendingFio(ctx: BotContext, messageId: number, fio: string): void {
+  const all = pendingFios(ctx);
+  all[String(messageId)] = fio;
+  const ids = Object.keys(all);
+  for (const id of ids.slice(0, Math.max(0, ids.length - 5))) delete all[id];
+  ctx.deps.repo.setMeta(pendingFioKey(ctx.user.id), JSON.stringify(all));
+}
+
+/** ФИО для нажатой кнопки: по её сообщению, а если выбор один — его. */
+function pendingFio(ctx: BotContext, messageId: number | undefined): string | null {
+  const all = pendingFios(ctx);
+  if (messageId != null && all[String(messageId)]) return all[String(messageId)]!;
+  const values = Object.values(all);
+  return values.length === 1 ? values[0]! : null;
+}
 
 /**
  * Первая встреча с преподавателем из реестра: по имени-отчеству, сразу его
@@ -197,9 +231,9 @@ export async function autoTeacherStart(ctx: BotContext): Promise<boolean> {
   if (hits.length > 1) {
     const kb = new InlineKeyboard();
     for (const h of hits.slice(0, 6)) kb.text(`👨‍🏫 ${h.name}${h.vish ? " (ВИШ)" : ""}`.slice(0, 60), `tmode:${refKey(h.ref)}`).row();
-    ctx.deps.repo.setMeta(pendingFioKey(ctx.user.id), fio);
     ctx.deps.repo.setMeta(pendingWelcomeKey(ctx.user.id), "1");
-    await ctx.reply(`Здравствуйте, ${esc(nameAndPatronymic(fio))}! Рад вас видеть 👋\n\nВ справочнике портала несколько «${esc(fio)}». Кто из них вы?`, { parse_mode: "HTML", reply_markup: kb });
+    const sent = await ctx.reply(`Здравствуйте, ${esc(nameAndPatronymic(fio))}! Рад вас видеть 👋\n\nВ справочнике портала несколько «${esc(fio)}». Кто из них вы?`, { parse_mode: "HTML", reply_markup: kb });
+    savePendingFio(ctx, sent.message_id, fio);
     return true;
   }
   const ref = hits[0]?.ref ?? null;

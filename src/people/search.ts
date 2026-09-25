@@ -12,7 +12,7 @@
 import type { Deps } from "../bot/context.js";
 import { shortName, samePerson } from "../text/match.js";
 import { todayMsk } from "../time.js";
-import { teacherMapKey } from "../portal/teachers.js";
+import { teacherMapByName } from "../portal/teachers.js";
 import { studentsEnabled } from "./profile.js";
 import { shortGroupTitle } from "../schedule/groups.js";
 import { webinarNameKey, type PersonRef, type PersonRole } from "./ref.js";
@@ -55,7 +55,7 @@ export interface PeopleSearchOptions {
 }
 
 function teacherVish(deps: Deps, teacherId: number | null, name: string): boolean {
-  const row = (teacherId != null ? deps.repo.teacherMapById(teacherId) : null) ?? deps.repo.teacherMapByKey(teacherMapKey(null, name));
+  const row = (teacherId != null ? deps.repo.teacherMapById(teacherId) : null) ?? teacherMapByName(deps.repo, name);
   return row?.vish === true;
 }
 

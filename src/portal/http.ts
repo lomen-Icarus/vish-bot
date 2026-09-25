@@ -86,13 +86,14 @@ export class PortalHttp {
    * отвечает 302 (на картинку или на страницу входа), а сам fetch у нас с
    * redirect: "manual" — без этого фото просто не приходило.
    */
-  async getBytesFollow(url: string, maxBytes = 5 * 1024 * 1024): Promise<{ status: number; bytes: Buffer; contentType: string } | null> {
+  async getBytesFollow(url: string, maxBytes = 5 * 1024 * 1024, homeHost = new URL(url).host): Promise<{ status: number; bytes: Buffer; contentType: string } | null> {
     let current = url;
-    const home = new URL(url).host;
+    const home = homeHost;
     // Кука сессии портала уходит с каждым запросом. Редирект может увести на
     // чужой хост (CDN или открытый редирект) — туда идём уже без куки, и
-    // Set-Cookie оттуда в банку не кладём.
-    let anonymous = false;
+    // Set-Cookie оттуда в банку не кладём. Хост сравниваем с порталом, а не с
+    // первым адресом: фото может сразу лежать на чужом хосте.
+    let anonymous = new URL(url).host !== home;
     for (let i = 0; i < 4; i++) {
       const res = await this.request(current, { method: "GET", binary: true, maxBytes, anonymous });
       if (res.status >= 300 && res.status < 400 && res.location) {
@@ -117,10 +118,13 @@ export class PortalHttp {
   /** GET that follows same-origin redirects (max 5). */
   async getFollow(url: string): Promise<HttpResponse> {
     let current = url;
+    const origin = new URL(url).origin;
     for (let i = 0; i < 5; i++) {
       const res = await this.get(current);
       if (res.status >= 300 && res.status < 400 && res.location) {
         current = new URL(res.location, current).toString();
+        // Кука сессии (под учёткой) не должна уйти на чужой хост или по http.
+        if (new URL(current).origin !== origin) throw new PortalHttpError(`Redirect off the portal: ${new URL(current).origin}`);
         continue;
       }
       return res;
@@ -164,12 +168,19 @@ export class PortalHttp {
             throw new PortalHttpError(`HTTP ${res.status} from ${url}`, res.status);
           }
           if (init.binary) {
-            const buf = Buffer.from(await res.arrayBuffer());
             const limit = init.maxBytes ?? 5 * 1024 * 1024;
+            // Больше предела — не качаем целиком и не отдаём обрезок: обрезанный
+            // JPEG ушёл бы в Telegram битой картинкой.
+            const declared = Number(res.headers.get("content-length") ?? 0);
+            if (declared > limit) {
+              await res.body?.cancel().catch(() => undefined);
+              return { status: res.status, body: "", bytes: undefined, contentType: res.headers.get("content-type") ?? undefined, location: res.headers.get("location") ?? undefined, url };
+            }
+            const buf = Buffer.from(await res.arrayBuffer());
             return {
               status: res.status,
               body: "",
-              bytes: buf.length > limit ? buf.subarray(0, limit) : buf,
+              bytes: buf.length > limit ? undefined : buf,
               contentType: res.headers.get("content-type") ?? undefined,
               location: res.headers.get("location") ?? undefined,
               url,

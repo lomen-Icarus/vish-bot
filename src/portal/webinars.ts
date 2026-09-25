@@ -58,10 +58,22 @@ function norm(s: string): string {
   return s.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
 }
 
-/** "ВИШ-12-23иот (ИОТ)" and "ВИШ-12-23" describe the same students. */
-function sameGroup(a: string, b: string): boolean {
-  const clean = (x: string) => norm(x).replace(/\s*\(.*?\)\s*/g, "").replace(/иот$/, "").replace(/\s*ин$/, "").trim();
-  return clean(a) === clean(b);
+/**
+ * "ВИШ-12-23иот (ИОТ)" and "ВИШ-12-23" describe the same students. А вот
+ * «ВИШ-11-23 (ЭиЭА)» и «ВИШ-11-23 (РЗиАЭС)» — разные группы: раньше скобки
+ * срезались целиком, и вебинар одной группы подставлялся паре другой. Если
+ * профиль указан только с одной стороны — считаем той же группой, как раньше.
+ */
+export function sameGroup(a: string, b: string): boolean {
+  const split = (x: string) => {
+    const s = norm(x).replace(/\s*\((?:иот|ин)\)\s*/g, " ").trim();
+    const qualifier = /\(([^)]*)\)/.exec(s)?.[1]?.trim() ?? "";
+    const base = s.replace(/\s*\(.*?\)\s*/g, "").replace(/иот$/, "").replace(/\s*ин$/, "").trim();
+    return { base, qualifier };
+  };
+  const x = split(a);
+  const y = split(b);
+  return x.base === y.base && (!x.qualifier || !y.qualifier || x.qualifier === y.qualifier);
 }
 
 interface LessonLike {

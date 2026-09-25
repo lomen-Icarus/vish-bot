@@ -9,11 +9,11 @@
 import { Composer, InlineKeyboard, InputFile } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { esc } from "../../schedule/format.js";
+import { clampHtml, esc } from "../../schedule/format.js";
 import { addChatBonus, CHAT_BONUS_STEP, CHAT_STEPS, chatLimits, resetChatLimits, setChatLimit, type ChatLimitKind } from "../../chat/limits.js";
 import { decodeText, qaLine } from "../../chat/qa.js";
 import { stepValue } from "../../ai/limits.js";
-import { chatEnabled } from "./groupChat.js";
+import { chatEnabled, switchChat } from "./groupChat.js";
 import { todayMsk } from "../../time.js";
 import { logger } from "../../logger.js";
 
@@ -114,7 +114,7 @@ adminOnly.command("chats", async (ctx) => showChat(ctx));
 adminOnly.callbackQuery(/^gch:(on|off):(-?\d{1,20})$/, async (ctx) => {
   const on = ctx.match[1] === "on";
   const chatId = Number(ctx.match[2]);
-  ctx.deps.repo.upsertChatGroup(chatId, { enabled: on });
+  switchChat(ctx.deps, chatId, on);
   await ctx.answerCallbackQuery({ text: on ? "Разрешил: болтаю в этом чате" : "Выключил: в этом чате молчу" });
   const title = ctx.deps.repo.chatGroup(chatId)?.title ?? String(chatId);
   await ctx.editMessageText(`${on ? "✅ Болтаю" : "⛔ Молчу"} в чате «${esc(title)}». Все чаты и лимиты: /chats`, { parse_mode: "HTML" }).catch(() => undefined);
@@ -152,7 +152,7 @@ adminOnly.callbackQuery(/^chg:(-?\d{1,20})$/, async (ctx) => {
   const chatId = Number(ctx.match[1]);
   const cur = ctx.deps.repo.chatGroup(chatId);
   const enabled = !(cur?.enabled ?? false);
-  ctx.deps.repo.upsertChatGroup(chatId, { enabled });
+  switchChat(ctx.deps, chatId, enabled);
   await ctx.answerCallbackQuery({ text: enabled ? "Болталка в чате включена" : "Болталка в чате выключена" });
   await showChat(ctx, true);
 });
@@ -186,8 +186,9 @@ adminOnly.command(["qa", "replies"], async (ctx) => {
     .entries()
     .slice(0, 30)
     .map((e, i) => `${i + 1}. ${esc(e.questions.join(" | ").slice(0, 60))} → ${esc(e.answer.length > 70 ? `${e.answer.slice(0, 70)}…` : e.answer)}`);
+  // Тридцать длинных заготовок и справка вместе могут не влезть в 4096 символов.
   await ctx.reply(
-    [
+    clampHtml([
       "<b>🗂 Сценарий болталки</b>",
       `Файл: <code>${esc(st.file)}</code> · заготовок: <b>${st.count}</b>${st.skipped ? ` · пропущено строк: ${st.skipped}` : ""}${st.error ? ` · ${esc(st.error)}` : ""}`,
       ...(sample.length ? ["", ...sample, st.count > 30 ? `…и ещё ${st.count - 30} — весь файл: /qa_file` : ""] : []),
@@ -202,7 +203,7 @@ adminOnly.command(["qa", "replies"], async (ctx) => {
       QA_FORMAT_HELP,
     ]
       .filter((x) => x !== "")
-      .join("\n"),
+      .join("\n")),
     { parse_mode: "HTML" },
   );
 });
@@ -252,7 +253,12 @@ adminOnly.command(["qa_del", "reply_del"], async (ctx) => {
   if (!chat) return void (await ctx.reply("Болталка выключена."));
   const arg = (ctx.match ?? "").trim().replace(/^#/, "");
   if (!arg) return void (await ctx.reply("Так: <code>/qa_del 3</code> (номер из /qa) или <code>/qa_del как дела</code>.", { parse_mode: "HTML" }));
-  const removed = /^\d+$/.test(arg) ? chat.qa.removeAt(Number(arg)) : chat.qa.remove(arg);
+  let removed: number;
+  try {
+    removed = /^\d+$/.test(arg) ? chat.qa.removeAt(Number(arg)) : chat.qa.remove(arg);
+  } catch (err) {
+    return void (await ctx.reply(`Не удалил: ${err instanceof Error ? err.message : String(err)}.`));
+  }
   await ctx.reply(removed ? `Удалил (${removed}). Заготовок теперь: ${chat.qa.stats().count}. Старая версия файла — рядом, .bak.` : "Такой заготовки нет. Список с номерами: /qa");
 });
 

@@ -51,7 +51,11 @@ export function createBot(deps: Deps): Bot<BotContext> {
       await next();
       return;
     }
-    if (!from || from.is_bot) return;
+    // Анонимный админ группы пишет от @GroupAnonymousBot (is_bot): такие
+    // сообщения пропускаем только в чатах-источниках новостей — там пост
+    // «#всем» от имени чата законный.
+    const anonymousAdminNews = !!from?.is_bot && !!ctx.msg?.sender_chat && ctx.chat?.type !== "private" && deps.config.NEWS_CHANNEL_IDS.includes(ctx.chat?.id ?? 0);
+    if (!from || (from.is_bot && !anonymousAdminNews)) return;
     // Пользователем бот считает того, кто пишет ему в личку (или жмёт кнопки
     // там). Inline-запрос и реплика в группе — ещё не знакомство.
     const privateChat = ctx.chat?.type === "private";
@@ -117,7 +121,9 @@ export function createBot(deps: Deps): Bot<BotContext> {
     const ctx = err.ctx;
     const e = err.error;
     if (e instanceof GrammyError) {
-      if (e.error_code === 403 && ctx.from) {
+      // «Заблокировал бота» — только если отказ пришёл из его же лички; 403 из
+      // группы (бота выгнали, нет прав писать) не повод глушить ему уведомления.
+      if (e.error_code === 403 && ctx.from && ctx.chat?.type === "private") {
         deps.repo.updateUser(ctx.from.id, { blocked: true });
         logger.info({ userId: ctx.from.id }, "user blocked the bot");
         return;

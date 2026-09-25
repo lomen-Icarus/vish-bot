@@ -164,26 +164,28 @@ export function groupPicker(groups: LogicalGroup[], opts: { prefix?: string; sel
  * ("d:<date>"); with it they carry the group key ("pd:<key>:<date>").
  */
 export function dayNav(date: LocalDate, today: LocalDate, opts: { image: boolean; peekKey?: string }): InlineKeyboard {
-  const d = (x: LocalDate) => (opts.peekKey ? `pd:${opts.peekKey}:${x}` : `d:${x}`);
-  const w = (x: LocalDate) => (opts.peekKey ? `pw:${opts.peekKey}:${x}` : `w:${x}`);
+  // Ключ группы бывает длинным («виш-11-23 (радиотехника и …)»): groupCb
+  // укладывает его в 64 байта callback_data, service.group() узнаёт обрезанный.
+  const d = (x: LocalDate) => (opts.peekKey ? groupCb("pd", opts.peekKey, x) : `d:${x}`);
+  const w = (x: LocalDate) => (opts.peekKey ? groupCb("pw", opts.peekKey, x) : `w:${x}`);
   // No "сегодня" button between the arrows: people read it as the date they are on.
   const kb = new InlineKeyboard().text(`◀️ ${fmtDDMM(addDays(date, -1))}`, d(addDays(date, -1))).text(`${fmtDDMM(addDays(date, 1))} ▶️`, d(addDays(date, 1))).row();
   kb.text("🗓 Неделя", w(date));
-  if (opts.image) kb.text("🖼 Картинкой", opts.peekKey ? `pimg:${opts.peekKey}:${date}` : `img:${date}`);
-  if (opts.peekKey) kb.row().text("✅ Сделать моей группой", `g:${opts.peekKey}`);
+  if (opts.image) kb.text("🖼 Картинкой", opts.peekKey ? groupCb("pimg", opts.peekKey, date) : `img:${date}`);
+  if (opts.peekKey) kb.row().text("✅ Сделать моей группой", groupCb("g", opts.peekKey));
   return kb;
 }
 
 export function weekNav(monday: LocalDate, opts: { image: boolean; peekKey?: string }): InlineKeyboard {
-  const w = (x: LocalDate) => (opts.peekKey ? `pw:${opts.peekKey}:${x}` : `w:${x}`);
-  const d = (x: LocalDate) => (opts.peekKey ? `pd:${opts.peekKey}:${x}` : `d:${x}`);
+  const w = (x: LocalDate) => (opts.peekKey ? groupCb("pw", opts.peekKey, x) : `w:${x}`);
+  const d = (x: LocalDate) => (opts.peekKey ? groupCb("pd", opts.peekKey, x) : `d:${x}`);
   const kb = new InlineKeyboard()
     .text("◀️ пред.", w(addDays(monday, -7)))
-    .text("текущая", opts.peekKey ? `pw:${opts.peekKey}:today` : "w:today")
+    .text("текущая", opts.peekKey ? groupCb("pw", opts.peekKey, "today") : "w:today")
     .text("след. ▶️", w(addDays(monday, 7)))
     .row()
     .text("📅 День", d(monday));
-  if (opts.image) kb.text("🖼 Картинкой", opts.peekKey ? `pwimg:${opts.peekKey}:${monday}` : `wimg:${monday}`);
+  if (opts.image) kb.text("🖼 Картинкой", opts.peekKey ? groupCb("pwimg", opts.peekKey, monday) : `wimg:${monday}`);
   if (!opts.peekKey) kb.text("📆 В календарь", "ics:menu");
   return kb;
 }
@@ -290,11 +292,15 @@ export const TOPIC_HINTS: Record<string, string> = {
   events: "жизнь школы: Тайный Санта, Масленица, защиты проектов, встречи",
 };
 
-/** Hashtags that route a channel post to a topic. */
+/**
+ * Hashtags that route a channel post to a topic. Окончания — любые буквы
+ * (\w в JS — только латиница даже с флагом u), а в конце — граница слова:
+ * иначе «#сантехника» уходила в события через «санта».
+ */
 export const TOPIC_HASHTAGS: Record<Topic, RegExp> = {
-  contests: /#(конкурс|конкурсы|стипенди\w*|конференци\w*|грант\w*|олимпиад\w*|хакатон\w*|возможност\w*)/iu,
-  announcements: /#(объявлени\w*|срочно|важно|дистант\w*|отмена|дедлайн\w*)/iu,
-  events: /#(событи\w*|мероприят\w*|санта|масленица|защит\w*|праздник\w*|встреча)/iu,
+  contests: /#(?:конкурс|стипенди|конференци|грант|олимпиад|хакатон|возможност)[\p{L}\p{N}_]*/iu,
+  announcements: /#(?:объявлени|срочн|важн|дистант|отмен|дедлайн)[\p{L}\p{N}_]*/iu,
+  events: /#(?:(?:событи|мероприят|маслениц|защит|праздник|встреч)[\p{L}\p{N}_]*|санта(?!\p{L}))/iu,
 };
 
 export function onboardingKeyboard(): InlineKeyboard {

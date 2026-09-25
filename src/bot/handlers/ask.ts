@@ -12,11 +12,11 @@ import { aiAllowance, aiLimits } from "../../ai/limits.js";
 import type { AskMentions } from "../../ai/ask.js";
 import { teacherVishTag } from "./teachers.js";
 import { showPerson, webinarRef } from "../people.js";
-import { hitLabel, searchPeople } from "../../people/search.js";
+import { hitLabel } from "../../people/search.js";
 import { refKey, type PersonRef } from "../../people/ref.js";
 import { samePerson } from "../../text/match.js";
 import { logger } from "../../logger.js";
-import { ERSHOV_SURNAME, isErshovQuery, sendErshovCard } from "../easter.js";
+import { ershovNamesakes, isErshovQuery, sendErshovCard } from "../easter.js";
 
 export const askHandlers = new Composer<BotContext>();
 
@@ -41,17 +41,19 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   // расписании есть настоящий однофамилец, вопрос идёт дальше, к ИИ.
   if (isErshovQuery(question)) {
     await sendErshovCard(ctx);
-    const real = await searchPeople(ctx.deps, ERSHOV_SURNAME, { scope: "teacher", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "ии", localOnly: true }).catch(() => null);
-    if (!ask || !real?.hits.length) return "answered";
+    const real = await ershovNamesakes(ctx.deps, question, { id: ctx.user.id, isAdmin: ctx.isAdmin });
+    if (!ask || !real.length) return "answered";
   }
   if (!ask) return "disabled";
   const day = todayMsk();
   const { verdict } = aiAllowance(ctx.deps.repo, ctx.deps.config, ctx.user.id, ctx.isAdmin, day, { user: inFlightByUser.get(ctx.user.id) ?? 0, global: inFlightGlobal });
   if (verdict !== "ok") return verdict;
-  await ctx.replyWithChatAction("typing");
+  // Счётчики — сразу после проверки, до первого await: иначе параллельные
+  // вопросы успевали пройти проверку, пока шёл «печатает…», и лимит пробивался.
   inFlightByUser.set(ctx.user.id, (inFlightByUser.get(ctx.user.id) ?? 0) + 1);
   inFlightGlobal++;
   try {
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
     const self = ctx.user.teacherMode ? await ownTeacherContext(ctx) : undefined;
     const res = await ask.answer({ question, group: self ? null : needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps), self });
     ctx.deps.repo.bumpAiUsage(ctx.user.id, day, res.inputTokens, res.outputTokens);

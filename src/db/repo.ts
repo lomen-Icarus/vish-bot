@@ -799,6 +799,9 @@ export class Repo {
     this.db.transaction(() => {
       for (const sql of [
         "DELETE FROM watch_groups WHERE user_id = ?",
+        // Подписки на преподавателей: иначе после /soon и нового сообщения они
+        // оживали, и вечерние напоминания приходили снова.
+        "DELETE FROM watch_teachers WHERE user_id = ?",
         "DELETE FROM reminders_sent WHERE user_id = ?",
         "DELETE FROM notifications_log WHERE user_id = ?",
         // ai_usage stays: it is spend accounting and also backs the global daily
@@ -824,6 +827,12 @@ export class Repo {
   pruneReminders(olderThanDays = 14): void {
     const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString();
     this.db.prepare("DELETE FROM reminders_sent WHERE sent_at < ?").run(cutoff);
+  }
+
+  /** Журнал отправок никто не читает — это только отладка: держим месяц. */
+  pruneNotificationsLog(olderThanDays = 30): void {
+    const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString();
+    this.db.prepare("DELETE FROM notifications_log WHERE sent_at < ?").run(cutoff);
   }
 
   logNotification(userId: number, kind: string, ok: boolean, error?: string): void {

@@ -86,6 +86,10 @@ export function diffOccurrences(prev: Occurrence[], next: Occurrence[], opts: { 
   }
 
   // A scheduled lesson turning into a vacated placeholder is a move when the target is visible.
+  // Такая цель уже есть среди «added» (с исходным местом её не сопоставить —
+  // оно не пропало, а стало пометкой «перенесено»): её «added» убираем, иначе
+  // перенос приходил дважды — «🔁 28.09 → 30.09» и «➕ 30.09 … перенос с 28.09».
+  const converted = new Set<string>();
   return events
     .map((e) => {
       if (e.kind === "changed" && e.before && e.after && e.after.status === "moved" && e.before.status === "scheduled" && e.after.movedTo) {
@@ -95,11 +99,12 @@ export function diffOccurrences(prev: Occurrence[], next: Occurrence[], opts: { 
           // unless it did not (target outside window), in which case report the move here.
           const alreadyMoved = events.some((x) => x.kind === "moved" && x.after === target);
           if (alreadyMoved) return null;
+          converted.add(positionKey(target));
           return { ...e, kind: "moved" as const, after: target, date: target.date };
         }
       }
       return e;
     })
-    .filter((e): e is ChangeEvent => e !== null)
+    .filter((e): e is ChangeEvent => e !== null && !(e.kind === "added" && e.after && converted.has(positionKey(e.after))))
     .sort((a, b) => a.date.localeCompare(b.date) || (a.after?.slot ?? a.before?.slot ?? 0) - (b.after?.slot ?? b.before?.slot ?? 0));
 }

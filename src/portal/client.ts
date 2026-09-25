@@ -96,6 +96,11 @@ export class PortalClient {
     return !!this.credentials && !this.degraded;
   }
 
+  /** Сессия под учёткой уже открыта (а не просто учётка задана). */
+  get accountSession(): boolean {
+    return this.loggedIn && this.authenticated;
+  }
+
   /** Что показывать в /health: как бот сейчас ходит на портал. */
   mode(): { mode: "guest" | "account" | "degraded"; error: string | null } {
     if (!this.credentials) return { mode: "guest", error: null };
@@ -152,7 +157,10 @@ export class PortalClient {
   }
 
   private async ensureLogin(): Promise<void> {
-    if (!this.loggedIn) await this.login();
+    // Сидим гостем после неудачного входа под учёткой — раз в полчаса пробуем
+    // её снова. Раньше повтор был только внутри login(), а login() не звался,
+    // пока гостевая сессия жива: фамилии пропадали до ночной проверки.
+    if (!this.loggedIn || (this.degraded && Date.now() - this.degradedAt > ACCOUNT_RETRY_MS)) await this.login();
   }
 
   /** POST + follow, retrying once after a fresh login if the session expired. */
@@ -233,7 +241,12 @@ export class PortalClient {
 
   async getTeacherPage(teacherId: number, period: Period): Promise<{ days: ParsedScheduleDay[]; info: TeacherInfo | null; weekMarker: WeekMarker | null }> {
     const html = await this.authPost(`${PORTAL_BASE}/index/techtt/tech/${teacherId}`, { htype: String(period) });
-    return { days: parseTeacherSchedule(html), info: parseTeacherInfo(html), weekMarker: parseWeekMarker(html) };
+    const days = parseTeacherSchedule(html);
+    const info = parseTeacherInfo(html);
+    // Ни шапки преподавателя, ни пар — это не его страница (главная, техработы):
+    // «пустая неделя» закешировалась бы как правда.
+    if (!info && !days.length) throw new PortalHttpError(`teacher ${teacherId}: not a teacher page`);
+    return { days, info, weekMarker: parseWeekMarker(html) };
   }
 
   /**
@@ -251,21 +264,28 @@ export class PortalClient {
     // видит страницу входа), а фото — нет: протухшая сессия молча отдавала
     // редирект на вход, и фото не появлялось до перезапуска бота.
     for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await this.http.getBytesFollow(url);
+      const res = await this.http.getBytesFollow(url, undefined, new URL(PORTAL_BASE).host);
       if (res && res.bytes.length >= 1024 && /^image\//i.test(res.contentType)) return res.bytes;
-      if (attempt === 0) {
+      // Перелогиниваемся, только если портал правда вернул форму входа: 404 или
+      // заглушка вместо фото — не повод сбрасывать сессию всему боту.
+      const loginPage = !!res && /html/i.test(res.contentType) && isLoginPage(res.bytes.toString("utf8"));
+      if (attempt === 0 && loginPage) {
         logger.info({ url }, "portal: photo came back without an image, re-authenticating");
         this.loggedIn = false;
         await this.login();
         continue;
       }
       logger.warn({ url, status: res?.status ?? null, contentType: res?.contentType ?? null }, "portal: teacher photo unavailable");
+      break;
     }
     return null;
   }
 
   async getWebinars(date: LocalDate, facultyId: number): Promise<Webinar[]> {
     const html = await this.authPost(`${PORTAL_BASE}/webinar`, { seldate: date, selfac: String(facultyId), pertt: "1" });
+    // Не страница вебинаров (главная, техработы) — не «вебинаров нет»: иначе
+    // сохранённые пары дня стирались бы вместе с преподавателями и темами.
+    if (!/name="seldate"/.test(html)) throw new PortalHttpError(`webinars ${date}: not a webinar page`);
     return parseWebinars(html);
   }
 
@@ -281,6 +301,10 @@ export class PortalClient {
     const days = parseGroupSchedule(html);
     const name = parseGroupName(html);
     const pagePeriod = parsePeriod(html);
+    // Настоящая страница группы всегда называет период. Без него и без единой
+    // пары — это главная или техработы: принять её за расписание значило бы
+    // «отменить» все пары группы и разослать это всем подписчикам.
+    if (pagePeriod === null && !days.length) throw new PortalHttpError(`group ${groupId}: not a timetable page`);
     if (pagePeriod !== null && pagePeriod !== period) {
       throw new PortalHttpError(`Portal returned period ${pagePeriod} instead of ${period} for group ${groupId}`);
     }
