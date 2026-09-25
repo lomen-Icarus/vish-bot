@@ -27,6 +27,15 @@ export function chatEnabled(deps: Deps, chatId: number): boolean {
   return deps.config.CHAT_GROUP_IDS.includes(chatId) || deps.repo.chatGroup(chatId)?.enabled === true;
 }
 
+/** Метка «админ выключил болталку в этом чате сам»: такой чат не оживает от упоминания админом. */
+const chatOffKey = (chatId: number): string => `chat:off:${chatId}`;
+
+/** Явно включить или выключить болталку в чате (команды, кнопки админки). */
+export function switchChat(deps: Deps, chatId: number, on: boolean, patch: { title?: string | null; present?: boolean } = {}): void {
+  deps.repo.upsertChatGroup(chatId, { ...patch, enabled: on });
+  deps.repo.setMeta(chatOffKey(chatId), on ? "" : "1");
+}
+
 /** Обращаются ли к боту: @упоминание (в тексте или подписи) или ответ на его сообщение. */
 export function addressedToBot(msg: Message, me: UserFromGetMe): boolean {
   // Пересланное сообщение писали не боту: упоминание в нём чужое, а пересылка
@@ -93,7 +102,9 @@ function limitText(verdict: ChatVerdict): string {
 groupChatHandlers.chatType(["group", "supergroup"]).command(["chaton", "chatoff"], async (ctx) => {
   if (!ctx.isAdmin) return;
   const on = ctx.msg.text.startsWith("/chaton");
-  ctx.deps.repo.upsertChatGroup(ctx.chat.id, { title: ctx.chat.title ?? null, present: true, enabled: on });
+  switchChat(ctx.deps, ctx.chat.id, on, { title: ctx.chat.title ?? null, present: true });
+  // Чат из CHAT_GROUP_IDS включён в .env: отсюда его не выключить, и обещать «молчу» нельзя.
+  if (!on && ctx.deps.config.CHAT_GROUP_IDS.includes(ctx.chat.id)) return void (await ctx.reply("Этот чат включён в настройках бота (CHAT_GROUP_IDS в .env) — выключить его можно только там."));
   if (!on) return void (await ctx.reply("Ок, в этом чате молчу. Включить обратно: /chaton"));
   if (!ctx.deps.chat) return void (await ctx.reply("Чат включён, но болталка выключена в настройках бота (CHAT_AI=FALSE или нет ключа Anthropic)."));
   await ctx.reply(`Привет! Теперь я здесь отвечаю, если меня позвать: «@${ctx.me.username} …» или ответом на моё сообщение.`);
@@ -114,12 +125,14 @@ groupChatHandlers.on("my_chat_member", async (ctx, next) => {
     return;
   }
   // Добавил админ бота — значит, болтать тут можно. Повышение до админа и
-  // прочие смены статуса включённость не трогают.
+  // прочие смены статуса включённость не трогают: иначе /chatoff отменялся
+  // бы, стоило админу бота поменять боту права.
   const byAdmin = deps.config.ADMIN_IDS.includes(ctx.from.id);
-  const enabled = byAdmin || (cur?.present === true && cur.enabled);
-  deps.repo.upsertChatGroup(chat.id, { title, present: true, enabled });
-  logger.info({ chat: chat.id, enabled, byAdmin }, "group chat: bot added");
   const wasPresent = cur?.present === true;
+  const enabled = wasPresent ? cur.enabled : byAdmin;
+  if (!wasPresent && byAdmin) switchChat(deps, chat.id, true, { title, present: true });
+  else deps.repo.upsertChatGroup(chat.id, { title, present: true, enabled });
+  logger.info({ chat: chat.id, enabled, byAdmin }, "group chat: bot added");
   if (wasPresent) return;
   if (enabled || chatEnabled(deps, chat.id)) {
     if (!deps.chat) return;
@@ -159,8 +172,9 @@ groupChatHandlers.on("message", async (ctx, next) => {
 
   if (!enabled) {
     const known = deps.repo.chatGroup(chatId);
-    // Бот стоял в чате ещё до болталки: админ бота позвал его — включаем.
-    if (ctx.isAdmin) {
+    // Бот стоял в чате ещё до болталки: админ бота позвал его — включаем. Но
+    // выключенный админом сам (/chatoff, кнопка) чат от упоминания не оживает.
+    if (ctx.isAdmin && !deps.repo.getMeta(chatOffKey(chatId))) {
       deps.repo.upsertChatGroup(chatId, { title, present: true, enabled: true });
       enabled = true;
     } else {
@@ -181,9 +195,14 @@ groupChatHandlers.on("message", async (ctx, next) => {
   const text = stripMention(raw, me.username);
   // Контекст — до того, как текущая реплика попадёт в память.
   const transcript = service.memory.recent(chatId);
+  // Бот ещё отвечает этому человеку на прошлое — новую реплику не отвечаем, но
+  // и не теряем: в память она идёт как обычная, чтобы следующий ответ её видел
+  // (обращённые реплики берутся из журнала, а этой в журнале не будет).
+  if (busy.has(userId)) {
+    service.memory.push(chatId, { at: Date.now(), userId, name: speaker, text: text || raw });
+    return;
+  }
   service.memory.push(chatId, { at: Date.now(), userId, name: speaker, text: text || raw, addressed: true });
-
-  if (busy.has(userId)) return;
   if (Date.now() - (lastReplyAt.get(chatId) ?? 0) < CHAT_COOLDOWN_MS) return;
   const day = todayMsk();
   const { verdict } = chatAllowance(deps.repo, deps.config, { userId, chatId, isAdmin: ctx.isAdmin }, day, { chat: inFlightByChat.get(chatId) ?? 0, global: inFlightGlobal });

@@ -1,7 +1,7 @@
 import { addDays, fmtDDMM, fmtDayMonth, fmtHHMM, weekdayName, weekdayShort, type LocalDate, type WallClock } from "../time.js";
 import type { ChangeEvent } from "./diff.js";
 import type { LogicalGroup } from "./groups.js";
-import { lessonTypeLabel, type Occurrence } from "./model.js";
+import { groupByDate, lessonTypeLabel, type Occurrence } from "./model.js";
 import type { WeekInfo } from "./service.js";
 import { samePerson, shortName } from "../text/match.js";
 
@@ -296,12 +296,7 @@ export function formatChangeEvent(e: ChangeEvent): string {
 }
 
 export function formatChanges(group: LogicalGroup, events: ChangeEvent[]): string {
-  const byDate = new Map<LocalDate, ChangeEvent[]>();
-  for (const e of events) {
-    const list = byDate.get(e.date) ?? [];
-    list.push(e);
-    byDate.set(e.date, list);
-  }
+  const byDate = groupByDate(events);
   const blocks = [...byDate.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, list]) => `<b>${weekdayName(date)}, ${fmtDayMonth(date)}</b>\n${list.map(formatChangeEvent).join("\n")}`);

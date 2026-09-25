@@ -127,14 +127,15 @@ export function parseRuDate(input: string, today: LocalDate = todayMsk()): Local
   let y = m[3] ? Number(m[3]) : Number(today.slice(0, 4));
   if (m[3] && m[3].length === 2) y += 2000;
   if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  const candidate = toLocalDate(y, mo, d);
+  let result = toLocalDate(y, mo, d);
   if (!m[3]) {
     // Without a year pick the nearest occurrence (within +-6 months).
-    const diff = diffDays(candidate, today);
-    if (diff < -180) return toLocalDate(y + 1, mo, d);
-    if (diff > 180) return toLocalDate(y - 1, mo, d);
+    const diff = diffDays(result, today);
+    if (diff < -180) result = toLocalDate(y + 1, mo, d);
+    else if (diff > 180) result = toLocalDate(y - 1, mo, d);
   }
-  return candidate;
+  // «31.09», «30.02» — таких дней нет: иначе бот показывал «31 сентября» без пар.
+  return fromDayNumber(dayNumber(result)) === result ? result : null;
 }
 
 /**

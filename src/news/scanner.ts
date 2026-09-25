@@ -161,7 +161,8 @@ export class NewsScanner {
         const parsed = res.parsed_output;
         if (!parsed) throw new Error("classifier returned no JSON");
         const known = new Set(batch.map((b) => b.id));
-        for (const v of parsed.items) if (known.has(v.id)) out.push({ id: v.id, topic: v.topic, title: v.title.slice(0, 80) });
+        // delete, а не has: повтор одного id в ответе модели иначе дважды разослал бы пост.
+        for (const v of parsed.items) if (known.delete(v.id)) out.push({ id: v.id, topic: v.topic, title: v.title.slice(0, 80) });
       } catch (err) {
         // Посты пачки остаются неразложенными (topic IS NULL) и попадут в следующий скан.
         logger.error({ err: String(err) }, "news classification failed; batch will be retried on the next scan");

@@ -94,6 +94,17 @@ export function lessonTypeLabel(type: string): string {
   return LESSON_TYPE_LABELS[key] ?? type;
 }
 
+/** Раскладывает по датам одним проходом, сохраняя исходный порядок внутри дня. */
+export function groupByDate<T extends { date: LocalDate }>(items: readonly T[]): Map<LocalDate, T[]> {
+  const byDate = new Map<LocalDate, T[]>();
+  for (const item of items) {
+    const list = byDate.get(item.date);
+    if (list) list.push(item);
+    else byDate.set(item.date, [item]);
+  }
+  return byDate;
+}
+
 export function sha1(text: string): string {
   return createHash("sha1").update(text).digest("hex");
 }

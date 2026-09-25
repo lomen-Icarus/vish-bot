@@ -19,7 +19,7 @@ import { hitShort, searchPeople, type PeopleScope, type PersonHit } from "../peo
 import { refKey } from "../people/ref.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, mergeStream } from "../schedule/stream.js";
 import type { Occurrence } from "../schedule/model.js";
-import { ERSHOV_CARD, ERSHOV_SURNAME, isErshovQuery } from "./easter.js";
+import { ERSHOV_CARD, ershovNamesakes, isErshovQuery } from "./easter.js";
 import { addDays, fmtDDMM, mondayOf, parseDayWord, parseRuDate, todayMsk, weekdayShort, type LocalDate } from "../time.js";
 
 export type InlineMode = "auto" | "day" | "week" | "stream" | "common";
@@ -95,11 +95,16 @@ export function parseInlineQuery(deps: Deps, query: string, user: User | null): 
       mode = "common";
       continue;
     }
+    // «пары», «день» — не человек и не группа: просто «покажи день».
+    if (DAY_WORDS.test(w)) {
+      if (mode === "auto") mode = "day";
+      continue;
+    }
     const offset = parseDayWord(w);
     if (offset !== null) {
       date = addDays(today, offset);
       dateSet = true;
-      if (mode === "auto" && !DAY_WORDS.test(w)) mode = "day";
+      if (mode === "auto") mode = "day";
       continue;
     }
     const parsed = parseRuDate(w, today);
@@ -299,10 +304,10 @@ const person3 = (q: string): string => createHash("sha1").update(q.toLowerCase()
  */
 export async function buildPeopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean } = {}): Promise<InlineQueryResultArticle[]> {
   if (!req.person || req.person.kind === "student" || !isErshovQuery(req.person.query)) return peopleResults(deps, req, user, opts);
-  // Пасхалка — первой карточкой, следом настоящие однофамильцы (по фамилии,
-  // а не по всему запросу: иначе «Кирилл Ершов» дал бы любого Кирилла).
-  const namesakes = await peopleResults(deps, { ...req, person: { ...req.person, query: ERSHOV_SURNAME } }, user, opts);
-  return [article("p:ershov", "🏅 Кирилл Ершов — спорторг ВИШ", ERSHOV_CARD), ...namesakes.filter((r) => !r.id.startsWith("p:nf:"))];
+  // Пасхалка — первой карточкой, следом настоящие однофамильцы, если есть.
+  const namesakes = await ershovNamesakes(deps, req.person.query, { id: user?.id ?? 0, isAdmin: opts.isAdmin === true });
+  const card = article("p:ershov", "🏅 Кирилл Ершов — спорторг ВИШ", ERSHOV_CARD);
+  return namesakes.length ? [card, ...(await peopleArticles(deps, req, user, namesakes, req.person.query, todayMsk()))] : [card];
 }
 
 async function peopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean }): Promise<InlineQueryResultArticle[]> {
@@ -343,6 +348,7 @@ async function peopleArticles(deps: Deps, req: InlineRequest, user: User | null,
   const out: InlineQueryResultArticle[] = [];
   const viewer = { teacherView: user?.teacherView ?? ("bold" as const) };
   const others: PersonHit[] = [];
+  const seen = new Set<string>();
   let portalShown = false;
   for (const hit of hits) {
     // Портальное расписание тянем у одного человека: каждая буква запроса не
@@ -351,16 +357,27 @@ async function peopleArticles(deps: Deps, req: InlineRequest, user: User | null,
       others.push(hit);
       continue;
     }
-    const profile = await loadProfile(deps, hit.ref, user?.id ?? null);
+    // Преподаватель со страницы вебинаров тоже может оказаться портальным
+    // (профиль находит его в справочнике), поэтому решаем по профилю, а сам
+    // профиль ждём не дольше, чем Telegram ждёт inline-ответ.
+    const profile = await withTimeout(loadProfile(deps, hit.ref, user?.id ?? null), 6000);
     if (!profile) continue;
-    if (hit.ref.kind === "teacher") portalShown = true;
+    const fromPortal = profile.ref.kind === "teacher";
+    if (fromPortal && portalShown) {
+      others.push(hit);
+      continue;
+    }
+    // Два совпадения об одном человеке дали бы одинаковые id, и Telegram отверг бы весь ответ.
+    if (seen.has(refKey(profile.ref))) continue;
+    seen.add(refKey(profile.ref));
+    if (fromPortal) portalShown = true;
     // Совпало только с опечаткой — так и говорим: «Салодилин» не должен молча
     // открыть расписание Солодилина, как будто это точный ответ.
     const guess = hit.fuzzy ? "Возможно, это " : "";
     const icon = profile.role === "teacher" ? "👨‍🏫" : "🎓";
     const who = profile.role === "teacher" ? `${profile.name}${profile.vish ? " (ВИШ)" : ""}` : `${profile.name} · ${profile.group?.title ?? profile.student?.groupTitle ?? ""}`;
     const key = refKey(profile.ref);
-    const loading = hit.ref.kind === "teacher" ? 6000 : 0;
+    const loading = fromPortal ? 6000 : 0;
     if (req.mode === "week") {
       const view = loading ? await withTimeout(personWeekView(deps, profile, req.date, viewer), loading) : await personWeekView(deps, profile, req.date, viewer);
       if (!view) out.push(article(`pl:${key}`, `${icon} ${who} · расписание грузится`, `Портал отвечает медленно. Набери запрос ещё раз через пару секунд — расписание ${esc(profile.name)} уже будет готово.`));

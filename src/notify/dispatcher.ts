@@ -257,7 +257,8 @@ export class Notifier {
           if (u) targets.set(u.id, u);
         }
         for (const u of this.repo.listUsers({ onlyActive: true })) if (u.notifyNotices) targets.set(u.id, u);
-        for (const u of targets.values()) if (await this.send(u, text, { kind: "notice" })) delivered++;
+        // Объявления портала меняются и ночью (опрос идёт круглосуточно): в тихие часы — без звука.
+        for (const u of targets.values()) if (await this.send(u, text, { kind: "notice", silent: this.inQuietHours(u, now) })) delivered++;
         this.repo.markEventsNotified(list.map((r) => r.id));
         continue;
       }
@@ -363,10 +364,11 @@ export class Notifier {
         const group = this.service.group(key);
         if (!group) continue;
         const own = user.groupKey === key;
-        const rows = rowsFor(key).filter((r) => !this.repo.reminderSent(user.id, "event", String(r.id)));
         // Человеку без тихих часов добор нужен только как повтор недавней
-        // неудачной отправки, а не как пересказ всего дня.
-        const fresh = quiet ? rows : rows.filter((r) => Date.now() - Date.parse(r.createdAt) < 2 * 60 * 60 * 1000);
+        // неудачной отправки, а не как пересказ всего дня. Отсев по времени —
+        // до поиска отметок: он дешёвый, а отметки — запрос на каждую правку.
+        const recent = quiet ? rowsFor(key) : rowsFor(key).filter((r) => Date.now() - Date.parse(r.createdAt) < 2 * 60 * 60 * 1000);
+        const fresh = recent.filter((r) => !this.repo.reminderSent(user.id, "event", String(r.id)));
         if (!fresh.length) continue;
         const events: ChangeEvent[] = fresh.map((r) => {
           const p = r.payload as { before?: Occurrence; after?: Occurrence; fields?: string[] };

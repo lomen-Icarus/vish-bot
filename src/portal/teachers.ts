@@ -3,7 +3,7 @@
  * signed-in accounts, so this service runs on a separate, credentialed client.
  * The directory is cached in the database for a day; schedule pages for 15 min.
  */
-import type { PortalClient } from "./client.js";
+import { PortalAuthError, type PortalClient } from "./client.js";
 import type { Repo } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { mergeVariants } from "../schedule/merge.js";
@@ -13,7 +13,7 @@ import type { Occurrence } from "../schedule/model.js";
 import { addDays, todayMsk, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 import type { ParsedScheduleDay } from "chuvsu-js/parsers";
-import { nameMatch, nameMatchScore, normName, type NameMatch } from "../text/match.js";
+import { nameMatch, nameMatchScore, normName, shortName, type NameMatch } from "../text/match.js";
 import { createHash } from "node:crypto";
 import { parseGroupName } from "../schedule/groups.js";
 import type { TeacherMapRow } from "../db/repo.js";
@@ -24,6 +24,8 @@ export interface TeacherRef {
 }
 
 const DIRECTORY_TTL_MS = 24 * 60 * 60 * 1000;
+/** После неудачной загрузки справочника — пауза перед следующей попыткой. */
+const DIRECTORY_RETRY_MS = 15 * 60 * 1000;
 const PAGE_TTL_MS = 15 * 60 * 1000;
 const MAP_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -59,6 +61,17 @@ export function teacherMapKey(teacherId: number | null, name: string): string {
   return `w${createHash("sha1").update(normName(name)).digest("base64url").slice(0, 12)}`;
 }
 
+/**
+ * Строка карты по имени (без id). Страница вебинаров пишет преподавателей
+ * по-разному — то «Иванова Ирина Ивановна», то «Иванова И. И.», — а ищут их
+ * по полному ФИО из справочника. Пробуем оба ключа, иначе пометка «(ВИШ)»,
+ * известная по вебинарам, до справочника не доходила.
+ */
+export function teacherMapByName(repo: Pick<Repo, "teacherMapByKey">, name: string): TeacherMapRow | null {
+  if (!name.trim()) return null;
+  return repo.teacherMapByKey(teacherMapKey(null, name)) ?? repo.teacherMapByKey(teacherMapKey(null, shortName(name)));
+}
+
 /** Группа ВИШ? Смотрим только на префикс названия — этого хватает и для ОЗВИШ. */
 export function isVishGroupTitle(title: string): boolean {
   const p = parseGroupName(title);
@@ -84,6 +97,9 @@ export class TeacherService {
     const at = Number(this.repo.getMeta("teachers:fetchedAt") ?? 0);
     const cached = raw ? (JSON.parse(raw) as TeacherRef[]) : [];
     if (cached.length && Date.now() - at < DIRECTORY_TTL_MS) return cached;
+    // Недавно не получилось (гость, портал лежит) — не долбим портал на каждый
+    // поиск и каждую карточку, а 15 минут отдаём то, что есть.
+    if (Date.now() < Number(this.repo.getMeta("teachers:retryAt") ?? 0)) return cached;
     if (this.directoryPromise) return this.directoryPromise;
     this.directoryPromise = (async () => {
       try {
@@ -92,13 +108,16 @@ export class TeacherService {
           this.repo.setMeta("teachers:list", JSON.stringify(list));
           this.repo.setMeta("teachers:fetchedAt", String(Date.now()));
           this.repo.setMeta("teachers:lastError", "");
+          this.repo.setMeta("teachers:retryAt", "");
           logger.info({ count: list.length }, "teacher directory refreshed");
           return list;
         }
         this.repo.setMeta("teachers:lastError", `справочник преподавателей пуст: ${this.portal.directoryNote ?? "портал не отдал список"}`);
+        this.repo.setMeta("teachers:retryAt", String(Date.now() + DIRECTORY_RETRY_MS));
         logger.warn("teacher directory came back empty");
         return cached;
       } catch (err) {
+        this.repo.setMeta("teachers:retryAt", String(Date.now() + DIRECTORY_RETRY_MS));
         this.repo.setMeta("teachers:lastError", String(err).slice(0, 300));
         logger.warn({ err: String(err) }, "teacher directory refresh failed");
         return cached;
@@ -147,8 +166,10 @@ export class TeacherService {
       try {
         const found = await this.portal.searchTeachers(word);
         if (!found.length) continue;
-        // Remember them so the next lookup is local.
-        const merged = [...dir];
+        // Remember them so the next lookup is local. Список перечитываем: пока
+        // ждали портал, справочник могли обновить, и старый снимок затёр бы его.
+        const fresh = JSON.parse(this.repo.getMeta("teachers:list") ?? "[]") as TeacherRef[];
+        const merged = [...fresh];
         for (const f of found) if (!merged.some((t) => t.id === f.id)) merged.push(f);
         this.repo.setMeta("teachers:list", JSON.stringify(merged));
         const rescored = found.map((t) => ({ ref: t, ...nameMatch(t.name, q) })).sort((a, b) => b.score - a.score);
@@ -179,7 +200,9 @@ export class TeacherService {
    */
   async checkLogin(): Promise<{ ok: boolean; error?: string }> {
     try {
-      await this.portal.login();
+      // Под учёткой уже сидим — не перелогиниваемся: вход сбрасывает общие
+      // cookie под запросами опроса, которые в этот момент в пути.
+      if (!this.portal.accountSession) await this.portal.login();
       // Учётку портал не пустил — клиент сел гостем. Гостю справочник не
       // показывают, и «пустой справочник» тут только сбивал бы с толку.
       const mode = this.portal.mode();
@@ -199,6 +222,7 @@ export class TeacherService {
       }
       this.repo.setMeta("teachers:list", JSON.stringify(list));
       this.repo.setMeta("teachers:fetchedAt", String(Date.now()));
+      this.repo.setMeta("teachers:retryAt", "");
       this.repo.setMeta("teachers:loginOk", "1");
       this.repo.setMeta("teachers:lastError", "");
       return { ok: true };
@@ -288,7 +312,7 @@ export class TeacherService {
       const key = teacherMapKey(teacherId, page.fullName ?? fallbackName ?? String(teacherId));
       // Тот же человек мог прийти со страницы вебинаров (ключ по имени) — там
       // уже известно, что он наш. Не теряем это, если сейчас у него пар нет.
-      const fromWebinars = this.repo.teacherMapByKey(teacherMapKey(null, page.fullName ?? fallbackName ?? ""));
+      const fromWebinars = teacherMapByName(this.repo, page.fullName ?? fallbackName ?? "");
       this.repo.upsertTeacherMap({
         key,
         teacherId,
@@ -306,6 +330,12 @@ export class TeacherService {
       this.mapCache = null;
       return this.repo.teacherMapByKey(key);
     } catch (err) {
+      // Учётка отвалилась посреди обхода — это не «битый» id: не отмечаем,
+      // проверим, когда вход вернётся.
+      if (err instanceof PortalAuthError || !this.portal.authenticated) {
+        logger.debug({ err: String(err), teacherId }, "teacher map refresh skipped: no account session");
+        return null;
+      }
       // Отмечаем попытку, иначе «битый» id вечно первый в очереди обхода
       // (teacherMapStale сортирует непроверенных вперёд) и портал долбится зря.
       const key = teacherMapKey(teacherId, fallbackName ?? String(teacherId));
@@ -356,7 +386,7 @@ export class TeacherService {
 
   /** Ведёт ли человек у ВИШ по карте: та самая пометка «(ВИШ)» рядом с фамилией. */
   isVish(teacherId: number | null, name?: string): boolean {
-    const row = (teacherId != null ? this.repo.teacherMapById(teacherId) : null) ?? (name ? this.repo.teacherMapByKey(teacherMapKey(null, name)) : null);
+    const row = (teacherId != null ? this.repo.teacherMapById(teacherId) : null) ?? (name ? teacherMapByName(this.repo, name) : null);
     return row?.vish === true;
   }
 
@@ -397,6 +427,9 @@ export class TeacherService {
    * проверяем тех, кого ещё не смотрели (или смотрели давно).
    */
   async crawlMap(limit = 40): Promise<{ checked: number; vish: number }> {
+    // Гостем страницы преподавателей не открываются: обход отметил бы всех
+    // «проверенными» с пустыми группами, и на месяц они остались бы без «(ВИШ)».
+    if (!this.portal.authenticated) return { checked: 0, vish: 0 };
     const dir = await this.directory();
     for (const t of dir) this.repo.seedTeacherMap(teacherMapKey(t.id, t.name), t.id, t.name);
     this.mapCache = null;

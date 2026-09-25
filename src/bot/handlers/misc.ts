@@ -7,7 +7,7 @@ import { featuresSections, featuresText, needGroup } from "../views.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
 import { candidatesKeyboard, showPerson } from "../people.js";
-import { ERSHOV_SURNAME, isErshovQuery, sendErshovCard } from "../easter.js";
+import { ershovNamesakes, isErshovQuery, sendErshovCard } from "../easter.js";
 import { clearHit, hitLabel, hitShort, searchPeople, tiedWith, type PersonHit } from "../../people/search.js";
 import { refKey } from "../../people/ref.js";
 import { clampHtml, esc } from "../../schedule/format.js";
@@ -257,6 +257,15 @@ interface LocalHits {
   onlyPeople: boolean;
 }
 
+/** Слова, после которых запрос — вопрос, а не имя. */
+const QUESTION_WORDS = /^(кто|что|где|когда|как|какой|какая|какие|каким|почему|зачем|сколько|ведет|ведёт|ведут|пары|пара|пар|расписание|завтра|сегодня|неделя|у|в|во|на|по|с|и|или|не|есть|будет|включить|выключить|найти|показать)$/iu;
+
+/** Похож ли запрос на имя человека: 1–3 слова из одних букв (дефис можно), без слов-вопросов. */
+function looksLikeName(query: string): boolean {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.length <= 3 && words.every((w) => /^[\p{L}-]+$/u.test(w) && !QUESTION_WORDS.test(w));
+}
+
 async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
   const deps = ctx.deps;
   const today = todayMsk();
@@ -310,8 +319,12 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
   if (nameWords.length > 0 && nameWords.length <= 3) {
     try {
       // Журнал «сыска» ведётся и на промахах; если по тому же запросу сработает
-      // ещё и инструмент ИИ, repo.logPoisk склеит это в одну запись.
-      people = (await searchPeople(deps, query, { scope: "all", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск", limit: 6 })).hits;
+      // ещё и инструмент ИИ, repo.logPoisk склеит это в одну запись. Поэтому
+      // студентов ищем, только когда запрос похож на имя: «матан», «кто ведёт
+      // БЖД» или «что у 14-24» не должны тратить лимит поиска людей и попадать
+      // в журнал как поиск человека. Преподаватели ищутся всегда.
+      const scope = looksLikeName(query) && !parts.length ? "all" : "teacher";
+      people = (await searchPeople(deps, query, { scope, viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск", limit: 6 })).hits;
     } catch (err) {
       logger.warn({ err: String(err) }, "search: people failed");
     }
@@ -337,8 +350,8 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   if (isErshovQuery(query)) {
     // Пасхалка. Настоящих однофамильцев не прячем — кнопками следом, но без ИИ.
     await sendErshovCard(ctx);
-    const found = await searchPeople(deps, ERSHOV_SURNAME, { scope: "teacher", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск" });
-    if (found.hits.length) await ctx.reply("А это однофамильцы в расписании:", { reply_markup: candidatesKeyboard(found.hits, "teacher") });
+    const namesakes = await ershovNamesakes(deps, query, { id: ctx.user.id, isAdmin: ctx.isAdmin });
+    if (namesakes.length) await ctx.reply("А это однофамильцы в расписании:", { reply_markup: candidatesKeyboard(namesakes, "teacher") });
     return;
   }
   const hits = await localSearch(ctx, query);
@@ -346,7 +359,7 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   // из кнопок «Преподаватели» и «Где студент»: кто это, где сейчас, день.
   const person = hits.onlyPeople ? clearHit(hits.people) : null;
   if (person) {
-    await showPerson(ctx, person.ref, todayMsk(), { others: tiedWith(hits.people, person) });
+    await showPerson(ctx, person.ref, todayMsk(), { others: tiedWith(hits.people, person), self: person });
     return;
   }
   if (deps.ask) {

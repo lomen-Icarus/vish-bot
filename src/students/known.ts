@@ -18,6 +18,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { nameWords, normName, samePersonWords } from "../text/match.js";
 import { logger } from "../logger.js";
+import { decodeText } from "../text/decode.js";
 
 export interface KnownPerson {
   /** Полное ФИО из файла. */
@@ -99,7 +100,7 @@ export class KnownPeople {
     try {
       const map = new Map<string, KnownPerson>();
       const dupes = new Set<string>();
-      for (const line of readFileSync(this.file, "utf8").split(/\r?\n/)) {
+      for (const line of decodeText(readFileSync(this.file)).split(/\r?\n/)) {
         const [rawName, rawHandle] = line.split(/[;,\t]/);
         const name = (rawName ?? "").trim();
         const handle = normalizeHandle(rawHandle);

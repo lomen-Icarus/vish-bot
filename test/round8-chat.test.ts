@@ -472,3 +472,37 @@ describe("болталка: перенесено из первой версии 
     expect(repo.getUser(5)!.teacherMode).toBe(true);
   });
 });
+
+describe("болталка: правки по ревью всего проекта", () => {
+  const cmd = (text: string, userId: number): Update => ({
+    update_id: nextId++,
+    message: { message_id: nextId, date: 0, chat: { id: CHAT, type: "supergroup", title: "ВИШ-12-23" }, from: { id: userId, is_bot: false, first_name: "A" }, text, entities: [{ type: "bot_command", offset: 0, length: text.length }] },
+  });
+
+  it("/chatoff не отменяется, стоит админу бота упомянуть бота в чате", async () => {
+    const { deps, repo } = setup();
+    await send(deps, cmd("/chatoff", 99), 99);
+    expect(repo.chatGroup(CHAT)!.enabled).toBe(false);
+    await send(deps, groupText("попробуй 12-23 завтра", { userId: 99 }), 99);
+    expect(repo.chatGroup(CHAT)!.enabled).toBe(false);
+    // А чат, про который бот ещё ничего не знал, от упоминания админом включается, как раньше.
+    await send(deps, groupText("привет", { userId: 99, chatId: -100900 }), 99);
+    expect(repo.chatGroup(-100900)!.enabled).toBe(true);
+  });
+
+  it("чат из CHAT_GROUP_IDS: /chatoff честно говорит, что выключается только в .env", async () => {
+    const { deps } = setup();
+    (deps.config as { CHAT_GROUP_IDS: number[] }).CHAT_GROUP_IDS = [CHAT];
+    const out = await send(deps, cmd("/chatoff", 99), 99);
+    expect(String(out[0]!.payload.text)).toContain("CHAT_GROUP_IDS");
+  });
+
+  it("кнопка «💬 Болталка» в /admin открывает экран болталки, а не глохнет", async () => {
+    const { deps } = setup();
+    const { adminHandlers } = await import("../src/bot/handlers/admin.js");
+    const press: Update = { update_id: nextId++, callback_query: { id: "1", from: { id: 99, is_bot: false, first_name: "A" }, chat_instance: "1", data: "adm:chat", message: { message_id: 1, date: 0, chat: { id: 99, type: "private", first_name: "A" }, text: "x" } as never } };
+    deps.repo.touchUser(99, "admin", "A");
+    const out = await send(deps, press, 99, new Composer<BotContext>().use(adminHandlers, chatAdminHandlers));
+    expect(out.some((c) => /Болталка/.test(String(c.payload.text ?? "")))).toBe(true);
+  });
+});

@@ -329,9 +329,11 @@ export async function createRenderer(): Promise<Renderer | null> {
     async renderWeek(input) {
       const { group, monday, byDate, weekInfo, today, subgroup } = input;
       const sections: unknown[] = [];
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 7; i++) {
         const date = addDays(monday, i);
         const list = filterSubgroup(byDate.get(date) ?? [], subgroup);
+        // Воскресенье — только если в нём есть пары (экзамен, перенос), как в других темах.
+        if (i === 6 && !list.length) continue;
         const accent = WEEKDAY_ACCENT[i + 1] ?? THEME.accent;
         const isToday = date === today;
         const rows = list.length

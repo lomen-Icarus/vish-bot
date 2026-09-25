@@ -290,10 +290,11 @@ describe("правки по ревью раунда 9", () => {
     expect(tiedWith(hits, chosen).map((x) => x.name)).toEqual(["Петров Кирилл Борисович"]);
   });
 
-  it("выключал режим ещё до метки (ФИО есть, режима нет) — /start его не включает", async () => {
+  it("выключал режим ещё до метки (ФИО и преподаватель есть, режима нет) — /start его не включает", async () => {
     const deps = makeDeps();
     deps.repo.touchUser(7, "petrova_as", "U");
-    deps.repo.updateUser(7, { teacherName: "Петрова Анна Сергеевна", teacherMode: false });
+    const { webinarNameKey } = await import("../src/people/ref.js");
+    deps.repo.updateUser(7, { teacherName: "Петрова Анна Сергеевна", teacherRef: `w${webinarNameKey("Петрова Анна Сергеевна")}`, teacherMode: false });
     expect(all(await run(text("/start"), deps, { username: "petrova_as" }))).toMatch(/выбери свою группу/);
     expect(deps.repo.getUser(7)!.teacherMode).toBe(false);
   });
@@ -407,7 +408,7 @@ describe("правки по ревью всего src и записывалки"
     const chooser = await run(text("/prepod"), deps, { username: "petrova_as" });
     expect(all(chooser)).toMatch(/несколько/);
     expect(deps.repo.getUser(7)!.teacherName).toBeNull();
-    expect(deps.repo.getMeta("tmode:fio:7")).toBe("Петрова Анна Сергеевна");
+    expect(deps.repo.getMeta("tmode:fio:7")).toContain("Петрова Анна Сергеевна");
     // Не выбрал, пришёл позже — это не отказ от режима.
     const start = all(await run(text("/start"), deps, { username: "petrova_as" }));
     expect(start).toContain("Здравствуйте, Анна Сергеевна");
@@ -433,21 +434,157 @@ describe("правки по ревью всего src и записывалки"
     ctx.deps = deps;
     ctx.user = deps.repo.touchUser(7, "u", "U");
     ctx.isAdmin = false;
-    await showPerson(ctx, a, today, { others: [other] });
+    const self: PersonHit = { ...other, ref: a, name: "Смирнов Кирилл Андреевич" };
+    await showPerson(ctx, a, today, { others: [other], self });
     expect(markups(calls)).toContain(`ppo:w${b.key}`);
     // Стрелка «день вперёд» перерисовывает карточку — тёзка остаётся.
     const next = await run(press(`pp:w${a.key}:${today}`), deps);
     expect(markups(next)).toContain(`ppo:w${b.key}`);
-    // Открыли другого человека заново — чужой список к нему не прилипает.
-    const fresh = await run(press(`ppo:w${b.key}`), deps);
-    expect(markups(fresh)).not.toContain("ppo:");
+    // Открыли тёзку — у его карточки кнопка обратно к первому.
+    const opened = await run(press(`ppo:w${b.key}`), deps);
+    expect(markups(opened)).toContain(`ppo:w${a.key}`);
+    // И старая карточка первого, если полистать её потом, кнопки не теряет.
+    const back = await run(press(`pp:w${a.key}:${today}`), deps);
+    expect(markups(back)).toContain(`ppo:w${b.key}`);
   });
 
   it("пары по датам раскладываются одним проходом и в исходном порядке", async () => {
-    const { groupByDate } = await import("../src/people/profile.js");
+    const { groupByDate } = await import("../src/schedule/model.js");
     const o = (date: string, slot: number) => ({ date, slot }) as never;
     const byDate = groupByDate([o("2026-09-21", 1), o("2026-09-22", 1), o("2026-09-21", 3)]);
     expect([...byDate.keys()]).toEqual(["2026-09-21", "2026-09-22"]);
     expect(byDate.get("2026-09-21")!.map((x: { slot: number }) => x.slot)).toEqual([1, 3]);
+  });
+});
+
+describe("пасхалка и тёзки: правки по второму ревью", () => {
+  const lesson = (teacher: string) => ({ date: today, slot: 3, start: 0, end: 23 * 60 + 59, subject: "Физкультура", type: "пр", teacher, position: null, degree: null, subgroup: null, title: null, groups: ["ВИШ-12-23"], scheduled: true });
+  const markups = (calls: Call[]): string => JSON.stringify(calls.map((c) => c.payload.reply_markup ?? null));
+  function withTeachers(names: string[]): Deps {
+    const deps = makeDeps();
+    deps.repo.replaceWebinars(today, names.map(lesson));
+    deps.webinars = new WebinarService({} as PortalClient, deps.repo, 32);
+    return deps;
+  }
+  function directCtx(deps: Deps): { ctx: BotContext; calls: Call[] } {
+    const calls: Call[] = [];
+    const api = new Api("123:FAKE");
+    api.config.use(async (_prev, method, payload) => {
+      calls.push({ method, payload: payload as Record<string, unknown> });
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never };
+    });
+    const ctx = new Context(text("x"), api, ME) as BotContext;
+    ctx.deps = deps;
+    ctx.user = deps.repo.touchUser(7, "u", "U");
+    ctx.isAdmin = false;
+    return { ctx, calls };
+  }
+
+  it("единственный настоящий Ершов не открывается сам — ни на «спорторг», ни на «Кирилл Ершов»", async () => {
+    const deps = withTeachers(["Ершов Пётр Ильич"]);
+    const { runPeopleSearch } = await import("../src/bot/people.js");
+    for (const q of ["спорторг", "Кирилл Ершов"]) {
+      const { ctx, calls } = directCtx(deps);
+      await runPeopleSearch(ctx, q, "teacher");
+      // Никакой карточки с расписанием и фото: только шутка и (если есть фамилия) кнопки.
+      expect(calls.some((c) => c.method === "sendPhoto")).toBe(false);
+      expect(all(calls)).not.toContain("Физкультура");
+      if (q === "спорторг") expect(markups(calls)).not.toContain("Ершов Пётр");
+      else expect(markups(calls)).toContain("Ершов Пётр Ильич");
+    }
+  });
+
+  it("опечатка — не однофамилец: «Ежов» в список после карточки не попадает", async () => {
+    const { ershovNamesakes } = await import("../src/bot/easter.js");
+    const deps = withTeachers(["Ежов Иван Петрович", "Ершова Анна Сергеевна", "Ершов Пётр Ильич"]);
+    const names = (await ershovNamesakes(deps, "кто такой Ершов", { id: 7, isAdmin: false })).map((h) => h.name).sort();
+    expect(names).toEqual(["Ершов Пётр Ильич", "Ершова Анна Сергеевна"]);
+    expect(await ershovNamesakes(deps, "спорторг", { id: 7, isAdmin: false })).toEqual([]);
+  });
+
+  it("/ask «спорторг» и «Ершов» без настоящего однофамильца — только карточка, лимит ИИ не тратится", async () => {
+    const { askAi } = await import("../src/bot/handlers/ask.js");
+    let asked = 0;
+    for (const [q, teachers] of [["спорторг", ["Ершов Пётр Ильич"]], ["кто такой Ершов", ["Ежов Иван Петрович"]]] as const) {
+      const deps = withTeachers([...teachers]);
+      deps.ask = { answer: async () => (asked++, { text: "x", inputTokens: 1, outputTokens: 1, mentions: { teachers: [], webinarTeachers: [], groupKeys: [], students: [] } }) } as unknown as Deps["ask"];
+      const { ctx, calls } = directCtx(deps);
+      expect(await askAi(ctx, q)).toBe("answered");
+      expect(all(calls)).toContain("Кирилл Ершов");
+    }
+    expect(asked).toBe(0);
+  });
+
+  it("inline и поиск всех людей: однофамильцев пасхалка ищет только среди преподавателей", async () => {
+    const deps = withTeachers(["Ершов Пётр Ильич"]);
+    let studentSearches = 0;
+    deps.config = { ...deps.config, POISK: true } as Deps["config"];
+    deps.students = { ready: () => true, search: () => (studentSearches++, []) } as unknown as Deps["students"];
+    const res = await buildPeopleResults(deps, parseInlineQuery(deps, "Ершов", null), null);
+    expect(res[0]!.id).toBe("p:ershov");
+    expect(JSON.stringify(res)).toContain("Ершов Пётр Ильич");
+    const { runPeopleSearch } = await import("../src/bot/people.js");
+    await runPeopleSearch(directCtx(deps).ctx, "Кирилл Ершов", "all");
+    expect(studentSearches).toBe(0);
+  });
+
+  it("брошенный до обновления выбор себя из тёзок (ФИО есть, преподавателя нет) — /start встречает", async () => {
+    const deps = makeDeps();
+    deps.repo.touchUser(7, "petrova_as", "U");
+    deps.repo.updateUser(7, { teacherName: "Петрова Анна Сергеевна", teacherMode: false });
+    expect(all(await run(text("/start"), deps, { username: "petrova_as" }))).toContain("Здравствуйте, Анна Сергеевна");
+    expect(deps.repo.getUser(7)!.teacherMode).toBe(true);
+  });
+
+  it("два выбора из тёзок подряд (админ): кнопка берёт ФИО своего сообщения", async () => {
+    const deps = makeDeps();
+    const twins = (name: string) => [1, 2].map((id) => ({ ref: { id, name }, fuzzy: false, score: 10 }));
+    let current = "Петров Павел Петрович";
+    deps.teachers = { searchScored: async () => twins(current), searchLocal: () => twins(current), ensureMapped: async () => undefined } as unknown as Deps["teachers"];
+    let msgId = 100;
+    const runAdmin = async (update: Update) => {
+      const calls: Call[] = [];
+      const api = new Api("123:FAKE");
+      api.config.use(async (_prev, method, payload) => {
+        calls.push({ method, payload: payload as Record<string, unknown> });
+        return { ok: true, result: { message_id: ++msgId, date: 0, chat: { id: 7, type: "private" } } as never };
+      });
+      const ctx = new Context(update, api, ME) as BotContext;
+      ctx.deps = deps;
+      ctx.user = deps.repo.touchUser(7, "admin", "U");
+      ctx.isAdmin = true;
+      await new Composer<BotContext>().use(teacherModeHandlers).middleware()(ctx, async () => undefined);
+      return calls;
+    };
+    await runAdmin(text("/prepod Петров Павел Петрович"));
+    const first = msgId;
+    current = "Иванов Иван Иванович";
+    await runAdmin(text("/prepod Иванов Иван Иванович"));
+    const pressOn = (messageId: number): Update => ({ update_id: 9, callback_query: { id: "3", from: { id: 7, is_bot: false, first_name: "U" }, chat_instance: "1", data: "tmode:t1", message: { message_id: messageId, date: 0, chat: { id: 7, type: "private", first_name: "U" }, text: "x" } as never } });
+    await runAdmin(pressOn(first));
+    expect(deps.repo.getUser(7)).toMatchObject({ teacherMode: true, teacherName: "Петров Павел Петрович", teacherRef: "t1" });
+  });
+});
+
+describe("ИИ: лимит не пробивается параллельными вопросами", () => {
+  it("остался один вопрос, пришли два разом — к модели уходит один", async () => {
+    const { askAi } = await import("../src/bot/handlers/ask.js");
+    const deps = makeDeps();
+    deps.config = { ...deps.config, AI_DAILY_LIMIT_PER_USER: 1 } as Deps["config"];
+    let asked = 0;
+    deps.ask = { answer: async () => (asked++, await new Promise((r) => setTimeout(r, 20)), { text: "ответ", inputTokens: 1, outputTokens: 1, mentions: { teachers: [], webinarTeachers: [], groupKeys: [], students: [] } }) } as unknown as Deps["ask"];
+    const mk = () => {
+      const api = new Api("123:FAKE");
+      // «печатает…» отвечает не сразу — как настоящий Telegram.
+      api.config.use(async () => (await new Promise((r) => setTimeout(r, 10)), { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never }));
+      const ctx = new Context(text("x"), api, ME) as BotContext;
+      ctx.deps = deps;
+      ctx.user = deps.repo.touchUser(7, "u", "U");
+      ctx.isAdmin = false;
+      return ctx;
+    };
+    const outcomes = await Promise.all([askAi(mk(), "что завтра?"), askAi(mk(), "а послезавтра?")]);
+    expect(asked).toBe(1);
+    expect(outcomes.sort()).toEqual(["answered", "limit-user"]);
   });
 });

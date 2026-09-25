@@ -209,6 +209,8 @@ export class ScheduleService {
       if (fetchSession) periods.push(this.sessionFor(semester));
 
       const changedGroups = new Set<string>();
+      /** Группы, чью базу пар перестраиваем без сравнения (первая калибровка недели семестра). */
+      const rebaseline = new Set<string>();
       let banner: string | null | undefined;
       let calibrated = false;
 
@@ -238,7 +240,11 @@ export class ScheduleService {
               if (prev !== anchor) {
                 logger.info({ semester: sem, week: marker.week, anchor, prev }, "calibrated academic week anchor");
                 this.repo.setMeta(this.anchorKey(sem), anchor);
-                if (prev) for (const g of groups) changedGroups.add(g.key);
+                // Сдвиг уже известной недели — это перенос всех пар, о нём скажем.
+                // Первая калибровка семестра — не изменение: до неё пар семестра
+                // в базе не было вовсе, и сравнение объявило бы «новыми» все пары
+                // на две недели вперёд у всех групп. Просто перестраиваем базу.
+                for (const g of groups) (prev ? changedGroups : rebaseline).add(g.key);
               }
               if (marker.parity && (marker.week % 2 === 0 ? "even" : "odd") !== marker.parity) {
                 logger.warn({ marker }, "portal week parity disagrees with week number");
@@ -273,9 +279,9 @@ export class ScheduleService {
       const to = addDays(today, BASELINE_FUTURE_DAYS);
       for (const group of groups) {
         const hasBaseline = this.repo.hasOccurrences(group.key);
-        if (!changedGroups.has(group.key) && hasBaseline && !opts.force) continue;
+        if (!changedGroups.has(group.key) && !rebaseline.has(group.key) && hasBaseline && !opts.force) continue;
         const next = this.materialize(group, from, to);
-        if (hasBaseline) {
+        if (hasBaseline && !rebaseline.has(group.key)) {
           const prev = this.repo.occurrences(group.key, from, to);
           // Учётка отвалилась — портал перестал называть преподавателей. Стирать
           // уже известные фамилии из-за этого нельзя: человек увидит расписание

@@ -3,6 +3,7 @@
  * health probe. Plain HTTP is enough: iOS/macOS Calendar and Google Calendar
  * subscribe to http:// feeds, so the hosting's open port and domain suffice.
  */
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -10,6 +11,11 @@ import type { Repo } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { groupCalendar } from "../schedule/calendar.js";
 import { logger } from "../logger.js";
+
+/** Сравнение секрета за постоянное время: по задержке ответа токен не подобрать. */
+function sameSecret(a: string, b: string): boolean {
+  return timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
+}
 
 export interface SlideDeckUpload {
   date: string;
@@ -96,7 +102,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     };
     const token = deps.slidesToken;
     const auth = req.headers.authorization ?? "";
-    if (!token || auth !== `Bearer ${token}`) return reply(token ? 403 : 404, "нет доступа");
+    if (!token || !sameSecret(auth, `Bearer ${token}`)) return reply(token ? 403 : 404, "нет доступа");
     try {
       const meta = JSON.parse(Buffer.from(String(req.headers["x-slides-meta"] ?? ""), "base64").toString("utf8")) as Partial<SlideDeckUpload> & { slides?: number };
       if (!meta.date || !meta.subject) return reply(400, "в X-Slides-Meta нужны date и subject");
@@ -133,7 +139,15 @@ export function createHttpServer(deps: HttpDeps): Server {
   };
 
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    // Порт открыт всему интернету: «GET //[» или «GET http://a:b/» Node пропускает,
+    // а new URL на них бросает — без этой проверки один такой запрос ронял весь бот.
+    let url: URL;
+    try {
+      url = new URL(req.url ?? "/", "http://localhost");
+    } catch {
+      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" }).end("bad request");
+      return;
+    }
     const method = req.method ?? "GET";
     // Слайды вебинаров приходят POST-ом от записывалки на отдельном сервере.
     if (method === "POST" && url.pathname === "/slides") {
@@ -169,7 +183,16 @@ export function createHttpServer(deps: HttpDeps): Server {
     send(404, "vish-bot", "text/plain; charset=utf-8");
   };
 
-  const server = createServer(handler);
+  const server = createServer((req, res) => {
+    try {
+      handler(req, res);
+    } catch (err) {
+      // Любая неожиданная ошибка запроса — ответ 500, а не падение процесса.
+      logger.warn({ err: String(err) }, "http request failed");
+      if (!res.headersSent) res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("error");
+    }
+  });
   server.keepAliveTimeout = 5_000;
   server.headersTimeout = 10_000;
   // The bot only offers subscription links while the server is actually listening,
