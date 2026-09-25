@@ -6,6 +6,9 @@
 import type { DayRenderInput, Renderer, StreamRenderInput, WeekRenderInput } from "./image.js";
 import { createRenderer as midnight } from "./image.js";
 import { logger } from "../logger.js";
+import type { Occurrence } from "../schedule/model.js";
+import { shortGroupTitle } from "../schedule/groups.js";
+import { literalLabel } from "../schedule/format.js";
 
 export const THEMES = ["midnight", "editorial", "brutalist", "timeline"] as const;
 export type ThemeName = (typeof THEMES)[number];
@@ -38,6 +41,18 @@ export async function createThemedRenderer(name: string): Promise<Renderer | nul
 }
 
 /**
+ * Группы пары вместо преподавателя — для постера расписания самого
+ * преподавателя. Все темы рисуют строку пары через posterTeacher, поэтому
+ * подпись кладётся туда с меткой «как есть»; делается это только здесь, на
+ * входе в отрисовку, и в данные расписания метка не попадает.
+ */
+export function groupsAsLabel(o: Occurrence): Occurrence {
+  if (!o.groups?.length) return { ...o, teacher: null };
+  const short = o.groups.map(shortGroupTitle);
+  return { ...o, teacher: literalLabel(short.length > 3 ? `${short.slice(0, 3).join(", ")}…` : short.join(", ")) };
+}
+
+/**
  * Renderer that draws in whichever theme the input asks for, building each
  * theme once. Fonts are loaded once for the process, so an extra theme costs
  * almost nothing.
@@ -64,11 +79,13 @@ export class MultiThemeRenderer implements Renderer {
   }
 
   async renderDay(input: DayRenderInput): Promise<Buffer> {
-    return (await this.pick(input.theme)).renderDay(input);
+    return (await this.pick(input.theme)).renderDay(input.labels === "groups" ? { ...input, lessons: input.lessons.map(groupsAsLabel), teacherView: "plain" } : input);
   }
 
   async renderWeek(input: WeekRenderInput): Promise<Buffer> {
-    return (await this.pick(input.theme)).renderWeek(input);
+    if (input.labels !== "groups") return (await this.pick(input.theme)).renderWeek(input);
+    const byDate = new Map([...input.byDate].map(([d, list]) => [d, list.map(groupsAsLabel)] as const));
+    return (await this.pick(input.theme)).renderWeek({ ...input, byDate, teacherView: "plain" });
   }
 
   async renderStreamDay(input: StreamRenderInput): Promise<Buffer> {

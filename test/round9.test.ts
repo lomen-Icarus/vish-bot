@@ -17,7 +17,8 @@ import { peopleHandlers, showPerson } from "../src/bot/people.js";
 import { easterHandlers, isErshovQuery, ERSHOV_CARD } from "../src/bot/easter.js";
 import { buildPeopleResults, parseInlineQuery } from "../src/bot/inline.js";
 import { BTN, isMenuText, LEGACY_BTN } from "../src/bot/keyboards.js";
-import { clearHit, type PersonHit } from "../src/people/search.js";
+import { clearHit, tiedWith, type PersonHit } from "../src/people/search.js";
+import { groupsAsLabel } from "../src/render/themes.js";
 import { literalLabel, posterTeacher } from "../src/schedule/format.js";
 import type { Renderer } from "../src/render/image.js";
 import type { BotContext, Deps } from "../src/bot/context.js";
@@ -154,7 +155,8 @@ describe("преподаватель из реестра на /start", () => {
 describe("пасхалка про Кирилла Ершова", () => {
   it("узнаёт запрос, но не любую фразу с этой фамилией", () => {
     for (const q of ["Ершов", "кирилл ершов", "Ершов Кирилл", "кто такой Ершов?", "ершов спорторг", "спорторг", "Ершов Кирил"]) expect(isErshovQuery(q)).toBe(true);
-    for (const q of ["Ершова Ирина Петровна", "ершов завтра пары", "Петров", "где ершов сейчас сидит"]) expect(isErshovQuery(q)).toBe(false);
+    for (const q of ["Ершова Ирина Петровна", "ершов завтра пары", "Петров", "где ершов сейчас сидит", "Ершов 25.09", "ершов 12-23", "ершову 14:00", "Ершова"]) expect(isErshovQuery(q)).toBe(false);
+    expect(isErshovQuery("про Кирилла Ершова")).toBe(true);
   });
 
   it("карточка в поиске и секретная /ershov", async () => {
@@ -205,10 +207,10 @@ describe("наши преподаватели (ВИШ) впереди одноф
 
 describe("карточка человека картинкой", () => {
   function fakeRenderer() {
-    const days: Array<{ title: string; teachers: Array<string | null> }> = [];
+    const days: Array<{ title: string; labels: string | undefined; groups: Array<string[] | undefined> }> = [];
     const renderer: Renderer = {
       renderDay: async (input) => {
-        days.push({ title: input.group.title, teachers: input.lessons.map((o) => posterTeacher(o.teacher, input.teacherView)) });
+        days.push({ title: input.group.title, labels: input.labels, groups: input.lessons.map((o) => o.groups) });
         return Buffer.from("png");
       },
       renderWeek: async () => Buffer.from("png"),
@@ -239,11 +241,117 @@ describe("карточка человека картинкой", () => {
     expect(String(photo!.payload.caption)).toContain("Петрова Анна Сергеевна");
     expect(calls.some((c) => c.method === "sendMessage")).toBe(false);
     expect(days[0]!.title).toBe("Петрова А. С.");
-    expect(days[0]!.teachers).toEqual(["12-23, 13-23"]);
+    // Группы вместо фамилии рисует сам рендерер: данные расписания не трогаем.
+    expect(days[0]!.labels).toBe("groups");
+    expect(days[0]!.groups).toEqual([["ВИШ-12-23", "ВИШ-13-23"]]);
+  });
+
+  it("на входе в отрисовку группы встают в строку пары вместо преподавателя", () => {
+    const o = { groupKey: "t", period: 1 as const, date: today, slot: 1, start: 0, end: 60, subject: "Физика", type: "лк", room: null, teacher: "Петрова Анна Сергеевна", subgroup: null, isDistance: false, status: "scheduled" as const, sources: [], groups: ["ВИШ-12-23", "ВИШ-13-23 (ЭиЭА)"] };
+    expect(posterTeacher(groupsAsLabel(o).teacher, "plain")).toBe("12-23, 13-23 ЭиЭА");
+    expect(groupsAsLabel({ ...o, groups: [] }).teacher).toBeNull();
+  });
+
+  it("студент без группы в расписании — не пустой постер, а текст с объяснением", async () => {
+    const { renderer, days } = fakeRenderer();
+    const deps = makeDeps({ renderer });
+    const { deliverPersonPoster } = await import("../src/bot/people.js");
+    const { InlineKeyboard } = await import("grammy");
+    const ctx = { deps, user: { ...deps.repo.touchUser(7, "u", "U"), format: "image" }, callbackQuery: undefined } as unknown as BotContext;
+    const p = { ref: { kind: "student", id: "s1" }, role: "student", name: "Иванов Иван", group: null } as never;
+    const view = { text: "нет группы", caption: "нет группы", lessons: [], failed: false, needsGroup: false };
+    expect(await deliverPersonPoster(ctx, p, view, { mode: "day", date: today, kb: new InlineKeyboard(), edit: false })).toBe(false);
+    expect(days).toHaveLength(0);
   });
 
   it("метка «как есть» проходит мимо сокращения фамилии", () => {
     expect(posterTeacher(literalLabel("12-23, 13-23"), "plain")).toBe("12-23, 13-23");
     expect(posterTeacher("Иванова Ирина Ивановна", "bold")).toBe("Иванова И. И.");
+  });
+});
+
+describe("правки по ревью раунда 9", () => {
+  const press = (data: string): Update => ({ update_id: 5, callback_query: { id: "1", from: { id: 7, is_bot: false, first_name: "U" }, chat_instance: "1", data, message: { message_id: 11, date: 0, chat: { id: 7, type: "private", first_name: "U" }, text: "x" } as never } });
+
+  it("ВИШ из карты открывается: byId знает не только суточный справочник", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.setMeta("teachers:list", JSON.stringify([{ id: 1, name: "Сидоров Олег" }]));
+    repo.setMeta("teachers:fetchedAt", String(Date.now()));
+    repo.markTeacherVish(teacherMapKey(4, "Кузнецова Ольга Игоревна"), 4, "Кузнецова Ольга Игоревна", ["ВИШ-14-24"]);
+    const t = new TeacherService({} as PortalClient, repo, {} as ScheduleService, 32);
+    expect(await t.byId(4)).toEqual({ id: 4, name: "Кузнецова Ольга Игоревна" });
+    expect(await t.byId(9)).toBeNull();
+  });
+
+  it("тёзки, подошедшие так же точно, — кнопками под карточкой", () => {
+    const h = (name: string, vish: boolean): PersonHit => ({ ref: { kind: "teacher", id: name.length }, role: "teacher", name, fuzzy: false, score: 10, vish });
+    const hits = [h("Петров Кирилл Юрьевич", true), h("Петров Кирилл Борисович", false), { ...h("Петров Константин", false), score: 7 }];
+    const chosen = clearHit(hits)!;
+    expect(tiedWith(hits, chosen).map((x) => x.name)).toEqual(["Петров Кирилл Борисович"]);
+  });
+
+  it("выключал режим ещё до метки (ФИО есть, режима нет) — /start его не включает", async () => {
+    const deps = makeDeps();
+    deps.repo.touchUser(7, "petrova_as", "U");
+    deps.repo.updateUser(7, { teacherName: "Петрова Анна Сергеевна", teacherMode: false });
+    expect(all(await run(text("/start"), deps, { username: "petrova_as" }))).toMatch(/выбери свою группу/);
+    expect(deps.repo.getUser(7)!.teacherMode).toBe(false);
+  });
+
+  it("«усиленная анонимность» — бот не связывает аккаунт с реестром", async () => {
+    const deps = makeDeps();
+    deps.repo.touchUser(7, "petrova_as", "U");
+    deps.repo.updateUser(7, { anon: true });
+    expect(all(await run(text("/start"), deps, { username: "petrova_as" }))).toMatch(/выбери свою группу/);
+    expect(deps.repo.getUser(7)!.teacherMode).toBe(false);
+  });
+
+  it("не нашёлся при первом /start — ищется снова, когда он открывает свои пары", async () => {
+    const deps = makeDeps();
+    deps.repo.replaceWebinars(today, []);
+    await run(text("/start"), deps, { username: "petrova_as" });
+    expect(deps.repo.getUser(7)).toMatchObject({ teacherMode: true, teacherRef: null });
+    deps.repo.replaceWebinars(today, [{ date: today, slot: 1, start: 0, end: 23 * 60 + 59, subject: "Программирование", type: "лб", teacher: "Петрова Анна Сергеевна", position: null, degree: null, subgroup: null, title: null, groups: ["ВИШ-12-23"], scheduled: true }]);
+    // Как после очередного опроса страницы вебинаров: сервис читает свежие строки.
+    deps.webinars = new WebinarService({} as PortalClient, deps.repo, 32);
+    expect(all(await run(text(BTN.today), deps, { username: "petrova_as" }))).toContain("Программирование");
+    expect(deps.repo.getUser(7)!.teacherRef).toMatch(/^w/);
+  });
+
+  it("онбординг преподавателя: без рассылки изменений группы, дальше — его день", async () => {
+    const deps = makeDeps();
+    deps.repo.touchUser(7, "petrova_as", "U");
+    deps.repo.updateUser(7, { groupKey: group.key, notifyChanges: false });
+    await run(text("/start"), deps, { username: "petrova_as" });
+    const out = all(await run(press("ob:on"), deps, { username: "petrova_as" }));
+    expect(deps.repo.getUser(7)).toMatchObject({ notifyChanges: false, remindFirstMin: 120 });
+    expect(out).toContain("Программирование");
+    // И в рассылку изменений по старой группе он не попадает.
+    deps.repo.updateUser(7, { notifyChanges: true });
+    expect(deps.repo.usersForGroupChanges(group.key, false).map((u) => u.id)).not.toContain(7);
+  });
+
+  it("выбор себя из тёзок: двойной тап — одно приветствие", async () => {
+    const deps = makeDeps();
+    deps.repo.touchUser(7, "petrova_as", "U");
+    deps.repo.updateUser(7, { teacherName: "Петрова Анна Сергеевна" });
+    deps.repo.setMeta("tmode:welcome:7", "1");
+    const { webinarNameKey } = await import("../src/people/ref.js");
+    const data = `tmode:w${webinarNameKey("Петрова Анна Сергеевна")}`;
+    const first = all(await run(press(data), deps, { username: "petrova_as" }));
+    const second = await run(press(data), deps, { username: "petrova_as" });
+    expect(first).toContain("Рад вас видеть");
+    expect(second.filter((c) => c.method === "sendMessage")).toHaveLength(0);
+    expect(deps.repo.getMeta("tmode:welcome:7")).toBe("");
+  });
+
+  it("/soon стирает и метки режима преподавателя", () => {
+    const deps = makeDeps();
+    deps.repo.touchUser(7, "u", "U");
+    deps.repo.setMeta("tmode:off:7", "1");
+    deps.repo.setMeta("tmode:welcome:7", "1");
+    deps.repo.forgetUser(7);
+    expect(deps.repo.getMeta("tmode:off:7")).toBeNull();
+    expect(deps.repo.getMeta("tmode:welcome:7")).toBeNull();
   });
 });

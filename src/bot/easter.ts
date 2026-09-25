@@ -13,21 +13,26 @@ import type { BotContext } from "./context.js";
 
 export const easterHandlers = new Composer<BotContext>();
 
+/** Цифры остаются словами: «Ершов 25.09» или «ершов 12-23» — это уже про расписание. */
 function norm(s: string): string {
-  return s.toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\s]/gu, " ").replace(/\s+/g, " ").trim();
+  return s.toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
 }
 
 /** «Ершов», «Кирилл Ершов», «ершов кирилл спорторг», «кто такой Ершов?», «спорторг ВИШ». */
 const FILLER = new Set(["кто", "такой", "это", "а", "где", "про", "виш"]);
-const SURNAME = new Set(["ершов", "ершова", "ершову", "ершовым"]);
-const ALLOWED = new Set([...SURNAME, "кирилл", "кирил", "кирилла", "спорторг"]);
+const SURNAME = new Set(["ершов", "ершову", "ершовым"]);
+const FIRST = new Set(["кирилл", "кирил", "кирилла"]);
+const ALLOWED = new Set([...SURNAME, ...FIRST, "ершова", "спорторг"]);
 
 export function isErshovQuery(query: string): boolean {
   const words = norm(query)
     .split(" ")
     .filter((w) => w && !FILLER.has(w));
   if (words.length === 1 && words[0] === "спорторг") return true;
-  return words.length > 0 && words.length <= 3 && words.some((w) => SURNAME.has(w)) && words.every((w) => ALLOWED.has(w));
+  if (!words.length || words.length > 3 || !words.every((w) => ALLOWED.has(w))) return false;
+  // «Ершова» — это и «про Ершова», и женская фамилия: преподавателя Ершову
+  // пасхалка перехватывать не должна, поэтому без имени Кирилла не считается.
+  return words.some((w) => SURNAME.has(w)) || (words.includes("ершова") && words.some((w) => FIRST.has(w)));
 }
 
 export const ERSHOV_CARD = [

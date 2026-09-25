@@ -501,7 +501,7 @@ export class Repo {
         `SELECT DISTINCT u.* FROM users u
          LEFT JOIN watch_groups w ON w.user_id = u.id
          WHERE u.blocked = 0
-           AND ((u.group_key = @g AND u.notify_changes = 1) OR w.group_key = @g)
+           AND ((u.group_key = @g AND u.notify_changes = 1 AND u.teacher_mode = 0) OR w.group_key = @g)
            ${session ? "AND u.notify_session = 1" : ""}`,
       )
       .all({ g: groupKey }) as UserRow[];
@@ -811,6 +811,8 @@ export class Repo {
       ]) {
         this.db.prepare(sql).run(userId);
       }
+      // Метки режима преподавателя («выключил сам», «ждёт выбора себя из тёзок»).
+      this.db.prepare("DELETE FROM meta WHERE key IN (?, ?)").run(`tmode:off:${userId}`, `tmode:welcome:${userId}`);
     })();
   }
 
