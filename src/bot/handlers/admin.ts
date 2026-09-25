@@ -250,10 +250,12 @@ adminOnly.command("whois", async (ctx) => {
     `Проверено ${names.length} чел. · ✅ пользуются: <b>${tally.uses}</b> · ▫️ ник не встречался: ${tally["not-seen"]} · ❔ нет в списке старост: ${tally["no-handle"]}${tally.ambiguous ? ` · ⚠️ тёзки: ${tally.ambiguous}` : ""}`,
     ...(all.length > names.length ? [`⚠️ Проверены первые ${WHOIS_LIMIT} из ${all.length}: остальные ${all.length - names.length} не смотрел, пришли их отдельно.`] : []),
   ];
+  // Каждая строка — со своим <i>: сообщение режется по строкам, и тег,
+  // открытый в одной части и закрытый в другой, Telegram не принял бы.
   const foot = [
-    "<i>▫️ — ник из списка боту не встречался: человек мог сменить ник, забанить бота или включить «усиленную анонимность».",
-    "❔ — такого ФИО в списке старост нет (либо опечатка в фамилии).",
-    "⚠️ — в списке несколько подходящих людей (полные тёзки или спросили без отчества): угадывать бот не станет.</i>",
+    "<i>▫️ — ник из списка боту не встречался: человек мог сменить ник, забанить бота или включить «усиленную анонимность».</i>",
+    "<i>❔ — такого ФИО в списке старост нет (либо опечатка в фамилии).</i>",
+    "<i>⚠️ — в списке несколько подходящих людей (полные тёзки или спросили без отчества): угадывать бот не станет.</i>",
   ];
   // Сотня строк не влезает в одно сообщение Telegram, а резать список
   // молча нельзя: пусть лучше придёт несколько сообщений.
@@ -357,7 +359,7 @@ adminOnly.callbackQuery(/^ann:(del|rm):(\d+)$/, async (ctx) => {
   }
 });
 
-adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx) => {
+adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx, next) => {
   const action = ctx.match[1];
   switch (action) {
     case "stats":
@@ -401,7 +403,8 @@ adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx) => {
       await startBroadcast(ctx);
       return;
     default:
-      await ctx.answerCallbackQuery();
+      // «💬 Болталка» (adm:chat) и другие экраны живут в своих модулях дальше по цепочке.
+      return next();
   }
 });
 
@@ -466,7 +469,8 @@ function resolveTarget(ctx: BotContext, action: string): { users: User[]; label:
 adminOnly.on("message", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || pending.kind !== "broadcast") return next();
-  if (isMenuText(ctx.msg.text)) {
+  // Команда (/cancel, /chats…) — не текст рассылки: пусть её обработает свой обработчик.
+  if (isMenuText(ctx.msg.text) || ctx.msg.text?.startsWith("/")) {
     clearPending(ctx.deps, ctx.user.id);
     return next();
   }
@@ -475,8 +479,11 @@ adminOnly.on("message", async (ctx, next) => {
   await ctx.reply("Кому отправить?", { reply_markup: targetKeyboard() });
 });
 
-adminOnly.callbackQuery(/^bc:(all|cancel|course|go|topic:\w+|c\d)$/, async (ctx) => {
-  const action = ctx.match[1]!;
+adminOnly.callbackQuery(/^bc:(all|cancel|course|go(?::\d+)?|topic:\w+|c\d)$/, async (ctx) => {
+  const raw = ctx.match[1]!;
+  const action = raw.startsWith("go") ? "go" : raw;
+  // «bc:go:<id>» — подтверждение для конкретного сообщения; старое «bc:go» тоже понимаем.
+  const forMessage = raw.startsWith("go:") ? raw.slice(3) : "";
   const pending = takePending(ctx.deps, ctx.user.id);
   if (action === "cancel") {
     clearPending(ctx.deps, ctx.user.id);
@@ -504,11 +511,17 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go|topic:\w+|c\d)$/, async (ctx)
     // Target chosen: ask for confirmation.
     setPending(ctx.deps, ctx.user.id, { kind: "broadcast-confirm", chatId: pending.chatId, messageId: pending.messageId, text: pending.text, target: action, board: false }, 15 * 60_000);
     await ctx.answerCallbackQuery();
-    await showConfirm(ctx, action, false, !!pending.text);
+    await showConfirm(ctx, action, false, !!pending.text, pending.messageId);
     return;
   }
   if (pending.kind !== "broadcast-confirm" || !pending.target) {
     await ctx.answerCallbackQuery({ text: "Сначала выбери аудиторию", show_alert: true });
+    return;
+  }
+  // Кнопка со старого экрана подтверждения не должна разослать другое, более новое сообщение.
+  if (forMessage && Number(forMessage) !== pending.messageId) {
+    setPending(ctx.deps, ctx.user.id, pending, 15 * 60_000);
+    await ctx.answerCallbackQuery({ text: "Это подтверждение устарело: рассылка уже про другое сообщение. Подтверди на свежем экране.", show_alert: true });
     return;
   }
   const { users, label } = resolveTarget(ctx, pending.target);
@@ -540,9 +553,9 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go|topic:\w+|c\d)$/, async (ctx)
 });
 
 /** The confirmation screen, with the board toggle. */
-async function showConfirm(ctx: BotContext, target: string, board: boolean, hasText: boolean): Promise<void> {
+async function showConfirm(ctx: BotContext, target: string, board: boolean, hasText: boolean, messageId: number): Promise<void> {
   const { users, label } = resolveTarget(ctx, target);
-  const kb = new InlineKeyboard().text(`✅ Отправить ${users.length} чел.`, "bc:go").row();
+  const kb = new InlineKeyboard().text(`✅ Отправить ${users.length} чел.`, `bc:go:${messageId}`).row();
   if (hasText) kb.text(`📌 На доску объявлений: ${board ? `да, ${BOARD_HOURS} ч` : "нет"}`, "bc:board").row();
   kb.text("◀️ Другая аудитория", "bc:back").text("✖️ Отмена", "bc:cancel");
   const note = hasText ? "\n\nДоска объявлений висит в «🔔 Изменения» и видна всем, кто откроет этот экран. Вешай туда только важное." : "";
@@ -556,7 +569,7 @@ adminOnly.callbackQuery("bc:board", async (ctx) => {
   setPending(ctx.deps, ctx.user.id, { ...pending, board }, 15 * 60_000);
   await ctx.answerCallbackQuery({ text: board ? `Повешу на доску на ${BOARD_HOURS} ч` : "На доску не вешаю" });
   try {
-    await showConfirm(ctx, pending.target, board, !!pending.text);
+    await showConfirm(ctx, pending.target, board, !!pending.text, pending.messageId ?? 0);
   } catch {
     /* ignore */
   }

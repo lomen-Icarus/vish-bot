@@ -108,3 +108,23 @@ describe("проверка входа не путает «не вошла» и �
     expect(t.loginOk()).toBe(true);
   });
 });
+
+describe("портал: не страница расписания — не «все пары отменены»", () => {
+  it("главная вместо страницы группы — ошибка, а не пустое расписание", async () => {
+    const { client } = fakeClient({});
+    await expect(client.getGroupPage(8524, 1)).rejects.toThrow(/not a timetable page/);
+  });
+
+  it("не страница вебинаров — ошибка, а не «вебинаров нет»", async () => {
+    const { client } = fakeClient({});
+    await expect(client.getWebinars("2026-09-25", 32)).rejects.toThrow(/not a webinar page/);
+  });
+
+  it("гостем ночной обход справочника не отмечает преподавателей проверенными", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    const { client } = fakeClient({ "GET /index/techfac": TECHBUT }, { accountOk: false });
+    await client.login();
+    const t = new TeacherService(client, repo, {} as ScheduleService, 32);
+    expect(await t.crawlMap(10)).toEqual({ checked: 0, vish: 0 });
+  });
+});

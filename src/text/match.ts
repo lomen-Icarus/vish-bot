@@ -82,7 +82,9 @@ export function nameMatch(name: string, query: string): NameMatch {
   let substantive = false;
   let fuzzy = false;
   const used = new Set<number>();
-  for (const qw of q) {
+  // Длинные слова запроса — первыми: иначе набранный впереди инициал («И.
+  // Иванова») занимал место фамилии, и фамилия находилась лишь «с опечаткой».
+  for (const qw of [...q].sort((a, b) => b.length - a.length)) {
     let best = 0;
     let bestIdx = -1;
     let bestFuzzy = false;
@@ -157,9 +159,13 @@ export function stripTitles(raw: string): string {
   return out;
 }
 
-/** Слова ФИО без званий: «доц. к.х.н. Иванова И.И.» → ["иванова","и","и"]. */
+/**
+ * Слова ФИО без званий: «доц. к.х.н. Иванова И.И.» → ["иванова","и","и"].
+ * Двойная фамилия — одно слово (как и в shortName): иначе «Смирнова» из
+ * «Иванова-Смирнова» вставала против инициала «С.» другого человека.
+ */
 export function nameWords(raw: string): string[] {
-  return normName(stripTitles(raw)).split(" ").filter(Boolean);
+  return normName(stripTitles(raw).replace(/\s*-\s*/g, "\u2010")).split(" ").filter(Boolean);
 }
 
 /** «Иванова Ирина Ивановна» → «Иванова И. И.»; звания отбрасываются. */

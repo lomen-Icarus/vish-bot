@@ -18,6 +18,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { nameMatch, normName } from "../text/match.js";
 import { logger } from "../logger.js";
+import { decodeText } from "../text/decode.js";
 
 export interface StudentRecord {
   /** Стабильный короткий идентификатор для callback_data (ФИО + группа). */
@@ -249,7 +250,7 @@ export class StudentDirectory {
     this.size = st.size;
     try {
       const ext = path.extname(file).toLowerCase();
-      const raw = ext === ".sqlite" || ext === ".db" || ext === ".sqlite3" ? parseSqlite(file) : ext === ".json" ? parseJson(readFileSync(file, "utf8")) : parseCsv(readFileSync(file, "utf8"));
+      const raw = ext === ".sqlite" || ext === ".db" || ext === ".sqlite3" ? parseSqlite(file) : ext === ".json" ? parseJson(decodeText(readFileSync(file))) : parseCsv(decodeText(readFileSync(file)));
       const list: StudentRecord[] = [];
       const seen = new Set<string>();
       for (const r of raw) {

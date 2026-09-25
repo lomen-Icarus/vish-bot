@@ -57,9 +57,11 @@ scheduleHandlers.hears(/^\s*((?:после|поза)*(?:завтра|вчера)
 });
 
 // Plain date typed into the chat: "14.09"
-scheduleHandlers.hears(/^\s*\d{1,2}[./]\d{1,2}([./]\d{2,4})?\s*$/, async (ctx) => {
+scheduleHandlers.hears(/^\s*\d{1,2}[./]\d{1,2}([./]\d{2,4})?\s*$/, async (ctx, next) => {
   const date = parseRuDate(ctx.match[0]);
-  if (!date) return;
+  // «11.23» — это скорее группа через точку, «31.02» — такой даты нет: пусть
+  // дальше разберутся другие обработчики, а не тишина в ответ.
+  if (!date) return next();
   await ownDay(ctx, date);
 });
 

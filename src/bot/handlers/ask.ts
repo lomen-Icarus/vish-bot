@@ -48,10 +48,12 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   const day = todayMsk();
   const { verdict } = aiAllowance(ctx.deps.repo, ctx.deps.config, ctx.user.id, ctx.isAdmin, day, { user: inFlightByUser.get(ctx.user.id) ?? 0, global: inFlightGlobal });
   if (verdict !== "ok") return verdict;
-  await ctx.replyWithChatAction("typing");
+  // Счётчики — сразу после проверки, до первого await: иначе параллельные
+  // вопросы успевали пройти проверку, пока шёл «печатает…», и лимит пробивался.
   inFlightByUser.set(ctx.user.id, (inFlightByUser.get(ctx.user.id) ?? 0) + 1);
   inFlightGlobal++;
   try {
+    await ctx.replyWithChatAction("typing").catch(() => undefined);
     const self = ctx.user.teacherMode ? await ownTeacherContext(ctx) : undefined;
     const res = await ask.answer({ question, group: self ? null : needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps), self });
     ctx.deps.repo.bumpAiUsage(ctx.user.id, day, res.inputTokens, res.outputTokens);

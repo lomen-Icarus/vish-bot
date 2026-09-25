@@ -2,6 +2,7 @@
  * Source fetchers for the news scanner. Each returns recent posts in a common
  * shape; no authentication except the optional VK service token.
  */
+import { createHash } from "node:crypto";
 import { fetch as undiciFetch, EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { logger } from "../logger.js";
 
@@ -225,7 +226,10 @@ export async function fetchWeb(pageUrl: string): Promise<FetchedPost[]> {
   if (hasFeed) throw new Error(`Лента Tilda на ${safeUrl(pageUrl)} не ответила`);
   // Generic fallback: the whole page as one "post" dated now; the classifier decides.
   const text = htmlToText(html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, ""));
-  return [{ externalId: `page:${new Date().toISOString().slice(0, 10)}`, url: pageUrl, publishedAt: new Date().toISOString(), text: text.slice(0, 6000), photoUrl: null }];
+  // Ключ — по содержимому, а не по дате: неизменившаяся страница не должна
+  // каждый день становиться «новым постом» и снова уходить подписчикам.
+  const body = text.slice(0, 6000);
+  return [{ externalId: `page:${createHash("sha1").update(body).digest("hex").slice(0, 16)}`, url: pageUrl, publishedAt: new Date().toISOString(), text: body, photoUrl: null }];
 }
 
 export async function fetchSource(kind: SourceKind, ref: string, opts: { vkToken?: string }): Promise<FetchedPost[]> {

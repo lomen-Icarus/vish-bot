@@ -11,12 +11,20 @@ import { filterSubgroup } from "./format.js";
 import { buildIcs, icsUid } from "./ics.js";
 import { addDays, todayMsk, type LocalDate } from "../time.js";
 
-/** Semester end (plus session tail) capped at 150 days ahead. */
+/**
+ * Конец семестра вместе с сессией, но не дальше 150 дней вперёд. Хвост — семь
+ * недель: зимние экзамены идут до конца января (раньше окно кончалось 18.01,
+ * и экзамены 20–23.01 в календарь не попадали). И не короче 45 дней от
+ * сегодня: после конца окна подписанный календарь иначе пустел и стирал
+ * оставшиеся экзамены.
+ */
 export function calendarWindow(service: ScheduleService, today: LocalDate = todayMsk()): { from: LocalDate; to: LocalDate } {
   const anchor = service.weekOneMonday(service.semesterFor(today));
-  const semesterEnd = anchor ? addDays(anchor, SEMESTER_WEEKS * 7 + 21) : addDays(today, 120);
+  const semesterEnd = anchor ? addDays(anchor, SEMESTER_WEEKS * 7 + 49) : addDays(today, 120);
+  const floor = addDays(today, 45);
   const cap = addDays(today, 150);
-  return { from: today, to: semesterEnd < cap ? semesterEnd : cap };
+  const end = semesterEnd > floor ? semesterEnd : floor;
+  return { from: today, to: end < cap ? end : cap };
 }
 
 export interface GroupCalendar {

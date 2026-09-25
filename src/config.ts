@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { logLevel } from "./logger.js";
 
 /** Minimal .env loader (no dependency): KEY=VALUE lines, # comments, no interpolation. */
 export function loadDotEnv(file = path.resolve(process.cwd(), ".env")): void {
@@ -31,11 +32,19 @@ const idList = z
       .filter((n) => Number.isFinite(n)),
   );
 
+/**
+ * Числа из окружения: пустое значение («KEY=» в .env, пустая переменная в
+ * панели) — это «не задано». Без этого z.coerce превращал "" в 0: лимит поиска
+ * людей молча становился безлимитом, лимиты ИИ — нулём, а FACULTY_ID= ронял старт.
+ */
+const blankToUndefined = (v: unknown): unknown => (typeof v === "string" && !v.trim() ? undefined : v);
+const num = <T extends z.ZodTypeAny>(inner: T) => z.preprocess(blankToUndefined, inner);
+
 const schema = z.object({
   BOT_TOKEN: z.string().min(20, "BOT_TOKEN is required"),
   ADMIN_IDS: idList,
   MEDIA_CHAT_IDS: idList,
-  FACULTY_ID: z.coerce.number().int().positive().default(32),
+  FACULTY_ID: num(z.coerce.number().int().positive().default(32)),
   /** Group name prefixes hidden from users and skipped by the poller (part-time streams etc.). */
   HIDDEN_GROUP_PREFIXES: z
     .string()
@@ -49,15 +58,15 @@ const schema = z.object({
   /** VK service token (app "service key") for wall.get on VK sources. */
   VK_SERVICE_TOKEN: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   NEWS_SCAN_CRON: z.string().default("30 10 * * *"),
-  NEWS_LOOKBACK_HOURS: z.coerce.number().int().positive().default(32),
-  NEWS_MAX_PER_TOPIC: z.coerce.number().int().positive().default(8),
+  NEWS_LOOKBACK_HOURS: num(z.coerce.number().int().positive().default(32)),
+  NEWS_MAX_PER_TOPIC: num(z.coerce.number().int().positive().default(8)),
   DB_PATH: z.string().default("./data/vish-bot.sqlite"),
   POLL_CRON_BUSY: z.string().default("*/6 7-21 * * 1-6"),
   POLL_CRON_IDLE: z.string().default("*/30 * * * *"),
   ANTHROPIC_API_KEY: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   AI_MODEL: z.string().default("claude-sonnet-5"),
-  AI_DAILY_LIMIT_PER_USER: z.coerce.number().int().nonnegative().default(10),
-  AI_DAILY_LIMIT_GLOBAL: z.coerce.number().int().nonnegative().default(300),
+  AI_DAILY_LIMIT_PER_USER: num(z.coerce.number().int().nonnegative().default(10)),
+  AI_DAILY_LIMIT_GLOBAL: num(z.coerce.number().int().nonnegative().default(300)),
   /**
    * Глобальный поиск студентов ("сыск"): TRUE включает раздел целиком, FALSE
    * прячет его полностью — ни кнопок, ни команд, ни колбэков.
@@ -72,7 +81,7 @@ const schema = z.object({
    */
   POISK_DB: z.string().default("./data/students.csv"),
   /** Сколько раз в сутки один человек может искать людей (защита от выкачивания базы). */
-  POISK_DAILY_LIMIT: z.coerce.number().int().nonnegative().catch(30),
+  POISK_DAILY_LIMIT: num(z.coerce.number().int().nonnegative().catch(30)),
   /**
    * Файл «ФИО;телеграм-ник» — по нему бот здоровается по имени. Лежит ТОЛЬКО
    * на хостинге, как и реестр поиска, и в поиск студентов не попадает: ники
@@ -107,16 +116,16 @@ const schema = z.object({
    */
   CHAT_QA_DB: z.string().default("./data/chat-qa.csv"),
   /** Дневные лимиты по умолчанию; в админке («💬 Болталка») их можно поменять без перезапуска. */
-  CHAT_DAILY_LIMIT_PER_USER: z.coerce.number().int().nonnegative().catch(20),
-  CHAT_DAILY_LIMIT_PER_CHAT: z.coerce.number().int().nonnegative().catch(150),
-  CHAT_DAILY_LIMIT_GLOBAL: z.coerce.number().int().nonnegative().catch(400),
+  CHAT_DAILY_LIMIT_PER_USER: num(z.coerce.number().int().nonnegative().catch(20)),
+  CHAT_DAILY_LIMIT_PER_CHAT: num(z.coerce.number().int().nonnegative().catch(150)),
+  CHAT_DAILY_LIMIT_GLOBAL: num(z.coerce.number().int().nonnegative().catch(400)),
   /**
    * Чаты, где болталка включена сразу. Остальные включаются в админке; чат,
    * куда бота добавил сам админ бота, включается автоматически.
    */
   CHAT_GROUP_IDS: idList,
   /** Сколько последних сообщений чата бот держит в памяти как контекст (0 — только свои диалоги). */
-  CHAT_CONTEXT_MESSAGES: z.coerce.number().int().min(0).max(100).catch(30),
+  CHAT_CONTEXT_MESSAGES: num(z.coerce.number().int().min(0).max(100).catch(30)),
   /** Токен, которым сервер записи вебинаров подписывает загрузку слайдов (POST /slides). Пусто — приём выключен. */
   SLIDES_TOKEN: z.string().optional().transform((v) => (v && v.trim().length >= 16 ? v.trim() : undefined)),
   SLIDES_DIR: z.string().default("./data/slides"),
@@ -124,7 +133,7 @@ const schema = z.object({
     .string()
     .default("0")
     .transform((v) => v === "1" || v.toLowerCase() === "true"),
-  LOG_LEVEL: z.string().default("info"),
+  LOG_LEVEL: z.string().default("info").transform(logLevel),
   /** Poster look: midnight (default), editorial, brutalist, timeline. */
   POSTER_THEME: z.string().default("midnight"),
   HTTPS_PROXY: z.string().optional(),
@@ -133,8 +142,8 @@ const schema = z.object({
    * passes SERVER_PORT. 0 = off. A junk value disables the server instead of
    * stopping the bot from starting.
    */
-  HTTP_PORT: z.coerce.number().int().min(0).max(65535).catch(0),
-  SERVER_PORT: z.coerce.number().int().min(0).max(65535).catch(0).optional(),
+  HTTP_PORT: num(z.coerce.number().int().min(0).max(65535).catch(0)),
+  SERVER_PORT: num(z.coerce.number().int().min(0).max(65535).catch(0)).optional(),
   /** Public base URL of that server, e.g. http://srv3.frienworld.space:40070 — enables calendar subscription links. */
   PUBLIC_URL: z
     .string()

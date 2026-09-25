@@ -6,6 +6,7 @@ import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import type { User } from "../../db/repo.js";
 import { esc } from "../../schedule/format.js";
+import { todayMsk } from "../../time.js";
 
 export const settingsHandlers = new Composer<BotContext>();
 
@@ -135,6 +136,8 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     }
     case "changes":
       patch.notifyChanges = !user.notifyChanges;
+      // Включил обратно — старые изменения своей группы уже не новость.
+      if (patch.notifyChanges && user.groupKey) ctx.deps.repo.markGroupEventsSeen(user.id, user.groupKey, todayMsk());
       break;
     case "teacher": {
       const next = cycle(TEACHER_VIEW_OPTIONS, user.teacherView);
@@ -243,6 +246,9 @@ settingsHandlers.callbackQuery(/^wt:(.+)$/, async (ctx) => {
   const group = ctx.deps.service.group(key);
   if (!group) return void (await ctx.answerCallbackQuery({ text: "Группа не найдена" }));
   const on = ctx.deps.repo.toggleWatchGroup(ctx.user.id, key);
+  // Прошлые изменения группы — не новость для того, кто только начал следить:
+  // иначе утренний добор после тихих часов вывалил бы их все разом.
+  if (on) ctx.deps.repo.markGroupEventsSeen(ctx.user.id, key, todayMsk());
   await ctx.answerCallbackQuery({ text: on ? `Слежу за ${group.title}` : `Больше не слежу за ${group.title}` });
   try {
     await ctx.editMessageReplyMarkup({ reply_markup: watchKeyboard(ctx) });
@@ -258,9 +264,11 @@ settingsHandlers.callbackQuery(/^wt:(.+)$/, async (ctx) => {
  */
 settingsHandlers.callbackQuery(/^twx:(\d+)$/, async (ctx) => {
   const id = Number(ctx.match[1]);
-  const name = ctx.deps.repo.watchedTeachers(ctx.user.id).find((w) => w.teacherId === id)?.name ?? `#${id}`;
-  ctx.deps.repo.toggleWatchTeacher(ctx.user.id, id, name);
-  await ctx.answerCallbackQuery({ text: `Больше не слежу за ${name}` });
+  const watched = ctx.deps.repo.watchedTeachers(ctx.user.id).find((w) => w.teacherId === id);
+  // Только отписка: повторное или устаревшее нажатие не должно подписать
+  // снова (да ещё под именем «#123»).
+  if (watched) ctx.deps.repo.toggleWatchTeacher(ctx.user.id, id, watched.name);
+  await ctx.answerCallbackQuery({ text: watched ? `Больше не слежу за ${watched.name}` : "Уже не слежу" });
   const list = ctx.deps.repo.watchedTeachers(ctx.user.id);
   const kb = new InlineKeyboard();
   for (const t of list) kb.text(`🔕 ${t.name}`, `twx:${t.teacherId}`).row();

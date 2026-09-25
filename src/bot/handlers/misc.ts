@@ -257,6 +257,15 @@ interface LocalHits {
   onlyPeople: boolean;
 }
 
+/** Слова, после которых запрос — вопрос, а не имя. */
+const QUESTION_WORDS = /^(кто|что|где|когда|как|какой|какая|какие|каким|почему|зачем|сколько|ведет|ведёт|ведут|пары|пара|пар|расписание|завтра|сегодня|неделя|у|в|во|на|по|с|и|или|не|есть|будет|включить|выключить|найти|показать)$/iu;
+
+/** Похож ли запрос на имя человека: 1–3 слова из одних букв (дефис можно), без слов-вопросов. */
+function looksLikeName(query: string): boolean {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.length <= 3 && words.every((w) => /^[\p{L}-]+$/u.test(w) && !QUESTION_WORDS.test(w));
+}
+
 async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
   const deps = ctx.deps;
   const today = todayMsk();
@@ -310,8 +319,12 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
   if (nameWords.length > 0 && nameWords.length <= 3) {
     try {
       // Журнал «сыска» ведётся и на промахах; если по тому же запросу сработает
-      // ещё и инструмент ИИ, repo.logPoisk склеит это в одну запись.
-      people = (await searchPeople(deps, query, { scope: "all", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск", limit: 6 })).hits;
+      // ещё и инструмент ИИ, repo.logPoisk склеит это в одну запись. Поэтому
+      // студентов ищем, только когда запрос похож на имя: «матан», «кто ведёт
+      // БЖД» или «что у 14-24» не должны тратить лимит поиска людей и попадать
+      // в журнал как поиск человека. Преподаватели ищутся всегда.
+      const scope = looksLikeName(query) && !parts.length ? "all" : "teacher";
+      people = (await searchPeople(deps, query, { scope, viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск", limit: 6 })).hits;
     } catch (err) {
       logger.warn({ err: String(err) }, "search: people failed");
     }

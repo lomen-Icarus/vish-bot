@@ -362,7 +362,9 @@ export class AskService {
     let inputTokens = 0;
     let outputTokens = 0;
     for await (const message of runner) {
-      inputTokens += message.usage.input_tokens;
+      // Кешированный системный промпт и инструменты тоже оплачиваются: без них
+      // статистика расходов занижалась и не сходилась с болталкой.
+      inputTokens += message.usage.input_tokens + (message.usage.cache_read_input_tokens ?? 0) + (message.usage.cache_creation_input_tokens ?? 0);
       outputTokens += message.usage.output_tokens;
       if (message.stop_reason === "refusal") {
         logger.warn({ category: message.stop_details?.category }, "ask: model refused");

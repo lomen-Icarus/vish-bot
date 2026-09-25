@@ -13,7 +13,7 @@
 import type { Deps } from "../bot/context.js";
 import type { User, WebinarRow } from "../db/repo.js";
 import type { TeacherRef } from "../portal/teachers.js";
-import { teacherMapKey } from "../portal/teachers.js";
+import { teacherMapByName } from "../portal/teachers.js";
 import type { WebinarTeacher } from "../portal/webinars.js";
 import type { StudentRecord } from "../students/directory.js";
 import { resolveStudentGroup, whereNowText } from "../students/locate.js";
@@ -64,7 +64,7 @@ export function studentsEnabled(deps: Deps): boolean {
 }
 
 function teacherVish(deps: Deps, teacherId: number | null, name: string): boolean {
-  const row = (teacherId != null ? deps.repo.teacherMapById(teacherId) : null) ?? deps.repo.teacherMapByKey(teacherMapKey(null, name));
+  const row = (teacherId != null ? deps.repo.teacherMapById(teacherId) : null) ?? teacherMapByName(deps.repo, name);
   return row?.vish === true;
 }
 
