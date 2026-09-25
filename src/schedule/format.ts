@@ -129,9 +129,22 @@ export function unbreakable(s: string): string {
   return s.replace(/ /g, "\u00a0");
 }
 
+/**
+ * Невидимая метка «подпись как есть». На постере расписания самого
+ * преподавателя вместо фамилии (это он сам) нужны группы, а их сокращение
+ * «Фамилия И. О.» превратило бы в кашу. Все темы постеров идут через
+ * posterTeacher, поэтому метка работает везде.
+ */
+const LITERAL = "\u2063";
+
+export function literalLabel(text: string): string {
+  return `${LITERAL}${text}`;
+}
+
 /** Подпись преподавателя на постере: коротко, либо ничего, если выключено. */
 export function posterTeacher(name: string | null | undefined, view: TeacherView | undefined): string | null {
   if (!name || view === "off") return null;
+  if (name.startsWith(LITERAL)) return unbreakable(name.slice(LITERAL.length));
   return unbreakable(shortTeacher(name));
 }
 

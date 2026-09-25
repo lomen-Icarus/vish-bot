@@ -1,7 +1,7 @@
 /**
  * Люди в боте: одна карточка, одни кнопки, один список кандидатов — для
  * преподавателя и для студента, откуда бы его ни открыли (кнопка
- * «👨‍🏫 Преподаватели», «Где студент», «🔍 Поиск», ответ ИИ, старые кнопки).
+ * «👨‍🏫 Преподаватели», «Где студент», «🔍 ИИ поисковик», ответ ИИ, старые кнопки).
  *
  *   ◀️ 23.09 | 25.09 ▶️
  *   🗓 Неделя | 🔎 Найти другого
@@ -13,11 +13,15 @@ import { Composer, InlineKeyboard, InputFile } from "grammy";
 import type { BotContext } from "./context.js";
 import { clearPending, setPending, takePending } from "./context.js";
 import { BTN, groupCb, isMenuText } from "./keyboards.js";
-import { esc } from "../schedule/format.js";
-import { courseFor, parseGroupName } from "../schedule/groups.js";
-import { addDays, fmtDDMM, mondayOf, todayMsk, type LocalDate } from "../time.js";
+import { esc, literalLabel } from "../schedule/format.js";
+import { courseFor, parseGroupName, personGroup } from "../schedule/groups.js";
+import type { Occurrence } from "../schedule/model.js";
+import { addDays, fmtDDMM, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
+import { posterPlan, sendPoster } from "./views.js";
+import { shortName } from "../text/match.js";
 import { logger } from "../logger.js";
-import { chooseStudentGroup, loadProfile, personDayView, personWeekView, studentsEnabled, type PersonProfile } from "../people/profile.js";
+import { isErshovQuery, sendErshovCard } from "./easter.js";
+import { chooseStudentGroup, loadProfile, personDayView, personWeekView, studentsEnabled, type PersonProfile, type PersonView } from "../people/profile.js";
 import { parseRefKey, refKey, webinarNameKey, type PersonRef } from "../people/ref.js";
 import { clearHit, hitLabel, searchPeople, studentSearchAllowed, type PeopleScope, type PersonHit } from "../people/search.js";
 
@@ -118,6 +122,11 @@ export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDat
   }
   const view = mode === "day" ? await personDayView(ctx.deps, p, date, ctx.user) : await personWeekView(ctx.deps, p, date, ctx.user);
   const kb = view.needsGroup ? groupChoiceKeyboard(p) : personKeyboard(ctx, p, date, mode);
+  // Картинкой — как расписание группы, если человек выбрал формат «картинка».
+  if (await deliverPersonPoster(ctx, p, view, { mode, date, kb, edit: !!opts.edit })) {
+    if (!opts.edit && p.ref.kind === "teacher") await sendTeacherPhoto(ctx, p);
+    return true;
+  }
   if (opts.edit && isTextMessage(ctx)) {
     try {
       await ctx.editMessageText(view.text, { parse_mode: "HTML", reply_markup: kb });
@@ -130,6 +139,58 @@ export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDat
   await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: kb });
   if (!opts.edit && p.ref.kind === "teacher" && !view.failed) await sendTeacherPhoto(ctx, p);
   return true;
+}
+
+/** «ВИШ-12-23 (ЭиЭА)» → «12-23 ЭиЭА»: на постере места мало. */
+function posterGroups(groups: string[] | undefined): string | null {
+  if (!groups?.length) return null;
+  const short = groups.map((g) => g.replace(/^ВИШ-/, "").replace(/\s*\((.*?)\)\s*$/, " $1").trim());
+  return short.length > 3 ? `${short.slice(0, 3).join(", ")}…` : short.join(", ");
+}
+
+/**
+ * Карточка человека постером — по той же настройке формата, что и расписание
+ * группы (текст / картинка / оба). У преподавателя вместо фамилии в строке
+ * пары — группы: фамилия там его же. Возвращает false, если постер не нужен
+ * или не получился: тогда зовущий шлёт обычный текст.
+ */
+export async function deliverPersonPoster(
+  ctx: BotContext,
+  p: PersonProfile,
+  view: PersonView,
+  opts: { mode: "day" | "week"; date: LocalDate; kb: InlineKeyboard; edit: boolean },
+): Promise<boolean> {
+  const renderer = ctx.deps.renderer;
+  if (!renderer || view.failed || view.needsGroup) return false;
+  const plan = posterPlan(ctx, { edit: opts.edit }, view.lessons.length > 0);
+  if (!plan.image) return false;
+  const teacher = p.role === "teacher";
+  const lessons = teacher
+    ? view.lessons.map((o) => {
+        const g = posterGroups(o.groups);
+        return { ...o, teacher: g ? literalLabel(g) : null };
+      })
+    : view.lessons;
+  const teacherView = teacher ? ("plain" as const) : ctx.user.teacherView;
+  const group = personGroup(shortName(p.name), refKey(p.ref));
+  const theme = ctx.user.posterTheme ?? undefined;
+  const today = todayMsk();
+  let png: Buffer;
+  try {
+    if (opts.mode === "day") {
+      png = await renderer.renderDay({ group, date: opts.date, lessons, weekInfo: ctx.deps.service.weekInfo(opts.date), today, now: wallClock(), theme, teacherView });
+    } else {
+      const monday = mondayOf(opts.date);
+      const byDate = new Map<LocalDate, Occurrence[]>();
+      for (const o of lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
+      png = await renderer.renderWeek({ group, monday, byDate, weekInfo: ctx.deps.service.weekInfo(monday), today, subgroup: null, theme, teacherView });
+    }
+  } catch (err) {
+    logger.warn({ err: String(err) }, "people: poster render failed, falling back to text");
+    return false;
+  }
+  const fileName = `${refKey(p.ref)}-${opts.mode}-${opts.date}.png`;
+  return sendPoster(ctx, png, fileName, plan.text ? view.text : view.caption, opts.kb, plan);
 }
 
 /**
@@ -224,10 +285,12 @@ async function replyNotFound(ctx: BotContext, query: string, scope: PeopleScope,
 
 /**
  * Поиск по фамилии в пределах scope: один точный ответ — сразу карточка, иначе
- * кандидаты кнопками. Возвращает найденных (для «🔍 Поиск» и тестов).
+ * кандидаты кнопками. Возвращает найденных (для «🔍 ИИ поисковик» и тестов).
  */
 export async function runPeopleSearch(ctx: BotContext, query: string, scope: PeopleScope): Promise<PersonHit[]> {
   const deps = ctx.deps;
+  const easter = scope !== "student" && isErshovQuery(query);
+  if (easter) await sendErshovCard(ctx);
   await ctx.replyWithChatAction("typing").catch(() => undefined);
   const res = await searchPeople(deps, query, { scope, viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск" });
   if (scope === "student" && res.students === "limit") {
@@ -239,7 +302,8 @@ export async function runPeopleSearch(ctx: BotContext, query: string, scope: Peo
     return [];
   }
   if (!res.hits.length) {
-    await replyNotFound(ctx, query, scope, res.students);
+    // Пасхалка уже ответила — «никого не нашёл» после неё звучало бы странно.
+    if (!easter) await replyNotFound(ctx, query, scope, res.students);
     return [];
   }
   const clear = clearHit(res.hits);

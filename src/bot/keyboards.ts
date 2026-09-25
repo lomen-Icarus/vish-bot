@@ -17,7 +17,7 @@ export const BTN = {
   calendar: "📆 Календарь",
   teachers: "👨‍🏫 Преподаватели",
   features: "🧭 Функции",
-  search: "🔍 Поиск",
+  search: "🔍 ИИ поисковик",
   settings: "⚙️ Настройки",
   ask: "💬 Спросить",
   suggest: "📨 Отправить новость",
@@ -31,8 +31,16 @@ export const BTN = {
   backToMenu: "◀️ В меню",
 } as const;
 
+/**
+ * Старые подписи кнопок. Нижнее меню живёт в чате, пока его не заменит новое,
+ * поэтому у кого-то ещё висит прежняя кнопка — она должна работать как раньше.
+ */
+export const LEGACY_BTN = {
+  search: "🔍 Поиск",
+} as const;
+
 /** Every label of the reply keyboards; a pending flow must never swallow one. */
-export const MENU_TEXTS: ReadonlySet<string> = new Set(Object.values(BTN));
+export const MENU_TEXTS: ReadonlySet<string> = new Set([...Object.values(BTN), ...Object.values(LEGACY_BTN)]);
 
 export function isMenuText(text: string | undefined): boolean {
   return !!text && MENU_TEXTS.has(text.trim());
