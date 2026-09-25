@@ -356,7 +356,9 @@ export class Notifier {
       }
       // Изменения приходят и по своей группе, и по тем, за которыми следят:
       // раньше добор смотрел только свою, и «ночные» чужие пропадали совсем.
-      const keys = [...(user.notifyChanges && user.groupKey ? [user.groupKey] : []), ...this.repo.watchGroups(user.id)];
+      // В режиме преподавателя «своя группа» — он сам: старая группа студента
+      // изменений не шлёт (за чужими группами можно следить отдельно).
+      const keys = [...(user.notifyChanges && user.groupKey && !user.teacherMode ? [user.groupKey] : []), ...this.repo.watchGroups(user.id)];
       for (const key of [...new Set(keys)]) {
         const group = this.service.group(key);
         if (!group) continue;
@@ -529,7 +531,8 @@ export class Notifier {
   private async maybeRenderDay(user: User, group: ReturnType<ScheduleService["group"]>, date: LocalDate, lessons: Occurrence[], now: WallClock): Promise<Buffer | undefined> {
     if (!this.renderer || !group || user.format === "text") return undefined;
     try {
-      return await this.renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: todayMsk(), now, theme: user.posterTheme ?? undefined, teacherView: user.teacherMode ? "off" : user.teacherView });
+      // В режиме преподавателя в строке пары — группы: фамилия там его же.
+      return await this.renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: todayMsk(), now, theme: user.posterTheme ?? undefined, teacherView: user.teacherView, ...(user.teacherMode ? { labels: "groups" as const } : {}) });
     } catch (err) {
       logger.warn({ err }, "reminder image render failed");
       return undefined;

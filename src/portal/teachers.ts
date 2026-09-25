@@ -165,7 +165,12 @@ export class TeacherService {
 
   async byId(id: number): Promise<TeacherRef | null> {
     const dir = await this.directory();
-    return dir.find((t) => t.id === id) ?? null;
+    const found = dir.find((t) => t.id === id);
+    if (found) return found;
+    // Поиск отдаёт и тех, кого карта знает как преподавателей ВИШ, а суточный
+    // справочник ещё нет: открыть их карточку тоже нужно.
+    const row = this.repo.teacherMapById(id);
+    return row ? { id, name: row.name } : null;
   }
 
   /**
