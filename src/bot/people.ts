@@ -20,8 +20,8 @@ import { addDays, fmtDDMM, mondayOf, todayMsk, wallClock, type LocalDate } from 
 import { posterPlan, sendPoster } from "./views.js";
 import { shortName } from "../text/match.js";
 import { logger } from "../logger.js";
-import { isErshovQuery, sendErshovCard } from "./easter.js";
-import { chooseStudentGroup, loadProfile, personDayView, personWeekView, studentsEnabled, type PersonProfile, type PersonView } from "../people/profile.js";
+import { ERSHOV_SURNAME, isErshovQuery, sendErshovCard } from "./easter.js";
+import { chooseStudentGroup, groupByDate, loadProfile, personDayView, personWeekView, studentsEnabled, type PersonProfile, type PersonView } from "../people/profile.js";
 import { parseRefKey, refKey, webinarNameKey, type PersonRef } from "../people/ref.js";
 import { clearHit, hitLabel, searchPeople, studentSearchAllowed, tiedWith, type PeopleScope, type PersonHit } from "../people/search.js";
 
@@ -65,7 +65,22 @@ function scopeOfProfile(p: PersonProfile): PeopleScope {
   return p.role === "student" ? "student" : "teacher";
 }
 
-/** «ВИШ-12-23» → «12-23» для подписи кнопки. */
+/** Тёзки под карточкой: кому их показывали и когда. Память процесса, на час. */
+const ties = new Map<number, { key: string; others: PersonHit[]; at: number }>();
+const TIES_TTL_MS = 60 * 60_000;
+
+function tiesFor(userId: number, key: string, opts: { others?: PersonHit[]; edit?: boolean }): PersonHit[] {
+  if (opts.others?.length) {
+    ties.set(userId, { key, others: opts.others.slice(0, 4), at: Date.now() });
+    return opts.others.slice(0, 4);
+  }
+  const saved = ties.get(userId);
+  if (opts.edit && saved && saved.key === key && Date.now() - saved.at < TIES_TTL_MS) return saved.others;
+  // Новая карточка без тёзок — прежний список к ней не относится.
+  if (!opts.edit) ties.delete(userId);
+  return [];
+}
+
 /** Кнопки под карточкой человека (день или неделя). */
 export function personKeyboard(ctx: BotContext, p: PersonProfile, date: LocalDate, mode: "day" | "week"): InlineKeyboard {
   const key = refKey(p.ref);
@@ -119,8 +134,9 @@ export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDat
   const view = mode === "day" ? await personDayView(ctx.deps, p, date, ctx.user) : await personWeekView(ctx.deps, p, date, ctx.user);
   const kb = view.needsGroup ? groupChoiceKeyboard(p) : personKeyboard(ctx, p, date, mode);
   // Одинаково подходили и другие — они кнопками под карточкой, чтобы тёзку
-  // можно было открыть, не придумывая другой запрос.
-  for (const h of opts.others?.slice(0, 4) ?? []) kb.row().text(hitLabel(h), `ppo:${refKey(h.ref)}`);
+  // можно было открыть, не придумывая другой запрос. Стрелки и «Неделя»
+  // перерисовывают карточку, поэтому список помним, пока листают того же человека.
+  for (const h of tiesFor(ctx.user.id, refKey(p.ref), opts)) kb.row().text(hitLabel(h), `ppo:${refKey(h.ref)}`);
   // Картинкой — как расписание группы, если человек выбрал формат «картинка».
   if (await deliverPersonPoster(ctx, p, view, { mode, date, kb, edit: !!opts.edit })) {
     if (!opts.edit && p.ref.kind === "teacher") await sendTeacherPhoto(ctx, p);
@@ -170,8 +186,7 @@ export async function deliverPersonPoster(
       png = await renderer.renderDay({ group, date: opts.date, lessons, weekInfo: ctx.deps.service.weekInfo(opts.date), today, now: wallClock(), theme, teacherView, labels });
     } else {
       const monday = mondayOf(opts.date);
-      const byDate = new Map<LocalDate, Occurrence[]>();
-      for (const o of lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
+      const byDate = view.byDate ?? groupByDate(lessons);
       png = await renderer.renderWeek({ group, monday, byDate, weekInfo: ctx.deps.service.weekInfo(monday), today, subgroup: null, theme, teacherView, labels });
     }
   } catch (err) {
@@ -280,6 +295,8 @@ export async function runPeopleSearch(ctx: BotContext, query: string, scope: Peo
   const deps = ctx.deps;
   const easter = scope !== "student" && isErshovQuery(query);
   if (easter) await sendErshovCard(ctx);
+  // После пасхалки ищем только однофамильцев: иначе «Кирилл Ершов» открыл бы любого Кирилла.
+  if (easter) query = ERSHOV_SURNAME;
   await ctx.replyWithChatAction("typing").catch(() => undefined);
   const res = await searchPeople(deps, query, { scope, viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск" });
   if (scope === "student" && res.students === "limit") {

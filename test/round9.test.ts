@@ -355,3 +355,99 @@ describe("правки по ревью раунда 9", () => {
     expect(deps.repo.getMeta("tmode:welcome:7")).toBeNull();
   });
 });
+
+describe("правки по ревью всего src и записывалки", () => {
+  const press = (data: string): Update => ({ update_id: 6, callback_query: { id: "2", from: { id: 7, is_bot: false, first_name: "U" }, chat_instance: "1", data, message: { message_id: 12, date: 0, chat: { id: 7, type: "private", first_name: "U" }, text: "x" } as never } });
+  const lesson = (teacher: string) => ({ date: today, slot: 2, start: 0, end: 23 * 60 + 59, subject: "Физкультура", type: "пр", teacher, position: null, degree: null, subgroup: null, title: null, groups: ["ВИШ-12-23"], scheduled: true });
+  const markups = (calls: Call[]): string => JSON.stringify(calls.map((c) => c.payload.reply_markup ?? null));
+
+  function withKirill(extra: string[] = []): Deps {
+    const deps = makeDeps();
+    deps.repo.replaceWebinars(today, [lesson("Смирнов Кирилл Андреевич"), ...extra.map(lesson)]);
+    deps.webinars = new WebinarService({} as PortalClient, deps.repo, 32);
+    return deps;
+  }
+
+  it("«Кирилл Ершов» — карточка, а не расписание первого попавшегося Кирилла", async () => {
+    const deps = withKirill();
+    const calls = await run(text("/search Кирилл Ершов"), deps);
+    expect(all(calls)).toContain("Кирилл Ершов");
+    expect(all(calls) + markups(calls)).not.toContain("Смирнов");
+    const { runPeopleSearch } = await import("../src/bot/people.js");
+    const ctxCalls: Call[] = [];
+    const api = new Api("123:FAKE");
+    api.config.use(async (_prev, method, payload) => {
+      ctxCalls.push({ method, payload: payload as Record<string, unknown> });
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never };
+    });
+    const ctx = new Context(text("x"), api, ME) as BotContext;
+    ctx.deps = deps;
+    ctx.user = deps.repo.touchUser(7, "u", "U");
+    ctx.isAdmin = false;
+    await runPeopleSearch(ctx, "Кирилл Ершов", "teacher");
+    expect(all(ctxCalls) + markups(ctxCalls)).not.toContain("Смирнов");
+    const inline = await buildPeopleResults(deps, parseInlineQuery(deps, "Кирилл Ершов", null), null);
+    expect(inline[0]!.id).toBe("p:ershov");
+    expect(JSON.stringify(inline)).not.toContain("Смирнов");
+  });
+
+  it("настоящий однофамилец Ершов после карточки всё-таки находится", async () => {
+    const deps = withKirill(["Ершов Пётр Ильич"]);
+    const calls = await run(text("/search Кирилл Ершов"), deps);
+    expect(all(calls)).toContain("однофамильцы");
+    expect(markups(calls)).toContain("Ершов Пётр Ильич");
+    expect(markups(calls)).not.toContain("Смирнов");
+  });
+
+  it("выбор себя из тёзок в /prepod не считается «выключил сам»: /start встречает", async () => {
+    const deps = makeDeps();
+    // Два полных тёзки в справочнике, ни один не отмечен как ВИШ — нужен выбор.
+    const twins = [1, 2].map((id) => ({ ref: { id, name: "Петрова Анна Сергеевна" }, fuzzy: false, score: 10 }));
+    deps.teachers = { searchScored: async () => twins, searchLocal: () => twins, ensureMapped: async () => undefined } as unknown as Deps["teachers"];
+    const chooser = await run(text("/prepod"), deps, { username: "petrova_as" });
+    expect(all(chooser)).toMatch(/несколько/);
+    expect(deps.repo.getUser(7)!.teacherName).toBeNull();
+    expect(deps.repo.getMeta("tmode:fio:7")).toBe("Петрова Анна Сергеевна");
+    // Не выбрал, пришёл позже — это не отказ от режима.
+    const start = all(await run(text("/start"), deps, { username: "petrova_as" }));
+    expect(start).toContain("Здравствуйте, Анна Сергеевна");
+    expect(start).not.toMatch(/выбери свою группу/);
+    await run(press("tmode:t2"), deps, { username: "petrova_as" });
+    expect(deps.repo.getUser(7)).toMatchObject({ teacherMode: true, teacherName: "Петрова Анна Сергеевна", teacherRef: "t2" });
+    expect(deps.repo.getMeta("tmode:fio:7")).toBe("");
+  });
+
+  it("тёзки под карточкой не пропадают, когда листают дни того же человека", async () => {
+    const deps = withKirill(["Смирнов Кирилл Олегович"]);
+    const { webinarNameKey } = await import("../src/people/ref.js");
+    const a = { kind: "webinar" as const, key: webinarNameKey("Смирнов Кирилл Андреевич") };
+    const b = { kind: "webinar" as const, key: webinarNameKey("Смирнов Кирилл Олегович") };
+    const other: PersonHit = { ref: b, role: "teacher", name: "Смирнов Кирилл Олегович", fuzzy: false, score: 10, vish: true, webinarOnly: true };
+    const calls: Call[] = [];
+    const api = new Api("123:FAKE");
+    api.config.use(async (_prev, method, payload) => {
+      calls.push({ method, payload: payload as Record<string, unknown> });
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never };
+    });
+    const ctx = new Context(text("x"), api, ME) as BotContext;
+    ctx.deps = deps;
+    ctx.user = deps.repo.touchUser(7, "u", "U");
+    ctx.isAdmin = false;
+    await showPerson(ctx, a, today, { others: [other] });
+    expect(markups(calls)).toContain(`ppo:w${b.key}`);
+    // Стрелка «день вперёд» перерисовывает карточку — тёзка остаётся.
+    const next = await run(press(`pp:w${a.key}:${today}`), deps);
+    expect(markups(next)).toContain(`ppo:w${b.key}`);
+    // Открыли другого человека заново — чужой список к нему не прилипает.
+    const fresh = await run(press(`ppo:w${b.key}`), deps);
+    expect(markups(fresh)).not.toContain("ppo:");
+  });
+
+  it("пары по датам раскладываются одним проходом и в исходном порядке", async () => {
+    const { groupByDate } = await import("../src/people/profile.js");
+    const o = (date: string, slot: number) => ({ date, slot }) as never;
+    const byDate = groupByDate([o("2026-09-21", 1), o("2026-09-22", 1), o("2026-09-21", 3)]);
+    expect([...byDate.keys()]).toEqual(["2026-09-21", "2026-09-22"]);
+    expect(byDate.get("2026-09-21")!.map((x: { slot: number }) => x.slot)).toEqual([1, 3]);
+  });
+});

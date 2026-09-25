@@ -116,16 +116,16 @@ export function findGroup(groups: LogicalGroup[], query: string): LogicalGroup[]
   return matches;
 }
 
-/**
- * Псевдогруппа для экранов, где расписание принадлежит человеку, а не группе:
- * карточка преподавателя, inline-ответ про студента. formatDay/formatWeek
- * печатают её title как заголовок.
- */
 /** «ВИШ-12-23 (ЭиЭА)» → «12-23 ЭиЭА»: для кнопок и постеров, где места мало. */
 export function shortGroupTitle(title: string): string {
   return title.replace(/^ВИШ-/, "").replace(/\s*\((.*?)\)\s*$/, " $1").trim();
 }
 
+/**
+ * Псевдогруппа для экранов, где расписание принадлежит человеку, а не группе:
+ * карточка преподавателя, inline-ответ про студента. formatDay/formatWeek
+ * печатают её title как заголовок.
+ */
 export function personGroup(title: string, key: string): LogicalGroup {
   return { key, title, prefix: "", number: 0, intake: 0, course: 0, portalIds: [], portalNames: [] };
 }

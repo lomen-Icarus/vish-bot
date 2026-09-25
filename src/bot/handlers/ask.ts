@@ -16,7 +16,7 @@ import { hitLabel, searchPeople } from "../../people/search.js";
 import { refKey, type PersonRef } from "../../people/ref.js";
 import { samePerson } from "../../text/match.js";
 import { logger } from "../../logger.js";
-import { isErshovQuery, sendErshovCard } from "../easter.js";
+import { ERSHOV_SURNAME, isErshovQuery, sendErshovCard } from "../easter.js";
 
 export const askHandlers = new Composer<BotContext>();
 
@@ -41,7 +41,7 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   // расписании есть настоящий однофамилец, вопрос идёт дальше, к ИИ.
   if (isErshovQuery(question)) {
     await sendErshovCard(ctx);
-    const real = await searchPeople(ctx.deps, question, { scope: "teacher", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "ии", localOnly: true }).catch(() => null);
+    const real = await searchPeople(ctx.deps, ERSHOV_SURNAME, { scope: "teacher", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "ии", localOnly: true }).catch(() => null);
     if (!ask || !real?.hits.length) return "answered";
   }
   if (!ask) return "disabled";
