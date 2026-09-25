@@ -220,6 +220,8 @@ export function noGroupText(p: PersonProfile): string {
 
 export interface PersonView {
   text: string;
+  /** Короткая подпись к постеру: кто это и (для дня) где он сейчас. */
+  caption: string;
   lessons: Occurrence[];
   /** Портал не ответил. */
   failed: boolean;
@@ -229,28 +231,40 @@ export interface PersonView {
 
 /** Карточка на день: шапка, где сейчас по расписанию, пары дня. */
 export async function personDayView(deps: Deps, p: PersonProfile, date: LocalDate, viewer: Pick<User, "teacherView">): Promise<PersonView> {
-  if (p.role === "student" && !p.group) return { text: `${personHead(p)}\n\n${noGroupText(p)}`, lessons: [], failed: false, needsGroup: !!p.ambiguous?.length };
+  if (p.role === "student" && !p.group) {
+    const text = `${personHead(p)}\n\n${noGroupText(p)}`;
+    return { text, caption: text, lessons: [], failed: false, needsGroup: !!p.ambiguous?.length };
+  }
   const loaded = await profileLessons(deps, p, date, date);
   const head = personHead(p, loaded.fullName);
-  if (loaded.failed) return { text: `${head}\n\nНе удалось загрузить расписание: портал не ответил. Попробуй позже.`, lessons: [], failed: true, needsGroup: false };
+  if (loaded.failed) {
+    const text = `${head}\n\nНе удалось загрузить расписание: портал не ответил. Попробуй позже.`;
+    return { text, caption: text, lessons: [], failed: true, needsGroup: false };
+  }
   const today = todayMsk();
   const where = whereNowText(loaded.lessons, date, today, p.student?.subgroup ?? null, { teacher: p.role === "teacher" });
   // У преподавателя в его же расписании фамилия не нужна — это он сам.
   const day = formatDay(personGroup(p.name, refKey(p.ref)), date, loaded.lessons, deps.service.weekInfo(date), today, { now: wallClock(), teacherView: p.role === "teacher" ? "off" : viewer.teacherView, hideTitle: true });
-  return { text: clampHtml(`${head}\n\n${where}\n\n${day}`), lessons: loaded.lessons, failed: false, needsGroup: false };
+  return { text: clampHtml(`${head}\n\n${where}\n\n${day}`), caption: `${head}\n\n${where}`, lessons: loaded.lessons, failed: false, needsGroup: false };
 }
 
 /** Карточка на неделю: шапка и неделя пар. */
 export async function personWeekView(deps: Deps, p: PersonProfile, anyDate: LocalDate, viewer: Pick<User, "teacherView">): Promise<PersonView & { monday: LocalDate }> {
   const monday = mondayOf(anyDate);
-  if (p.role === "student" && !p.group) return { text: `${personHead(p)}\n\n${noGroupText(p)}`, lessons: [], failed: false, needsGroup: !!p.ambiguous?.length, monday };
+  if (p.role === "student" && !p.group) {
+    const text = `${personHead(p)}\n\n${noGroupText(p)}`;
+    return { text, caption: text, lessons: [], failed: false, needsGroup: !!p.ambiguous?.length, monday };
+  }
   const loaded = await profileLessons(deps, p, monday, addDays(monday, 6));
   const head = personHead(p, loaded.fullName);
-  if (loaded.failed) return { text: `${head}\n\nНе удалось загрузить расписание: портал не ответил. Попробуй позже.`, lessons: [], failed: true, needsGroup: false, monday };
+  if (loaded.failed) {
+    const text = `${head}\n\nНе удалось загрузить расписание: портал не ответил. Попробуй позже.`;
+    return { text, caption: text, lessons: [], failed: true, needsGroup: false, monday };
+  }
   const byDate = new Map<LocalDate, Occurrence[]>();
   for (const o of loaded.lessons) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
   const week = formatWeek(personGroup(p.name, refKey(p.ref)), monday, byDate, deps.service.weekInfo(monday), todayMsk(), { teacherView: p.role === "teacher" ? "off" : viewer.teacherView, hideTitle: true });
-  return { text: clampHtml(`${head}\n\n${week}`), lessons: loaded.lessons, failed: false, needsGroup: false, monday };
+  return { text: clampHtml(`${head}\n\n${week}`), caption: head, lessons: loaded.lessons, failed: false, needsGroup: false, monday };
 }
 
 /**
