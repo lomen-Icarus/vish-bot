@@ -123,10 +123,18 @@ export class TeacherService {
     const q = query.trim();
     if (q.length < 2) return [];
     const dir = await this.directory();
-    const scored = dir
+    // Бот — для ВИШ: из полных тёзок и однофамильцев со всего университета
+    // «наш» идёт первым. Иначе при равных очках решал алфавит, и Петров К. (ВИШ)
+    // мог не попасть даже в первые шесть. Кого ночной обход уже пометил «(ВИШ)»,
+    // а в суточном справочнике нет, ищем по карте.
+    const vishRows = this.mapRows().filter((r) => r.vish && r.teacherId != null);
+    const vishIds = new Set(vishRows.map((r) => r.teacherId!));
+    const known = new Set(dir.map((t) => t.id));
+    const pool = [...dir, ...vishRows.filter((r) => !known.has(r.teacherId!)).map((r) => ({ id: r.teacherId!, name: r.name }))];
+    const scored = pool
       .map((t) => ({ ref: t, ...nameMatch(t.name, q) }))
       .filter((x) => x.score > 0)
-      .sort((a, b) => Number(a.fuzzy) - Number(b.fuzzy) || b.score - a.score || a.ref.name.localeCompare(b.ref.name, "ru"));
+      .sort((a, b) => Number(a.fuzzy) - Number(b.fuzzy) || b.score - a.score || Number(vishIds.has(b.ref.id)) - Number(vishIds.has(a.ref.id)) || a.ref.name.localeCompare(b.ref.name, "ru"));
     // Точные попадания — ответ. Если совпало только с опечаткой, всё равно
     // спросим портал: там может найтись тот, кого в суточном кеше ещё нет.
     if (scored.some((x) => !x.fuzzy)) return scored.slice(0, limit);

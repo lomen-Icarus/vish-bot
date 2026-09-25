@@ -1,12 +1,13 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, groupCb, groupLabel, groupPicker, isMenuText, menuFor } from "../keyboards.js";
-import { nameAndPatronymic } from "../teacherMode.js";
+import { BTN, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor } from "../keyboards.js";
+import { autoTeacherStart, nameAndPatronymic } from "../teacherMode.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
-import { showPerson } from "../people.js";
+import { candidatesKeyboard, showPerson } from "../people.js";
+import { isErshovQuery, sendErshovCard } from "../easter.js";
 import { clearHit, hitLabel, hitShort, searchPeople, type PersonHit } from "../../people/search.js";
 import { refKey } from "../../people/ref.js";
 import { clampHtml, esc } from "../../schedule/format.js";
@@ -30,7 +31,7 @@ function knownName(ctx: BotContext): string | null {
 /**
  * Единственная кнопка под приветствием — «Спросить?»: расписание и так в
  * нижнем меню, а про «спросить своими словами» никто не догадывается. Это тот
- * же ИИ-поиск, что и «🔍 Поиск», с теми же дневными лимитами из админки.
+ * же ИИ-поиск, что и «🔍 ИИ поисковик», с теми же дневными лимитами из админки.
  */
 function askButton(ctx: BotContext): InlineKeyboard | null {
   return ctx.deps.ask ? new InlineKeyboard().text("💬 Спросить?", "ask:open") : null;
@@ -81,10 +82,12 @@ miscHandlers.command("start", async (ctx) => {
   }
   const ask = askButton(ctx);
   const askLine = ctx.deps.ask ? "\n\nМожно просто спросить словами — «когда матан», «где Беляев», «как включить напоминания»." : "";
+  // Преподаватель из реестра: режим включается сам, без выбора группы.
+  if (await autoTeacherStart(ctx)) return;
   // Режим преподавателя: своя «группа» — он сам, обращение по имени-отчеству.
   if (ctx.user.teacherMode) {
     const name = ctx.user.teacherName ? nameAndPatronymic(ctx.user.teacherName) : null;
-    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}!` : "Здравствуйте!"} Включён режим преподавателя: «📅 Сегодня» и «🗓 Неделя» — ваши пары, «👥 Студенты» — расписание любой группы.${askLine}`, { parse_mode: "HTML", reply_markup: ask ?? menuFor(ctx.user) });
+    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} «📅 Сегодня» и «🗓 Неделя» — ваши пары, «👥 Студенты» — расписание любой группы.${askLine}`, { parse_mode: "HTML", reply_markup: ask ?? menuFor(ctx.user) });
     return;
   }
   // Бот может узнать человека по телеграм-нику из файла старост. ФИО у людей
@@ -209,7 +212,7 @@ async function startSearch(ctx: BotContext): Promise<void> {
     { parse_mode: "HTML" },
   );
 }
-miscHandlers.hears(BTN.search, startSearch);
+miscHandlers.hears([BTN.search, LEGACY_BTN.search], startSearch);
 miscHandlers.callbackQuery("ask:open", async (ctx) => {
   await ctx.answerCallbackQuery();
   await startSearch(ctx);
@@ -331,6 +334,13 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
  */
 async function runSearch(ctx: BotContext, query: string): Promise<void> {
   const deps = ctx.deps;
+  if (isErshovQuery(query)) {
+    // Пасхалка. Настоящих однофамильцев не прячем — кнопками следом, но без ИИ.
+    await sendErshovCard(ctx);
+    const found = await localSearch(ctx, query);
+    if (found.people.length) await ctx.reply("А это однофамильцы в расписании:", { reply_markup: candidatesKeyboard(found.people, "all") });
+    return;
+  }
   const hits = await localSearch(ctx, query);
   // Нашёлся ровно один человек и больше ничего — сразу его карточка, та же, что
   // из кнопок «Преподаватели» и «Где студент»: кто это, где сейчас, день.

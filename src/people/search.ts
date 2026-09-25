@@ -1,6 +1,6 @@
 /**
  * Один поиск людей на весь бот. Кнопка «👨‍🏫 Преподаватели», «Где студент»,
- * «🔍 Поиск», ИИ и inline ищут здесь и получают один и тот же список с одними
+ * «🔍 ИИ поисковик», ИИ и inline ищут здесь и получают один и тот же список с одними
  * и теми же правилами:
  *
  *  • фамилия с опечаткой — только «может быть, кто-то из них», никогда не
@@ -101,7 +101,8 @@ export async function searchPeople(deps: Deps, query: string, opts: PeopleSearch
     }
   }
 
-  hits.sort((a, b) => Number(a.fuzzy) - Number(b.fuzzy) || b.score - a.score || a.name.localeCompare(b.name, "ru"));
+  // При равных очках «наш» (ВИШ) впереди однофамильцев из других институтов.
+  hits.sort((a, b) => Number(a.fuzzy) - Number(b.fuzzy) || b.score - a.score || Number(b.vish) - Number(a.vish) || a.name.localeCompare(b.name, "ru"));
   return { hits: hits.slice(0, opts.limit ?? 8), students };
 }
 
@@ -113,6 +114,12 @@ export function clearHit(hits: PersonHit[]): PersonHit | null {
   const exact = hits.filter((h) => !h.fuzzy);
   if (exact.length === 1) return exact[0]!;
   if (exact.length > 1 && exact[0]!.score - exact[1]!.score >= 3) return exact[0]!;
+  // Одинаково подходят несколько преподавателей, но из ВИШ среди них ровно один
+  // и студентов с таким именем нет — это он: бот для ВИШ. Остальных покажет
+  // «🔎 Найти другого» под карточкой.
+  const top = exact.filter((h) => h.score === exact[0]?.score);
+  const vishTeachers = top.filter((h) => h.role === "teacher" && h.vish);
+  if (top.length > 1 && vishTeachers.length === 1 && top.every((h) => h.role === "teacher")) return vishTeachers[0]!;
   return null;
 }
 

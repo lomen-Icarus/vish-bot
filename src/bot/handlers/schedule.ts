@@ -208,7 +208,8 @@ scheduleHandlers.callbackQuery(/^ob:(on|custom|later)$/, async (ctx) => {
   if (choice === "on") {
     ctx.deps.repo.updateUser(ctx.user.id, { notifyChanges: true, remindFirstMin: 120, remindDistanceMin: 5 });
     await ctx.answerCallbackQuery({ text: "Готово" });
-    await say("✅ Уведомления включены: изменения в расписании, напоминание за 2 часа до первой пары, ссылка на вебинар за 5 минут до дистанта.");
+    // Преподавателю — про его напоминания: изменения бот рассылает по группам.
+    await say(ctx.user.teacherMode ? "✅ Напоминания включены: за 2 часа до первой пары и за 5 минут до дистанционной — со ссылкой на вебинар." : "✅ Уведомления включены: изменения в расписании, напоминание за 2 часа до первой пары, ссылка на вебинар за 5 минут до дистанта.");
   } else if (choice === "custom") {
     ctx.deps.repo.updateUser(ctx.user.id, { notifyChanges: true });
     await ctx.answerCallbackQuery();

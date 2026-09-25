@@ -50,7 +50,7 @@ export function weekView(deps: Deps, group: LogicalGroup, anyDate: LocalDate, su
   return { text, monday, byDate };
 }
 
-interface SendOpts {
+export interface SendOpts {
   edit?: boolean;
   forceImage?: boolean;
   /** Viewing a group that is not the user's own: navigation carries the group key. */
@@ -82,7 +82,7 @@ export async function editPhoto(ctx: BotContext, png: Buffer, fileName: string, 
  * текст уходит отдельным сообщением, а постер — последним, чтобы стрелки
  * навигации остались внизу экрана.
  */
-interface PosterPlan {
+export interface PosterPlan {
   /** Рисовать постер. */
   image: boolean;
   /** Текст расписания нужен рядом с постером. */
@@ -93,7 +93,7 @@ interface PosterPlan {
   editingText: boolean;
 }
 
-function posterPlan(ctx: BotContext, opts: SendOpts, hasLessons: boolean): PosterPlan {
+export function posterPlan(ctx: BotContext, opts: SendOpts, hasLessons: boolean): PosterPlan {
   const hasImages = !!ctx.deps.renderer;
   const photoMsg = !!opts.edit && isPhotoMessage(ctx);
   const editingText = !!opts.edit && !!ctx.callbackQuery?.message && !photoMsg;
@@ -109,7 +109,7 @@ function posterPlan(ctx: BotContext, opts: SendOpts, hasLessons: boolean): Poste
  * неё влезает, иначе текстом и постером следом. Возвращает false, только если
  * человек не получил вообще ничего — тогда зовущий отправит обычный текст.
  */
-async function sendPoster(ctx: BotContext, png: Buffer, fileName: string, text: string | null, kb: InlineKeyboard, plan: PosterPlan): Promise<boolean> {
+export async function sendPoster(ctx: BotContext, png: Buffer, fileName: string, text: string | null, kb: InlineKeyboard, plan: PosterPlan): Promise<boolean> {
   const caption = text && captionFits(text) ? text : undefined;
   if (plan.photoMsg && (await editPhoto(ctx, png, fileName, caption, kb))) return true;
   // Длинный текст (обычно неделя) идёт первым и молча: постер должен остаться

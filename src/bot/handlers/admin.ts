@@ -150,7 +150,7 @@ function aiLimitsScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     .text("🔄 Обновить", "ail:show");
   const text = [
     "<b>🤖 Лимиты «Спросить?»</b>",
-    "Кнопка «💬 Спросить?» в приветствии /start, «🔍 Поиск» и /ask — это один ИИ-поиск с общим лимитом.",
+    "Кнопка «💬 Спросить?» в приветствии /start, «🔍 ИИ поисковик» и /ask — это один ИИ-поиск с общим лимитом.",
     ctx.deps.ask ? `Модель: <code>${esc(ctx.deps.config.AI_MODEL)}</code>` : "ИИ выключен: не задан ANTHROPIC_API_KEY.",
     "",
     `На человека в сутки: <b>${l.perUser}</b>${l.bonusUser ? ` (${l.baseUser} + ${l.bonusUser} на сегодня)` : ""}${l.userOverridden ? ` · в .env ${l.envUser}` : ""}`,

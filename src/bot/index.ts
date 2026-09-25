@@ -19,6 +19,7 @@ import { teacherModeHandlers } from "./teacherMode.js";
 import { subjectHandlers } from "./handlers/subjects.js";
 import { groupChatHandlers } from "./handlers/groupChat.js";
 import { chatAdminHandlers } from "./handlers/chatAdmin.js";
+import { easterHandlers } from "./easter.js";
 
 export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
@@ -87,6 +88,8 @@ export function createBot(deps: Deps): Bot<BotContext> {
   bot.use(chatAdminHandlers);
   // Режим преподавателя: только команда /prepod, кнопок нет.
   bot.use(teacherModeHandlers);
+  // Пасхалка: секретная /ershov (ни в одном меню её нет).
+  bot.use(easterHandlers);
   bot.use(sourceHandlers);
   bot.use(miscHandlers);
   bot.use(askHandlers);
