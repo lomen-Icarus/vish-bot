@@ -67,6 +67,8 @@ const optOutKey = (userId: number): string => `tmode:off:${userId}`;
  */
 function optedOut(ctx: BotContext): boolean {
   if (ctx.deps.repo.getMeta(optOutKey(ctx.user.id))) return true;
+  // Исключение — выбор себя из тёзок, начатый до метки tmode:fio: тогда ФИО
+  // ещё клали в teacher_name.
   return !!ctx.user.teacherName && !ctx.user.teacherMode && !ctx.deps.repo.getMeta(pendingWelcomeKey(ctx.user.id));
 }
 
@@ -74,6 +76,7 @@ function switchOn(ctx: BotContext, fio: string, ref: PersonRef | null): void {
   ctx.deps.repo.updateUser(ctx.user.id, { teacherMode: true, teacherName: fio, teacherRef: ref ? refKey(ref) : null });
   ctx.deps.repo.setMeta(optOutKey(ctx.user.id), "");
   ctx.deps.repo.setMeta(pendingWelcomeKey(ctx.user.id), "");
+  ctx.deps.repo.setMeta(pendingFioKey(ctx.user.id), "");
   Object.assign(ctx.user, { teacherMode: true, teacherName: fio, teacherRef: ref ? refKey(ref) : null });
 }
 
@@ -124,7 +127,9 @@ teacherModeHandlers.command("prepod", async (ctx) => {
     // Несколько полных тёзок — пусть человек сам скажет, кто он.
     const kb = new InlineKeyboard();
     for (const h of hits.slice(0, 6)) kb.text(`👨‍🏫 ${h.name}${h.vish ? " (ВИШ)" : ""}`.slice(0, 60), `tmode:${refKey(h.ref)}`).row();
-    deps.repo.updateUser(ctx.user.id, { teacherName: fio });
+    // ФИО до выбора — в отдельной метке: в teacher_name оно значило бы «режим
+    // уже включали», и /start счёл бы, что человек сам его выключил.
+    deps.repo.setMeta(pendingFioKey(ctx.user.id), fio);
     await ctx.reply(`В справочнике несколько «${esc(fio)}». Кто из них ты?`, { parse_mode: "HTML", reply_markup: kb });
     return;
   }
@@ -133,7 +138,7 @@ teacherModeHandlers.command("prepod", async (ctx) => {
 
 teacherModeHandlers.callbackQuery(/^tmode:([tw][A-Za-z0-9_-]{1,16})$/, async (ctx) => {
   const ref = parseRefKey(ctx.match[1]!);
-  const fio = ctx.deps.repo.getUser(ctx.user.id)?.teacherName ?? registryName(ctx);
+  const fio = ctx.deps.repo.getMeta(pendingFioKey(ctx.user.id)) || ctx.deps.repo.getUser(ctx.user.id)?.teacherName || registryName(ctx);
   if (!ref || !fio) return void (await ctx.answerCallbackQuery());
   // Двойной тап: второй апдейт видит уже включённый режим и ничего не шлёт.
   const fresh = ctx.deps.repo.getUser(ctx.user.id);
@@ -151,6 +156,8 @@ teacherModeHandlers.callbackQuery(/^tmode:([tw][A-Za-z0-9_-]{1,16})$/, async (ct
 
 /** Полные тёзки в справочнике: приветствие ждёт, пока преподаватель выберет себя. */
 const pendingWelcomeKey = (userId: number): string => `tmode:welcome:${userId}`;
+/** ФИО из реестра, пока преподаватель выбирает себя из тёзок. */
+const pendingFioKey = (userId: number): string => `tmode:fio:${userId}`;
 
 /**
  * Первая встреча с преподавателем из реестра: по имени-отчеству, сразу его
@@ -190,7 +197,7 @@ export async function autoTeacherStart(ctx: BotContext): Promise<boolean> {
   if (hits.length > 1) {
     const kb = new InlineKeyboard();
     for (const h of hits.slice(0, 6)) kb.text(`👨‍🏫 ${h.name}${h.vish ? " (ВИШ)" : ""}`.slice(0, 60), `tmode:${refKey(h.ref)}`).row();
-    ctx.deps.repo.updateUser(ctx.user.id, { teacherName: fio });
+    ctx.deps.repo.setMeta(pendingFioKey(ctx.user.id), fio);
     ctx.deps.repo.setMeta(pendingWelcomeKey(ctx.user.id), "1");
     await ctx.reply(`Здравствуйте, ${esc(nameAndPatronymic(fio))}! Рад вас видеть 👋\n\nВ справочнике портала несколько «${esc(fio)}». Кто из них вы?`, { parse_mode: "HTML", reply_markup: kb });
     return true;

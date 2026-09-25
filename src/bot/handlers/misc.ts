@@ -7,7 +7,7 @@ import { featuresSections, featuresText, needGroup } from "../views.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
 import { candidatesKeyboard, showPerson } from "../people.js";
-import { isErshovQuery, sendErshovCard } from "../easter.js";
+import { ERSHOV_SURNAME, isErshovQuery, sendErshovCard } from "../easter.js";
 import { clearHit, hitLabel, hitShort, searchPeople, tiedWith, type PersonHit } from "../../people/search.js";
 import { refKey } from "../../people/ref.js";
 import { clampHtml, esc } from "../../schedule/format.js";
@@ -337,7 +337,7 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   if (isErshovQuery(query)) {
     // Пасхалка. Настоящих однофамильцев не прячем — кнопками следом, но без ИИ.
     await sendErshovCard(ctx);
-    const found = await searchPeople(deps, query, { scope: "teacher", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск" });
+    const found = await searchPeople(deps, ERSHOV_SURNAME, { scope: "teacher", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск" });
     if (found.hits.length) await ctx.reply("А это однофамильцы в расписании:", { reply_markup: candidatesKeyboard(found.hits, "teacher") });
     return;
   }

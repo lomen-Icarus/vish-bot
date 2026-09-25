@@ -20,10 +20,16 @@ export function loadDotEnv(file = path.resolve(process.cwd(), ".env")): void {
 }
 
 const str = (key: string, fallback = ""): string => (process.env[key] ?? fallback).trim();
-const num = (key: string, fallback: number): number => {
-  const n = Number(process.env[key]);
+/**
+ * Число из окружения. Пустое значение («KEY=» в .env) — это «не задано», а не
+ * ноль: Number("") даёт 0, и CAPTURE_SECONDS= превращался в съёмку без пауз.
+ */
+export function envNumber(raw: string | undefined, fallback: number): number {
+  if (raw == null || raw.trim() === "") return fallback;
+  const n = Number(raw);
   return Number.isFinite(n) ? n : fallback;
-};
+}
+const num = (key: string, fallback: number): number => envNumber(process.env[key], fallback);
 const list = (key: string): string[] =>
   str(key)
     .split(/[;,]/)
@@ -51,6 +57,11 @@ export interface RecorderConfig {
   captureSeconds: number;
   /** Сколько минут максимум сидеть на одном вебинаре. */
   maxMinutes: number;
+  /**
+   * Сколько вебинаров записывать одновременно. Параллельные пары разных групп
+   * — обычное дело; каждая запись — отдельный Chromium со своей памятью.
+   */
+  maxParallel: number;
   /** Куда отдавать готовую пачку слайдов: <PUBLIC_URL бота>/slides */
   botUrl: string;
   botToken: string;
@@ -74,8 +85,9 @@ export function loadConfig(): RecorderConfig {
     groups: list("RECORD_GROUPS"),
     leadMinutes: num("LEAD_MINUTES", 7),
     pollSeconds: num("POLL_SECONDS", 30),
-    captureSeconds: num("CAPTURE_SECONDS", 5),
-    maxMinutes: num("MAX_MINUTES", 110),
+    captureSeconds: Math.max(1, num("CAPTURE_SECONDS", 5)),
+    maxMinutes: Math.max(5, num("MAX_MINUTES", 110)),
+    maxParallel: Math.max(1, Math.floor(num("MAX_PARALLEL", 2))),
     botUrl: str("BOT_SLIDES_URL"),
     botToken: str("SLIDES_TOKEN"),
     outDir: str("OUT_DIR", "./data/slides"),
