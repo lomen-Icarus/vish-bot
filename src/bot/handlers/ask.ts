@@ -12,11 +12,11 @@ import { aiAllowance, aiLimits } from "../../ai/limits.js";
 import type { AskMentions } from "../../ai/ask.js";
 import { teacherVishTag } from "./teachers.js";
 import { showPerson, webinarRef } from "../people.js";
-import { hitLabel, searchPeople } from "../../people/search.js";
+import { hitLabel } from "../../people/search.js";
 import { refKey, type PersonRef } from "../../people/ref.js";
 import { samePerson } from "../../text/match.js";
 import { logger } from "../../logger.js";
-import { ERSHOV_SURNAME, isErshovQuery, sendErshovCard } from "../easter.js";
+import { ershovNamesakes, isErshovQuery, sendErshovCard } from "../easter.js";
 
 export const askHandlers = new Composer<BotContext>();
 
@@ -41,8 +41,8 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   // расписании есть настоящий однофамилец, вопрос идёт дальше, к ИИ.
   if (isErshovQuery(question)) {
     await sendErshovCard(ctx);
-    const real = await searchPeople(ctx.deps, ERSHOV_SURNAME, { scope: "teacher", viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "ии", localOnly: true }).catch(() => null);
-    if (!ask || !real?.hits.length) return "answered";
+    const real = await ershovNamesakes(ctx.deps, question, { id: ctx.user.id, isAdmin: ctx.isAdmin });
+    if (!ask || !real.length) return "answered";
   }
   if (!ask) return "disabled";
   const day = todayMsk();

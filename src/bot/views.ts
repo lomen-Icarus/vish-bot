@@ -4,7 +4,7 @@ import { BTN, dayNav, weekNav } from "./keyboards.js";
 import { captionFits, clampHtml, esc, filterSubgroup, formatDay, formatWeek, type TeacherView } from "../schedule/format.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
-import type { Occurrence } from "../schedule/model.js";
+import { groupByDate, type Occurrence } from "../schedule/model.js";
 import { logger } from "../logger.js";
 
 export function needGroup(ctx: BotContext): LogicalGroup | null {
@@ -40,12 +40,7 @@ export function weekView(deps: Deps, group: LogicalGroup, anyDate: LocalDate, su
   const monday = mondayOf(anyDate);
   const sunday = addDays(monday, 6);
   const all = withWebinars(deps, group, deps.service.materialize(group, monday, sunday));
-  const byDate = new Map<LocalDate, Occurrence[]>();
-  for (const o of all) {
-    const list = byDate.get(o.date) ?? [];
-    list.push(o);
-    byDate.set(o.date, list);
-  }
+  const byDate = groupByDate(all);
   const text = formatWeek(group, monday, byDate, deps.service.weekInfo(monday), todayMsk(), { subgroup, teacherView });
   return { text, monday, byDate };
 }

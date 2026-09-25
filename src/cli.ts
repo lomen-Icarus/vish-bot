@@ -17,7 +17,7 @@ import { findGroup } from "./schedule/groups.js";
 import { formatChanges, formatDay, formatWeek } from "./schedule/format.js";
 import { addDays, mondayOf, parseRuDate, todayMsk, wallClock, type LocalDate } from "./time.js";
 import { createRenderer } from "./render/image.js";
-import type { Occurrence } from "./schedule/model.js";
+import { groupByDate } from "./schedule/model.js";
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -60,8 +60,7 @@ async function main(): Promise<void> {
     case "week": {
       const g = pickGroup(rest[0]);
       const monday = mondayOf(pickDate(rest[1]));
-      const byDate = new Map<LocalDate, Occurrence[]>();
-      for (const o of service.materialize(g, monday, addDays(monday, 6))) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
+      const byDate = groupByDate(service.materialize(g, monday, addDays(monday, 6)));
       console.log(strip(formatWeek(g, monday, byDate, service.weekInfo(monday), todayMsk())));
       break;
     }
@@ -74,8 +73,7 @@ async function main(): Promise<void> {
       const day = await renderer.renderDay({ group: g, date: d, lessons: service.lessonsOn(g, d), weekInfo: service.weekInfo(d), today: todayMsk(), now: wallClock() });
       writeFileSync(`out/day-${g.title}-${d}.png`, day);
       const monday = mondayOf(d);
-      const byDate = new Map<LocalDate, Occurrence[]>();
-      for (const o of service.materialize(g, monday, addDays(monday, 6))) byDate.set(o.date, [...(byDate.get(o.date) ?? []), o]);
+      const byDate = groupByDate(service.materialize(g, monday, addDays(monday, 6)));
       const week = await renderer.renderWeek({ group: g, monday, byDate, weekInfo: service.weekInfo(monday), today: todayMsk(), subgroup: null });
       writeFileSync(`out/week-${g.title}-${monday}.png`, week);
       console.log("written to ./out");

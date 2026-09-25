@@ -3,7 +3,7 @@
  * (joint lectures) merged into a single row listing the groups that attend.
  */
 import type { LogicalGroup } from "./groups.js";
-import { lessonTypeLabel, type Occurrence } from "./model.js";
+import { groupByDate, lessonTypeLabel, type Occurrence } from "./model.js";
 import { esc, parityLine, teacherLabel, type TeacherView } from "./format.js";
 import type { WeekInfo } from "./service.js";
 import { addDays, fmtDDMM, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate } from "../time.js";
@@ -136,8 +136,7 @@ export function formatCommonLessons(intake: number, monday: LocalDate, rows: Str
     ? `<b>Общие пары потока 20${intake} с ${esc(ownGroup.title)}</b>\n<i>неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDays(monday, 6))}</i>`
     : `<b>Общие пары потока 20${intake}</b>\n<i>неделя ${fmtDDMM(monday)} – ${fmtDDMM(addDays(monday, 6))}</i>`;
   if (!shared.length) return `${head}\n\nНа этой неделе общих пар нет.`;
-  const byDate = new Map<LocalDate, StreamRow[]>();
-  for (const r of shared) byDate.set(r.date, [...(byDate.get(r.date) ?? []), r]);
+  const byDate = groupByDate(shared);
   const parts = [...byDate.entries()].map(([date, list]) => {
     const lines = list.map((r) => {
       const time = r.start != null ? `<code>${fmtHHMM(r.start)}${r.end != null ? `–${fmtHHMM(r.end)}` : ""}</code> ` : "";

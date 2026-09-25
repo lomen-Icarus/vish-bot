@@ -19,7 +19,7 @@ import type { StudentRecord } from "../students/directory.js";
 import { resolveStudentGroup, whereNowText } from "../students/locate.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { personGroup } from "../schedule/groups.js";
-import type { Occurrence } from "../schedule/model.js";
+import { groupByDate, type Occurrence } from "../schedule/model.js";
 import { clampHtml, esc, filterSubgroup, formatDay, formatWeek } from "../schedule/format.js";
 import { groupLessons } from "../bot/views.js";
 import { samePerson, normName } from "../text/match.js";
@@ -218,23 +218,10 @@ export function noGroupText(p: PersonProfile): string {
   return /^ОЗ/i.test(p.student?.groupTitle ?? "") ? "Это заочная группа: её расписание бот не показывает." : "Такой группы нет в расписании ВИШ (возможно, человек уже выпустился или перевёлся).";
 }
 
-/** Пары по датам, одним проходом. */
-export function groupByDate(lessons: Occurrence[]): Map<LocalDate, Occurrence[]> {
-  const byDate = new Map<LocalDate, Occurrence[]>();
-  for (const o of lessons) {
-    const list = byDate.get(o.date);
-    if (list) list.push(o);
-    else byDate.set(o.date, [o]);
-  }
-  return byDate;
-}
-
 export interface PersonView {
   text: string;
   /** Короткая подпись к постеру: кто это и (для дня) где он сейчас. */
   caption: string;
-  /** Неделя: пары по датам (уже разложены — постеру не нужно делать это снова). */
-  byDate?: Map<LocalDate, Occurrence[]>;
   lessons: Occurrence[];
   /** Портал не ответил. */
   failed: boolean;
@@ -276,7 +263,7 @@ export async function personWeekView(deps: Deps, p: PersonProfile, anyDate: Loca
   }
   const byDate = groupByDate(loaded.lessons);
   const week = formatWeek(personGroup(p.name, refKey(p.ref)), monday, byDate, deps.service.weekInfo(monday), todayMsk(), { teacherView: p.role === "teacher" ? "off" : viewer.teacherView, hideTitle: true });
-  return { text: clampHtml(`${head}\n\n${week}`), caption: head, lessons: loaded.lessons, byDate, failed: false, needsGroup: false, monday };
+  return { text: clampHtml(`${head}\n\n${week}`), caption: head, lessons: loaded.lessons, failed: false, needsGroup: false, monday };
 }
 
 /**

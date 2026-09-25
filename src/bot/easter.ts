@@ -9,7 +9,8 @@
  * Настоящего преподавателя-однофамильца пасхалка не прячет: поиск идёт дальше.
  */
 import { Composer } from "grammy";
-import type { BotContext } from "./context.js";
+import type { BotContext, Deps } from "./context.js";
+import { searchPeople, type PersonHit } from "../people/search.js";
 
 export const easterHandlers = new Composer<BotContext>();
 
@@ -36,10 +37,22 @@ export function isErshovQuery(query: string): boolean {
 }
 
 /**
- * По чему искать настоящих однофамильцев после карточки: только по фамилии.
- * По всему запросу «Кирилл Ершов» совпадал бы любой преподаватель Кирилл.
+ * Настоящие однофамильцы — преподаватели Ершов/Ершова из расписания, которых
+ * показывают после карточки. Одно правило на все места (поиск, ИИ-поисковик,
+ * /ask, inline):
+ *  • ищем по фамилии, а не по всему запросу — иначе «Кирилл Ершов» дал бы
+ *    любого преподавателя Кирилла;
+ *  • только точная фамилия: «Ежов» с поправкой на опечатку — не однофамилец;
+ *  • только преподаватели и только своя база: студентов пасхалка не ищет и в
+ *    журнал поиска людей не пишет, на портал за шуткой не ходит;
+ *  • на «спорторг» — никого: фамилии в запросе нет;
+ *  • сами не открываются: только кнопками, выбирает человек.
  */
-export const ERSHOV_SURNAME = "Ершов";
+export async function ershovNamesakes(deps: Deps, query: string, viewer: { id: number; isAdmin: boolean }): Promise<PersonHit[]> {
+  if (!norm(query).split(" ").some((w) => SURNAME.has(w) || w === "ершова")) return [];
+  const res = await searchPeople(deps, "Ершов", { scope: "teacher", viewerId: viewer.id, isAdmin: viewer.isAdmin, source: "поиск", localOnly: true }).catch(() => null);
+  return (res?.hits ?? []).filter((h) => !h.fuzzy && ["ершов", "ершова"].includes(norm(h.name).split(" ")[0] ?? ""));
+}
 
 export const ERSHOV_CARD = [
   "🏅 <b>Кирилл Ершов</b> — спорторг ВИШ",
