@@ -12,6 +12,11 @@ import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type E
 export interface DayRenderInput {
   /** Poster look for this one render; the bot default when absent. */
   theme?: string;
+  /**
+   * Что писать в строке пары после аудитории: преподавателя (по умолчанию) или
+   * группы — на постере расписания самого преподавателя фамилия там его же.
+   */
+  labels?: "teacher" | "groups";
   /** Показывать ли преподавателя и выделять ли его; по умолчанию с выделением. */
   teacherView?: TeacherView;
   group: LogicalGroup;
@@ -25,6 +30,8 @@ export interface DayRenderInput {
 export interface WeekRenderInput {
   /** Poster look for this one render; the bot default when absent. */
   theme?: string;
+  /** См. DayRenderInput.labels. */
+  labels?: "teacher" | "groups";
   teacherView?: TeacherView;
   group: LogicalGroup;
   monday: LocalDate;

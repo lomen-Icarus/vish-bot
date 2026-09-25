@@ -206,12 +206,14 @@ scheduleHandlers.callbackQuery(/^ob:(on|custom|later)$/, async (ctx) => {
     }
   };
   if (choice === "on") {
-    ctx.deps.repo.updateUser(ctx.user.id, { notifyChanges: true, remindFirstMin: 120, remindDistanceMin: 5 });
+    // Преподавателю — только напоминания: изменения бот рассылает по группам, а
+    // его «группа» — он сам.
+    ctx.deps.repo.updateUser(ctx.user.id, ctx.user.teacherMode ? { remindFirstMin: 120, remindDistanceMin: 5 } : { notifyChanges: true, remindFirstMin: 120, remindDistanceMin: 5 });
     await ctx.answerCallbackQuery({ text: "Готово" });
     // Преподавателю — про его напоминания: изменения бот рассылает по группам.
     await say(ctx.user.teacherMode ? "✅ Напоминания включены: за 2 часа до первой пары и за 5 минут до дистанционной — со ссылкой на вебинар." : "✅ Уведомления включены: изменения в расписании, напоминание за 2 часа до первой пары, ссылка на вебинар за 5 минут до дистанта.");
   } else if (choice === "custom") {
-    ctx.deps.repo.updateUser(ctx.user.id, { notifyChanges: true });
+    if (!ctx.user.teacherMode) ctx.deps.repo.updateUser(ctx.user.id, { notifyChanges: true });
     await ctx.answerCallbackQuery();
     await say("Открой ⚙️ Настройки и включи то, что нужно.");
   } else {
@@ -223,9 +225,15 @@ scheduleHandlers.callbackQuery(/^ob:(on|custom|later)$/, async (ctx) => {
     await ctx.reply("Как показывать расписание?\n\nПотом это можно поменять в ⚙️ Настройках, там же выбирается оформление картинок.", { reply_markup: formatPicker() });
     return;
   }
+  await firstDay(ctx);
+});
+
+/** После онбординга — свой день: пары группы, у преподавателя — его собственные. */
+async function firstDay(ctx: BotContext): Promise<void> {
+  if (ctx.user.teacherMode) return showOwnTeacher(ctx, todayMsk());
   const group = needGroup(ctx);
   if (group) await sendDay(ctx, group, todayMsk());
-});
+}
 
 scheduleHandlers.callbackQuery(/^fmt:(text|image|both)$/, async (ctx) => {
   const format = ctx.match[1] as "text" | "image" | "both";
@@ -237,8 +245,7 @@ scheduleHandlers.callbackQuery(/^fmt:(text|image|both)$/, async (ctx) => {
   } catch {
     /* ignore */
   }
-  const group = needGroup(ctx);
-  if (group) await sendDay(ctx, group, todayMsk());
+  await firstDay(ctx);
 });
 
 // Typed group name: "12-23", "ВИШ-11-25"

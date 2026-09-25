@@ -60,14 +60,30 @@ async function resolveTeacher(ctx: BotContext, fio: string): Promise<PersonHit[]
  */
 const optOutKey = (userId: number): string => `tmode:off:${userId}`;
 
+/**
+ * Выключил ли человек режим сам. До этой метки /prepod только снимал
+ * teacher_mode, поэтому «ФИО есть, режима нет» у тех, кто выключал его раньше,
+ * — тоже отказ (кроме ожидания выбора себя из тёзок на /start).
+ */
+function optedOut(ctx: BotContext): boolean {
+  if (ctx.deps.repo.getMeta(optOutKey(ctx.user.id))) return true;
+  return !!ctx.user.teacherName && !ctx.user.teacherMode && !ctx.deps.repo.getMeta(pendingWelcomeKey(ctx.user.id));
+}
+
 function switchOn(ctx: BotContext, fio: string, ref: PersonRef | null): void {
   ctx.deps.repo.updateUser(ctx.user.id, { teacherMode: true, teacherName: fio, teacherRef: ref ? refKey(ref) : null });
   ctx.deps.repo.setMeta(optOutKey(ctx.user.id), "");
+  ctx.deps.repo.setMeta(pendingWelcomeKey(ctx.user.id), "");
   Object.assign(ctx.user, { teacherMode: true, teacherName: fio, teacherRef: ref ? refKey(ref) : null });
 }
 
 async function enable(ctx: BotContext, fio: string, ref: PersonRef | null): Promise<void> {
   switchOn(ctx, fio, ref);
+  await announce(ctx, fio, ref);
+}
+
+/** Сообщение «режим включён» после /prepod. */
+async function announce(ctx: BotContext, fio: string, ref: PersonRef | null): Promise<void> {
   const found = ref ? "" : "\n\n<i>В справочнике портала тебя найти не получилось, поэтому расписание пока пустое. Напиши админу — он проверит, как ты записан на портале.</i>";
   await ctx.reply(
     `👨‍🏫 <b>Режим преподавателя</b> — ${esc(fio)}\n\n«📅 Сегодня», «📅 Завтра», «🗓 Неделя» — твои пары. «👥 Студенты» — расписание любой группы. Напоминания и календарь теперь тоже по твоему расписанию.\n\nВыключить: /prepod${found}`,
@@ -116,19 +132,21 @@ teacherModeHandlers.command("prepod", async (ctx) => {
 });
 
 teacherModeHandlers.callbackQuery(/^tmode:([tw][A-Za-z0-9_-]{1,16})$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
   const ref = parseRefKey(ctx.match[1]!);
   const fio = ctx.deps.repo.getUser(ctx.user.id)?.teacherName ?? registryName(ctx);
-  if (!ref || !fio) return;
+  if (!ref || !fio) return void (await ctx.answerCallbackQuery());
+  // Двойной тап: второй апдейт видит уже включённый режим и ничего не шлёт.
+  const fresh = ctx.deps.repo.getUser(ctx.user.id);
+  if (fresh?.teacherMode && fresh.teacherRef === refKey(ref)) return void (await ctx.answerCallbackQuery());
+  // Метку «из приветствия» читаем и снимаем до первого await: апдейты идут
+  // параллельно, и иначе оба нажатия успели бы её увидеть.
+  const fromStart = !!ctx.deps.repo.getMeta(pendingWelcomeKey(ctx.user.id));
+  switchOn(ctx, fio, ref);
+  await ctx.answerCallbackQuery();
   await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
-  if (ctx.deps.repo.getMeta(pendingWelcomeKey(ctx.user.id))) {
-    // Выбор из приветствия /start: встречаем так же, как того, кого узнали сразу.
-    ctx.deps.repo.setMeta(pendingWelcomeKey(ctx.user.id), "");
-    switchOn(ctx, fio, ref);
-    await welcome(ctx, fio, ref);
-    return;
-  }
-  await enable(ctx, fio, ref);
+  // Выбор из приветствия /start: встречаем так же, как того, кого узнали сразу.
+  if (fromStart) await welcome(ctx, fio, ref);
+  else await announce(ctx, fio, ref);
 });
 
 /** Полные тёзки в справочнике: приветствие ждёт, пока преподаватель выберет себя. */
@@ -158,9 +176,10 @@ async function welcome(ctx: BotContext, fio: string, ref: PersonRef | null): Pro
  * режиме (его встречает обычный /start), и того, кто сам его выключил.
  */
 export async function autoTeacherStart(ctx: BotContext): Promise<boolean> {
-  if (ctx.user.teacherMode) return false;
+  // «Усиленная анонимность» обещает не связывать аккаунт с человеком из списков.
+  if (ctx.user.teacherMode || ctx.user.anon) return false;
   const fio = registryName(ctx);
-  if (!fio || ctx.deps.repo.getMeta(optOutKey(ctx.user.id))) return false;
+  if (!fio || optedOut(ctx)) return false;
   await ctx.replyWithChatAction("typing").catch(() => undefined);
   let hits: PersonHit[] = [];
   try {
@@ -188,7 +207,7 @@ export async function autoTeacherStart(ctx: BotContext): Promise<boolean> {
  * кнопками «своей группы»: стрелки и «Неделя» (d:/w:), календарь под неделей.
  */
 export async function showOwnTeacher(ctx: BotContext, date: LocalDate, opts: { mode?: "day" | "week"; edit?: boolean } = {}): Promise<void> {
-  const ref = ownTeacherRef(ctx.user);
+  const ref = ownTeacherRef(ctx.user) ?? (await findOwnRefAgain(ctx));
   if (!ref) {
     await ctx.reply("В режиме преподавателя, но в справочнике портала тебя не нашлось — расписание показать не могу. Напиши админу, он проверит, как ты записан на портале. Выключить режим: /prepod");
     return;
@@ -213,6 +232,28 @@ export async function showOwnTeacher(ctx: BotContext, date: LocalDate, opts: { m
     }
   }
   await ctx.reply(view.text, { parse_mode: "HTML", reply_markup: kb });
+}
+
+/**
+ * Режим включён, а в справочнике человека тогда не нашли (портал лежал,
+ * справочник был пуст). Пробуем снова при каждом открытии своего расписания:
+ * нашёлся ровно один — запоминаем и дальше работаем как обычно.
+ */
+async function findOwnRefAgain(ctx: BotContext): Promise<PersonRef | null> {
+  const fio = ctx.user.teacherMode ? ctx.user.teacherName : null;
+  if (!fio) return null;
+  try {
+    const hits = await resolveTeacher(ctx, fio);
+    if (hits.length !== 1) return null;
+    const ref = hits[0]!.ref;
+    ctx.deps.repo.updateUser(ctx.user.id, { teacherRef: refKey(ref) });
+    ctx.user.teacherRef = refKey(ref);
+    logger.info({ userId: ctx.user.id }, "teacher mode: found in the directory on retry");
+    return ref;
+  } catch (err) {
+    logger.debug({ err: String(err) }, "teacher mode: retry lookup failed");
+    return null;
+  }
 }
 
 async function loadOwnProfile(deps: Deps, ref: PersonRef): Promise<PersonProfile | null> {
