@@ -19,7 +19,7 @@ import { hitShort, searchPeople, type PeopleScope, type PersonHit } from "../peo
 import { refKey } from "../people/ref.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, mergeStream } from "../schedule/stream.js";
 import type { Occurrence } from "../schedule/model.js";
-import { ERSHOV_CARD, isErshovQuery } from "./easter.js";
+import { ERSHOV_CARD, ERSHOV_SURNAME, isErshovQuery } from "./easter.js";
 import { addDays, fmtDDMM, mondayOf, parseDayWord, parseRuDate, todayMsk, weekdayShort, type LocalDate } from "../time.js";
 
 export type InlineMode = "auto" | "day" | "week" | "stream" | "common";
@@ -298,10 +298,11 @@ const person3 = (q: string): string => createHash("sha1").update(q.toLowerCase()
  * преподаватели ищутся по своей карте, а расписание тянется только у первого.
  */
 export async function buildPeopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean } = {}): Promise<InlineQueryResultArticle[]> {
-  const results = await peopleResults(deps, req, user, opts);
-  // Пасхалка — первой карточкой; «никого не нашёл» после неё не нужен.
-  if (!req.person || req.person.kind === "student" || !isErshovQuery(req.person.query)) return results;
-  return [article("p:ershov", "🏅 Кирилл Ершов — спорторг ВИШ", ERSHOV_CARD), ...results.filter((r) => !r.id.startsWith("p:nf:"))];
+  if (!req.person || req.person.kind === "student" || !isErshovQuery(req.person.query)) return peopleResults(deps, req, user, opts);
+  // Пасхалка — первой карточкой, следом настоящие однофамильцы (по фамилии,
+  // а не по всему запросу: иначе «Кирилл Ершов» дал бы любого Кирилла).
+  const namesakes = await peopleResults(deps, { ...req, person: { ...req.person, query: ERSHOV_SURNAME } }, user, opts);
+  return [article("p:ershov", "🏅 Кирилл Ершов — спорторг ВИШ", ERSHOV_CARD), ...namesakes.filter((r) => !r.id.startsWith("p:nf:"))];
 }
 
 async function peopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean }): Promise<InlineQueryResultArticle[]> {

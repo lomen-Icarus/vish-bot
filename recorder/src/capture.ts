@@ -34,6 +34,8 @@ export interface CaptureResult {
   /** Какой селектор в итоге сработал — это главное, что нужно знать при отладке. */
   usedSelector: string | null;
   notes: string[];
+  /** Ведущий закрыл комнату: заходить снова незачем. */
+  ended: boolean;
 }
 
 /** Кандидаты на область презентации: у разных версий BBB разметка своя. */
@@ -59,13 +61,25 @@ const ENTRY_BUTTONS = [
   'button:has-text("Отмена")',
 ];
 
+/** Поле имени, которое BBB иногда показывает перед входом. */
+const NAME_INPUT = 'input[name="joinName"], input#joinName, input[placeholder*="мя"]';
+
+/** Признаки того, что комнату закрыли. */
+const ENDED = '[data-test="meetingEndedModal"], :text("Конференция завершена"), :text("Meeting ended")';
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Сейчас ли виден элемент. Параметр timeout у Playwright isVisible()
+ * игнорирует и отвечает сразу, поэтому ждать появления надо своим циклом.
+ */
+const visibleNow = (locator: Locator): Promise<boolean> => locator.isVisible().catch(() => false);
 
 async function firstVisible(page: Page, selectors: string[], minWidth = 200): Promise<{ locator: Locator; selector: string } | null> {
   for (const selector of selectors) {
     const locator = page.locator(selector).first();
     try {
-      if (!(await locator.isVisible({ timeout: 500 }))) continue;
+      if (!(await visibleNow(locator))) continue;
       const box = await locator.boundingBox();
       if (!box || box.width < minWidth || box.height < 100) continue;
       return { locator, selector };
@@ -82,7 +96,7 @@ async function slideNumber(page: Page): Promise<string | null> {
   for (const selector of candidates) {
     try {
       const el = page.locator(selector).first();
-      if (!(await el.isVisible({ timeout: 300 }))) continue;
+      if (!(await visibleNow(el))) continue;
       const text = (await el.inputValue().catch(() => null)) ?? (await el.textContent());
       if (text && text.trim()) return text.trim().slice(0, 40);
     } catch {
@@ -92,12 +106,45 @@ async function slideNumber(page: Page): Promise<string | null> {
   return null;
 }
 
+/**
+ * Вход в комнату: клиент BBB рисует форму имени и диалог «как подключиться к
+ * аудио» через несколько секунд после загрузки страницы. Ждём их своим циклом
+ * (до 30 с): вводим имя, если спросили, и выбираем «только слушать».
+ */
+async function passEntry(page: Page, displayName: string | undefined, notes: string[]): Promise<void> {
+  const until = Date.now() + 30_000;
+  let named = !displayName;
+  while (Date.now() < until && !page.isClosed()) {
+    if (!named) {
+      const input = page.locator(NAME_INPUT).first();
+      if (await visibleNow(input)) {
+        await input.fill(displayName!).catch(() => undefined);
+        await page.keyboard.press("Enter").catch(() => undefined);
+        notes.push("ввели имя участника вручную");
+        named = true;
+        await sleep(1500);
+        continue;
+      }
+    }
+    for (const selector of ENTRY_BUTTONS) {
+      const btn = page.locator(selector).first();
+      if (await visibleNow(btn)) {
+        await btn.click({ timeout: 5000 }).catch(() => undefined);
+        notes.push(`нажали ${selector}`);
+        return;
+      }
+    }
+    await sleep(1000);
+  }
+  notes.push("кнопка входа за 30 секунд не появилась");
+}
+
 export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResult> {
   const notes: string[] = [];
   mkdirSync(opts.outDir, { recursive: true });
   let browser: Browser | null = null;
   let context: BrowserContext | null = null;
-  const result: CaptureResult = { slides: [], startedAt: new Date().toISOString(), finishedAt: "", usedSelector: null, notes };
+  const result: CaptureResult = { slides: [], startedAt: new Date().toISOString(), finishedAt: "", usedSelector: null, notes, ended: false };
   try {
     browser = await chromium.launch({
       headless: opts.headless,
@@ -109,25 +156,8 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
     page.on("console", (msg) => log.debug({ text: msg.text().slice(0, 200) }, "browser console"));
     await page.goto(opts.url, { waitUntil: "domcontentloaded", timeout: 90_000 });
 
-    // BBB иногда сам спрашивает имя — подставляем то, под которым бот виден в списке.
-    if (opts.displayName) {
-      const nameInput = page.locator('input[name="joinName"], input#joinName, input[placeholder*="мя"]').first();
-      if (await nameInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await nameInput.fill(opts.displayName).catch(() => undefined);
-        await page.keyboard.press("Enter").catch(() => undefined);
-        notes.push("ввели имя участника вручную");
-      }
-    }
-
-    // Диалог «как подключиться к аудио»: нам нужен режим «только слушать».
-    for (const selector of ENTRY_BUTTONS) {
-      const btn = page.locator(selector).first();
-      if (await btn.isVisible({ timeout: 1500 }).catch(() => false)) {
-        await btn.click({ timeout: 5000 }).catch(() => undefined);
-        notes.push(`нажали ${selector}`);
-        break;
-      }
-    }
+    // BBB иногда сам спрашивает имя, потом — как подключиться к аудио.
+    await passEntry(page, opts.displayName, notes);
     await sleep(3000);
 
     // Чужие курсоры и всплывающие подсказки дрожат поверх слайда и создают
@@ -154,6 +184,18 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
     while (Date.now() < deadline) {
       await sleep(opts.intervalSeconds * 1000);
       if (page.isClosed()) break;
+      // Комнату закрыли — проверяем на каждом круге, а не только после нового
+      // слайда: иначе бот сидел бы в пустой комнате до конца отведённого времени.
+      if (await visibleNow(page.locator(ENDED).first())) {
+        notes.push("вебинар завершён ведущим");
+        result.ended = true;
+        break;
+      }
+      // Область пропала (демонстрация экрана, смена презентации) — ищем заново.
+      if (area && !(await visibleNow(area.locator))) {
+        notes.push(`область ${area.selector} пропала, ищу заново`);
+        area = null;
+      }
       if (!area) {
         area = await firstVisible(page, PRESENTATION_SELECTORS);
         if (area) {
@@ -166,11 +208,16 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
         png = area ? await area.locator.screenshot({ timeout: 15_000 }) : await page.screenshot({ timeout: 15_000 });
       } catch (err) {
         log.debug({ err: String(err) }, "кадр не снялся");
+        // Не снялось — возможно, элемент подменили: на следующем круге ищем заново.
+        area = null;
         continue;
       }
       const hash = createHash("sha1").update(png).digest("hex");
       const number = await slideNumber(page);
-      const numberChanged = number != null && number !== lastNumber;
+      // Номер мигает (то виден, то нет): появление номера у того же кадра — не
+      // смена слайда, иначе слайд сохранялся бы дважды.
+      if (number != null && lastNumber == null && hash === lastHash) lastNumber = number;
+      const numberChanged = number != null && lastNumber != null && number !== lastNumber;
       if (hash === lastHash && !numberChanged) {
         pendingShots = 0;
         continue;
@@ -193,17 +240,6 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
       lastNumber = number;
       pendingShots = 0;
       log.info({ index, slideNumber: number, bytes: png.length }, "снят слайд");
-
-      // Комната закрылась — дальше сидеть незачем.
-      const ended = await page
-        .locator('[data-test="meetingEndedModal"], :text("Конференция завершена"), :text("Meeting ended")')
-        .first()
-        .isVisible({ timeout: 300 })
-        .catch(() => false);
-      if (ended) {
-        notes.push("вебинар завершён ведущим");
-        break;
-      }
     }
   } finally {
     result.finishedAt = new Date().toISOString();

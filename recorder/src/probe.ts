@@ -28,9 +28,16 @@ async function main(): Promise<void> {
   for (const r of rows.slice(0, 20)) {
     console.log(`  ${r.startMinutes ?? "??"}–${r.endMinutes ?? "??"} | ${r.subject.slice(0, 40)} | ${r.teacher} | ${r.groups.join(",")} | подключиться: ${r.joinId ? `да (idw=${r.joinId}, idwt=${r.joinType})` : "нет"}`);
   }
-  const ready = rows.find((r) => r.joinId && wanted(r, cfg)) ?? rows.find((r) => r.joinId);
+  // Только пары по расписанию и под фильтры: вне расписания бывают закрытые
+  // встречи, и заходить в них разведке нельзя так же, как записывалке.
+  const ready = rows.find((r) => r.joinId && wanted(r, cfg));
   if (!ready) {
-    console.log("\nСейчас ни к одному вебинару подключиться нельзя — кнопка появляется незадолго до начала. Запусти разведку во время пары.");
+    const closed = rows.some((r) => r.joinId);
+    console.log(
+      closed
+        ? "\nПодключиться можно только к встречам вне расписания или не под фильтры — в них разведка не заходит. Запусти её во время пары ВИШ."
+        : "\nСейчас ни к одному вебинару подключиться нельзя — кнопка появляется незадолго до начала. Запусти разведку во время пары.",
+    );
     return;
   }
   const join = await portal.getJoinUrl(ready, { name: cfg.login, pass: cfg.password, mode: cfg.authMode });

@@ -35,6 +35,12 @@ export function isErshovQuery(query: string): boolean {
   return words.some((w) => SURNAME.has(w)) || (words.includes("ершова") && words.some((w) => FIRST.has(w)));
 }
 
+/**
+ * По чему искать настоящих однофамильцев после карточки: только по фамилии.
+ * По всему запросу «Кирилл Ершов» совпадал бы любой преподаватель Кирилл.
+ */
+export const ERSHOV_SURNAME = "Ершов";
+
 export const ERSHOV_CARD = [
   "🏅 <b>Кирилл Ершов</b> — спорторг ВИШ",
   "",
