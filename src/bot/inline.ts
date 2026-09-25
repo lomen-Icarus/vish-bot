@@ -19,6 +19,7 @@ import { hitShort, searchPeople, type PeopleScope, type PersonHit } from "../peo
 import { refKey } from "../people/ref.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, mergeStream } from "../schedule/stream.js";
 import type { Occurrence } from "../schedule/model.js";
+import { ERSHOV_CARD, isErshovQuery } from "./easter.js";
 import { addDays, fmtDDMM, mondayOf, parseDayWord, parseRuDate, todayMsk, weekdayShort, type LocalDate } from "../time.js";
 
 export type InlineMode = "auto" | "day" | "week" | "stream" | "common";
@@ -297,6 +298,13 @@ const person3 = (q: string): string => createHash("sha1").update(q.toLowerCase()
  * преподаватели ищутся по своей карте, а расписание тянется только у первого.
  */
 export async function buildPeopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean } = {}): Promise<InlineQueryResultArticle[]> {
+  const results = await peopleResults(deps, req, user, opts);
+  // Пасхалка — первой карточкой; «никого не нашёл» после неё не нужен.
+  if (!req.person || req.person.kind === "student" || !isErshovQuery(req.person.query)) return results;
+  return [article("p:ershov", "🏅 Кирилл Ершов — спорторг ВИШ", ERSHOV_CARD), ...results.filter((r) => !r.id.startsWith("p:nf:"))];
+}
+
+async function peopleResults(deps: Deps, req: InlineRequest, user: User | null, opts: { isAdmin?: boolean }): Promise<InlineQueryResultArticle[]> {
   const person = req.person;
   if (!person) return [];
   const q = person.query.trim();

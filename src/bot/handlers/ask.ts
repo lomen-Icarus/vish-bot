@@ -16,6 +16,7 @@ import { hitLabel } from "../../people/search.js";
 import { refKey, type PersonRef } from "../../people/ref.js";
 import { samePerson } from "../../text/match.js";
 import { logger } from "../../logger.js";
+import { isErshovQuery, sendErshovCard } from "../easter.js";
 
 export const askHandlers = new Composer<BotContext>();
 
@@ -37,6 +38,11 @@ let inFlightGlobal = 0;
 export async function askAi(ctx: BotContext, question: string, opts: { extraButtons?: InlineKeyboard } = {}): Promise<AskOutcome> {
   const ask = ctx.deps.ask;
   if (!ask) return "disabled";
+  // Пасхалка про того, с чьей подачи в боте появились преподаватели.
+  if (isErshovQuery(question)) {
+    await sendErshovCard(ctx);
+    return "answered";
+  }
   const day = todayMsk();
   const { verdict } = aiAllowance(ctx.deps.repo, ctx.deps.config, ctx.user.id, ctx.isAdmin, day, { user: inFlightByUser.get(ctx.user.id) ?? 0, global: inFlightGlobal });
   if (verdict !== "ok") return verdict;
