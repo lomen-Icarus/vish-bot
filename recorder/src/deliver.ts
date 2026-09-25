@@ -2,8 +2,9 @@
  * Что делать с отснятыми слайдами: собрать PDF и отдать боту.
  * Бот уже знает, кому их разослать, — здесь только доставка.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { deckBaseName } from "./plan.js";
 import { PDFDocument } from "pdf-lib";
 import { fetch as undiciFetch } from "undici";
 import { log } from "./log.js";
@@ -71,7 +72,42 @@ export async function deliver(opts: { url: string; token: string; pdf: Buffer; m
   }
 }
 
+/** Имя PDF: дата, время начала и предмет — две пары одного предмета в день не затирают друг друга. */
 export function deckFileName(meta: DeckMeta): string {
-  const safe = meta.subject.replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 60) || "вебинар";
-  return path.normalize(`${meta.date}-${safe}.pdf`).replace(/[/\\]/g, "-");
+  return `${deckBaseName(meta.date, meta.startMinutes, meta.subject)}.pdf`;
+}
+
+/** Рядом с PDF, который бот не принял, лежит такая метка: её подбирает повторная отправка. */
+const PENDING = ".pending.json";
+
+export function savePending(pdfPath: string, meta: DeckMeta, slides: number): void {
+  writeFileSync(`${pdfPath}${PENDING}`, JSON.stringify({ meta, slides }), "utf8");
+}
+
+/**
+ * Повторно отдать боту всё, что он не принял (бот перезапускался, сеть
+ * моргнула). Возвращает, сколько пачек ушло.
+ */
+export async function retryPending(outDir: string, url: string, token: string): Promise<number> {
+  if (!url || !token || !existsSync(outDir)) return 0;
+  let sent = 0;
+  for (const name of readdirSync(outDir)) {
+    if (!name.endsWith(PENDING)) continue;
+    const marker = path.join(outDir, name);
+    const pdfPath = marker.slice(0, -PENDING.length);
+    try {
+      if (!existsSync(pdfPath)) {
+        rmSync(marker, { force: true });
+        continue;
+      }
+      const { meta, slides } = JSON.parse(readFileSync(marker, "utf8")) as { meta: DeckMeta; slides: number };
+      if (await deliver({ url, token, pdf: readFileSync(pdfPath), meta, slides })) {
+        rmSync(marker, { force: true });
+        sent++;
+      }
+    } catch (err) {
+      log.warn({ err: String(err), file: name }, "повторная отправка слайдов не удалась");
+    }
+  }
+  return sent;
 }

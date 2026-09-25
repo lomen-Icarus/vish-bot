@@ -812,7 +812,7 @@ export class Repo {
         this.db.prepare(sql).run(userId);
       }
       // Метки режима преподавателя («выключил сам», «ждёт выбора себя из тёзок»).
-      this.db.prepare("DELETE FROM meta WHERE key IN (?, ?)").run(`tmode:off:${userId}`, `tmode:welcome:${userId}`);
+      this.db.prepare("DELETE FROM meta WHERE key IN (?, ?, ?)").run(`tmode:off:${userId}`, `tmode:welcome:${userId}`, `tmode:fio:${userId}`);
     })();
   }
 
