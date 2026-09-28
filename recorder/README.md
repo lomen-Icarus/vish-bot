@@ -86,16 +86,23 @@ npm start                # рабочий режим
 
 ```bash
 docker build -t vish-recorder .
-docker run --rm --env-file .env -v "$PWD/data:/app/data" vish-recorder
+docker run -d --name vish-recorder --restart unless-stopped --init \
+  --env-file .env -v "$PWD/data:/app/data" vish-recorder
 ```
 
-Образ собран на `mcr.microsoft.com/playwright`, Chromium там уже есть.
-На Pterodactyl удобнее egg с поддержкой Docker-образа; в Node-egg браузер
-придётся ставить отдельно (`npx playwright install chromium --with-deps`),
-и контейнеру нужно ≥ 1.5 ГБ памяти на одну запись (`MAX_PARALLEL=1`):
-пустой headless Chromium с нашими флагами занимает ≈ 0,4 ГБ, комната BBB
-добавляет своё, плюс сам Node. На две одновременные записи — от 2,5–3 ГБ.
-Точную цифру покажет график памяти в панели во время первой записи.
+Образ собран на `mcr.microsoft.com/playwright`, Chromium там уже есть. Версия
+образа обязана совпадать с `playwright-core` в `package.json` (сейчас 1.63.0):
+каждая версия ищет браузер своей ревизии. Меняешь одну — меняй и другую.
+
+На VPS всё это делает `deploy/vps-update.sh`, его запускает GitHub Actions по
+SSH (см. `docs/DEPLOY.md`, «Вариант А»). В `.env` для Docker значения пишутся
+без кавычек.
+
+Памяти на одну запись (`MAX_PARALLEL=1`) нужно ≥ 1,5 ГБ: пустой headless
+Chromium с нашими флагами занимает ≈ 0,4 ГБ, комната BBB добавляет своё, плюс
+сам Node. На две одновременные записи — от 2,5–3 ГБ. Диску — ≥ 5 ГБ свободных
+(образ Playwright ≈ 2 ГБ). Точную цифру по памяти покажет мониторинг сервера
+во время первой записи.
 
 ## Чего он не делает
 
