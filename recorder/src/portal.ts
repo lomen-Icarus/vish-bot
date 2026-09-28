@@ -9,7 +9,8 @@
  *     и получает JSON {mes:"SUCCESS", url:"https://…"} — это адрес комнаты
  *     BigBlueButton с одноразовым токеном.
  */
-import { fetch as undiciFetch, ProxyAgent, type Dispatcher } from "undici";
+import { Agent, fetch as undiciFetch, ProxyAgent, type Dispatcher } from "undici";
+import { PORTAL_CA_CERTS } from "./certs.js";
 import { parseWebinars } from "chuvsu-js/parsers";
 
 export const PORTAL_BASE = "https://tt.chuvsu.ru";
@@ -36,10 +37,12 @@ export class Portal {
   private readonly cookies = new Map<string, string>();
   private queue: Promise<unknown> = Promise.resolve();
   private lastAt = 0;
-  private readonly dispatcher: Dispatcher | undefined;
+  private readonly dispatcher: Dispatcher;
 
   constructor(private readonly opts: { proxyUrl?: string; timeoutMs?: number } = {}) {
-    this.dispatcher = opts.proxyUrl ? new ProxyAgent({ uri: opts.proxyUrl, connectTimeout: 15_000 }) : undefined;
+    // Цепочку портала проверяем по закреплённым сертификатам, как бот.
+    const tls = { ca: PORTAL_CA_CERTS };
+    this.dispatcher = opts.proxyUrl ? new ProxyAgent({ uri: opts.proxyUrl, requestTls: tls, connectTimeout: 15_000 }) : new Agent({ connect: { ...tls, timeout: 15_000 } });
   }
 
   private cookieHeader(): string {
