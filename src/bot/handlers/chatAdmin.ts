@@ -13,7 +13,7 @@ import { clampHtml, esc } from "../../schedule/format.js";
 import { addChatBonus, CHAT_BONUS_STEP, CHAT_STEPS, chatLimits, resetChatLimits, setChatLimit, type ChatLimitKind } from "../../chat/limits.js";
 import { decodeText, qaLine } from "../../chat/qa.js";
 import { stepValue } from "../../ai/limits.js";
-import { chatEnabled, switchChat } from "./groupChat.js";
+import { askAboutChat, chatAbout, chatEnabled, switchChat } from "./groupChat.js";
 import { todayMsk } from "../../time.js";
 import { logger } from "../../logger.js";
 
@@ -67,9 +67,13 @@ function chatScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     qa ? `Сценарий: <b>${qa.count}</b> заготовок${qa.skipped ? ` (пропущено строк: ${qa.skipped})` : ""}${qa.error ? ` · ${esc(qa.error)}` : ""} — /qa` : "Сценарий: болталка выключена",
     "",
     groups.length ? "<b>Чаты</b> (кнопка внизу включает/выключает):" : "Чатов пока нет: добавь бота в группу. Если добавишь сам — болталка там включится сразу.",
-    ...groups.slice(0, 12).map((g) => `${chatEnabled(deps, g.chatId) ? "✅" : "⛔"} ${esc(g.title ?? String(g.chatId))}${g.present ? "" : " (бота удалили)"} · сегодня ${deps.repo.chatUsage({ chatId: g.chatId }, day)}`),
+    ...groups.slice(0, 12).map((g) => {
+      const subs = deps.repo.slideSubs(g.chatId).length;
+      return `${chatEnabled(deps, g.chatId) ? "✅" : "⛔"} ${esc(g.title ?? String(g.chatId))}${g.present ? "" : " (бота удалили)"} · сегодня ${deps.repo.chatUsage({ chatId: g.chatId }, day)}${chatAbout(deps, g.chatId) ? " · 📝 описан" : ""}${subs ? ` · 📎 слайдов: ${subs}` : ""}`;
+    }),
     "",
     "<i>Админы бота болтают без лимита. Команда: <code>/chatlimit user 30</code>, <code>chat 200</code>, <code>global 500</code>, <code>boost 200</code>, <code>reset</code>.</i>",
+    "<i>Идеи из чатов — /ideas, знакомства — /intros. Переспросить в чате «что это за группа» — /chatabout прямо там.</i>",
   ];
   const kb = new InlineKeyboard();
   const row = (kind: ChatLimitKind, label: string, value: number): void => {
@@ -118,7 +122,11 @@ adminOnly.callbackQuery(/^gch:(on|off):(-?\d{1,20})$/, async (ctx) => {
   await ctx.answerCallbackQuery({ text: on ? "Разрешил: болтаю в этом чате" : "Выключил: в этом чате молчу" });
   const title = ctx.deps.repo.chatGroup(chatId)?.title ?? String(chatId);
   await ctx.editMessageText(`${on ? "✅ Болтаю" : "⛔ Молчу"} в чате «${esc(title)}». Все чаты и лимиты: /chats`, { parse_mode: "HTML" }).catch(() => undefined);
-  if (on && ctx.deps.chat) await ctx.api.sendMessage(chatId, `Привет! Зовите: «@${ctx.me.username} …» или отвечайте на мои сообщения — поболтаю, подскажу про пары и преподавателей.`).catch(() => undefined);
+  // Первое слово бота в чате — вопрос о нём: ответ на него станет описанием чата.
+  if (on && ctx.deps.chat) {
+    if (!chatAbout(ctx.deps, chatId)) await askAboutChat(ctx.api, ctx.deps, chatId);
+    else await ctx.api.sendMessage(chatId, `Я снова здесь 🙂 Зовите: «@${ctx.me.username} …» или отвечайте на мои сообщения.`).catch(() => undefined);
+  }
 });
 
 adminOnly.callbackQuery("chl:show", async (ctx) => {
@@ -174,6 +182,27 @@ adminOnly.command("chatlimit", async (ctx) => {
     return void (await ctx.reply("Так: <code>/chatlimit user 30</code>, <code>/chatlimit chat 200</code>, <code>/chatlimit global 500</code>, <code>/chatlimit boost 200</code>, <code>/chatlimit reset</code>.", { parse_mode: "HTML" }));
   }
   await showChat(ctx);
+});
+
+// ---- идеи и знакомства из чатов ----
+adminOnly.command("ideas", async (ctx) => {
+  const ideas = ctx.deps.repo.ideas(20);
+  if (!ideas.length) return void (await ctx.reply("Идей из чатов пока нет. Их записывает бот, когда в чате ему предлагают новую функцию."));
+  const lines = ideas.map((i) => `<b>#${i.id}</b> ${esc(i.createdAt.slice(0, 10))} · ${esc(i.chatId != null ? (ctx.deps.repo.chatGroup(i.chatId)?.title ?? String(i.chatId)) : "личка")} · id <code>${i.userId}</code>\n${esc(i.text)}`);
+  await ctx.reply(clampHtml(`<b>💡 Идеи для бота</b> (последние ${ideas.length})\n\n${lines.join("\n\n")}`), { parse_mode: "HTML" });
+});
+
+adminOnly.command("intros", async (ctx) => {
+  const list = ctx.deps.repo.intros(40);
+  if (!list.length) return void (await ctx.reply("Знакомств пока нет. В чате: «@ник это Фамилия Имя 12-23» — бот запишет."));
+  const lines = list.map((i) => `<b>#${i.id}</b> ${esc(i.name)}${i.groupTitle ? ` · ${esc(i.groupTitle)}` : ""} · ${i.username ? `@${esc(i.username)}` : `id <code>${i.userId}</code>`}`);
+  await ctx.reply(clampHtml(`<b>🤝 Знакомства из чатов</b>\n\n${lines.join("\n")}\n\nУдалить: <code>/intro_del 12</code>`), { parse_mode: "HTML" });
+});
+
+adminOnly.command("intro_del", async (ctx) => {
+  const id = Number((ctx.match ?? "").trim().replace(/^#/, ""));
+  if (!Number.isInteger(id) || id <= 0) return void (await ctx.reply("Так: <code>/intro_del 12</code> — номер из /intros.", { parse_mode: "HTML" }));
+  await ctx.reply(ctx.deps.repo.deleteIntro(id) ? `Удалил знакомство #${id}.` : `Знакомства #${id} нет.`);
 });
 
 // ---- сценарий «вопрос → ответ» ----

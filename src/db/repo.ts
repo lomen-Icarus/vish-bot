@@ -175,7 +175,7 @@ function rowToUser(r: UserRow): User {
     format: (r.format as ScheduleFormat) ?? "both",
     notifyChanges: r.notify_changes === 1,
     notifySession: r.notify_session === 1,
-    wantSlides: r.want_slides == null ? true : r.want_slides === 1,
+    wantSlides: r.want_slides === 1,
     anon: r.anon === 1,
     teacherView: (r.teacher_view as TeacherView) ?? "bold",
     teacherMode: r.teacher_mode === 1,
@@ -344,6 +344,57 @@ function rowToOccurrence(r: OccurrenceRow): Occurrence {
   };
 }
 
+export interface SlideSub {
+  chatId: number;
+  /** Тема форума; null — общий чат. */
+  threadId: number | null;
+  subject: string;
+  subjectNorm: string;
+  /** Ключ группы; null — слайды этого предмета для любой группы. */
+  groupKey: string | null;
+  groupTitle: string | null;
+  createdBy: number;
+  createdAt: string;
+}
+interface SlideSubRow {
+  chat_id: number;
+  thread_id: number;
+  subject: string;
+  subject_norm: string;
+  group_key: string;
+  group_title: string | null;
+  created_by: number;
+  created_at: string;
+}
+function rowToSlideSub(r: SlideSubRow): SlideSub {
+  return { chatId: r.chat_id, threadId: r.thread_id || null, subject: r.subject, subjectNorm: r.subject_norm, groupKey: r.group_key || null, groupTitle: r.group_title, createdBy: r.created_by, createdAt: r.created_at };
+}
+
+/** Знакомство из чата: «@ник это Фамилия Имя 12-23». */
+export interface PersonIntro {
+  id: number;
+  username: string | null;
+  userId: number | null;
+  name: string;
+  groupTitle: string | null;
+  chatId: number;
+  introducedBy: number;
+  createdAt: string;
+}
+interface PersonIntroRow {
+  id: number;
+  username: string | null;
+  user_id: number | null;
+  name: string;
+  group_title: string | null;
+  chat_id: number;
+  introduced_by: number;
+  created_at: string;
+}
+function rowToIntro(r: PersonIntroRow): PersonIntro {
+  return { id: r.id, username: r.username, userId: r.user_id, name: r.name, groupTitle: r.group_title, chatId: r.chat_id, introducedBy: r.introduced_by, createdAt: r.created_at };
+}
+
 export class Repo {
   constructor(readonly db: Db) {}
 
@@ -360,6 +411,12 @@ export class Repo {
   // ---------- users ----------
   getUser(id: number): User | null {
     const row = this.db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
+    return row ? rowToUser(row) : null;
+  }
+
+  /** Пользователь по нику (без «@», регистр не важен); null — не писал боту. */
+  userByUsername(username: string): User | null {
+    const row = this.db.prepare("SELECT * FROM users WHERE lower(username) = lower(?) ORDER BY last_seen_at DESC LIMIT 1").get(username.replace(/^@/, "")) as UserRow | undefined;
     return row ? rowToUser(row) : null;
   }
 
@@ -397,7 +454,7 @@ export class Repo {
       format: "both",
       notify_changes: 0,
       notify_session: 0,
-      want_slides: 1,
+      want_slides: 0,
       anon: 0,
       teacher_view: "bold",
       teacher_mode: 0,
@@ -426,9 +483,10 @@ export class Repo {
     this.db
       .prepare(
         // Тема «Объявления» включена сразу: туда идёт только важное — дистант,
-        // отмены, дедлайны. Конкурсы и события остаются по подписке.
-        `INSERT INTO users (id, username, first_name, notify_notices, topics, created_at, updated_at, last_seen_at)
-         VALUES (?, ?, ?, 0, '["announcements"]', ?, ?, ?)
+        // отмены, дедлайны. Конкурсы и события остаются по подписке. Слайды в
+        // личку — только по желанию: по умолчанию выключены.
+        `INSERT INTO users (id, username, first_name, notify_notices, want_slides, topics, created_at, updated_at, last_seen_at)
+         VALUES (?, ?, ?, 0, 0, '["announcements"]', ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET username = excluded.username, first_name = excluded.first_name,
            last_seen_at = excluded.last_seen_at, blocked = 0`,
       )
@@ -797,7 +855,13 @@ export class Repo {
   /** Erase everything the bot knows about a person; /start then starts over. */
   forgetUser(userId: number): void {
     this.db.transaction(() => {
+      // Знакомство «@ник это …» про этого человека — по id или по нику, пока
+      // запись о нём ещё есть. Кого знакомил он сам — остаётся, но без него.
+      this.db.prepare("DELETE FROM people_intros WHERE user_id = ? OR username = (SELECT lower(username) FROM users WHERE id = ?)").run(userId, userId);
+      this.db.prepare("UPDATE people_intros SET introduced_by = 0 WHERE introduced_by = ?").run(userId);
+      this.db.prepare("UPDATE chat_slide_subs SET created_by = 0 WHERE created_by = ?").run(userId);
       for (const sql of [
+        "DELETE FROM feature_ideas WHERE user_id = ?",
         "DELETE FROM watch_groups WHERE user_id = ?",
         // Подписки на преподавателей: иначе после /soon и нового сообщения они
         // оживали, и вечерние напоминания приходили снова.
@@ -1168,6 +1232,102 @@ export class Repo {
 
   pruneChatLog(olderThanDays = 3): void {
     this.db.prepare("DELETE FROM chat_log WHERE created_at < ?").run(isoAgo(olderThanDays * 86_400_000));
+  }
+
+  /** Когда бот последний раз отвечал в этом чате (мс); null — ещё не отвечал или журнал почищен. */
+  lastChatAt(chatId: number): number | null {
+    const r = this.db.prepare("SELECT MAX(created_at) AS at FROM chat_log WHERE chat_id = ?").get(chatId) as { at: string | null };
+    return r.at ? Date.parse(r.at) : null;
+  }
+
+  // ---------- слайды в групповые чаты ----------
+  addSlideSub(sub: { chatId: number; threadId: number | null; subject: string; subjectNorm: string; groupKey: string | null; groupTitle: string | null; createdBy: number }): boolean {
+    const r = this.db
+      .prepare(
+        `INSERT INTO chat_slide_subs (chat_id, thread_id, subject, subject_norm, group_key, group_title, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(chat_id, thread_id, subject_norm, group_key) DO NOTHING`,
+      )
+      .run(sub.chatId, sub.threadId ?? 0, sub.subject, sub.subjectNorm, sub.groupKey ?? "", sub.groupTitle, sub.createdBy, nowIso());
+    return r.changes > 0;
+  }
+
+  /** Подписки чата (или одной темы форума); без chatId — все. */
+  slideSubs(chatId?: number, threadId?: number | null): SlideSub[] {
+    const rows = (
+      chatId == null
+        ? this.db.prepare("SELECT * FROM chat_slide_subs ORDER BY chat_id, thread_id, subject").all()
+        : threadId === undefined
+          ? this.db.prepare("SELECT * FROM chat_slide_subs WHERE chat_id = ? ORDER BY thread_id, subject").all(chatId)
+          : this.db.prepare("SELECT * FROM chat_slide_subs WHERE chat_id = ? AND thread_id = ? ORDER BY subject").all(chatId, threadId ?? 0)
+    ) as SlideSubRow[];
+    return rows.map(rowToSlideSub);
+  }
+
+  slideSubsForSubject(subjectNorm: string): SlideSub[] {
+    return (this.db.prepare("SELECT * FROM chat_slide_subs WHERE subject_norm = ?").all(subjectNorm) as SlideSubRow[]).map(rowToSlideSub);
+  }
+
+  /** Снять подписки темы (все или на один предмет); threadId undefined — во всём чате. */
+  removeSlideSubs(chatId: number, threadId?: number | null, subjectNorm?: string): number {
+    const where = ["chat_id = ?"];
+    const args: Array<number | string> = [chatId];
+    if (threadId !== undefined) {
+      where.push("thread_id = ?");
+      args.push(threadId ?? 0);
+    }
+    if (subjectNorm) {
+      where.push("subject_norm = ?");
+      args.push(subjectNorm);
+    }
+    return Number(this.db.prepare(`DELETE FROM chat_slide_subs WHERE ${where.join(" AND ")}`).run(...args).changes);
+  }
+
+  // ---------- знакомства в чатах ----------
+  introByUsername(username: string): PersonIntro | null {
+    const r = this.db.prepare("SELECT * FROM people_intros WHERE username = ?").get(username.toLowerCase()) as PersonIntroRow | undefined;
+    return r ? rowToIntro(r) : null;
+  }
+
+  introByUserId(userId: number): PersonIntro | null {
+    const r = this.db.prepare("SELECT * FROM people_intros WHERE user_id = ?").get(userId) as PersonIntroRow | undefined;
+    return r ? rowToIntro(r) : null;
+  }
+
+  intros(limit = 50): PersonIntro[] {
+    return (this.db.prepare("SELECT * FROM people_intros ORDER BY id DESC LIMIT ?").all(limit) as PersonIntroRow[]).map(rowToIntro);
+  }
+
+  /** Записать знакомство; прежняя запись про тот же ник или id заменяется. */
+  saveIntro(intro: { username: string | null; userId: number | null; name: string; groupTitle: string | null; chatId: number; introducedBy: number }): void {
+    const username = intro.username?.toLowerCase() ?? null;
+    this.db.transaction(() => {
+      if (username) this.db.prepare("DELETE FROM people_intros WHERE username = ?").run(username);
+      if (intro.userId != null) this.db.prepare("DELETE FROM people_intros WHERE user_id = ?").run(intro.userId);
+      this.db
+        .prepare("INSERT INTO people_intros (username, user_id, name, group_title, chat_id, introduced_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(username, intro.userId, intro.name, intro.groupTitle, intro.chatId, intro.introducedBy, nowIso());
+    })();
+  }
+
+  deleteIntro(id: number): boolean {
+    return this.db.prepare("DELETE FROM people_intros WHERE id = ?").run(id).changes > 0;
+  }
+
+  // ---------- идеи для бота ----------
+  addIdea(chatId: number | null, userId: number, text: string): number {
+    return Number(this.db.prepare("INSERT INTO feature_ideas (chat_id, user_id, text, created_at) VALUES (?, ?, ?, ?)").run(chatId, userId, text.slice(0, 1000), nowIso()).lastInsertRowid);
+  }
+
+  ideas(limit = 20): Array<{ id: number; chatId: number | null; userId: number; text: string; createdAt: string }> {
+    const rows = this.db.prepare("SELECT * FROM feature_ideas ORDER BY id DESC LIMIT ?").all(limit) as Array<{ id: number; chat_id: number | null; user_id: number; text: string; created_at: string }>;
+    return rows.map((r) => ({ id: r.id, chatId: r.chat_id, userId: r.user_id, text: r.text, createdAt: r.created_at }));
+  }
+
+  ideasSince(sinceIso: string, userId?: number): number {
+    const r = (userId == null
+      ? this.db.prepare("SELECT COUNT(*) AS n FROM feature_ideas WHERE created_at >= ?").get(sinceIso)
+      : this.db.prepare("SELECT COUNT(*) AS n FROM feature_ideas WHERE created_at >= ? AND user_id = ?").get(sinceIso, userId)) as { n: number };
+    return r.n;
   }
 
   // ---------- AI log ----------

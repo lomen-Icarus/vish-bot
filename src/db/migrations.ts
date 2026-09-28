@@ -359,4 +359,47 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX IF NOT EXISTS notifications_log_user ON notifications_log (user_id);
   CREATE INDEX IF NOT EXISTS notifications_log_sent ON notifications_log (sent_at);
   `,
+  `
+  -- Слайды в личку теперь по умолчанию выключены у всех: включить можно в
+  -- настройках. Рассылки ещё не было ни разу, так что выключаем и старым.
+  UPDATE users SET want_slides = 0;
+  -- Куда в групповых чатах слать слайды вебинаров: чат, тема форума (0 —
+  -- общая), предмет и группа ('' — любая группа). Подписку делают прямо в
+  -- чате: «@бот сюда слайды по физике».
+  CREATE TABLE chat_slide_subs (
+    chat_id INTEGER NOT NULL,
+    thread_id INTEGER NOT NULL DEFAULT 0,
+    subject TEXT NOT NULL,
+    subject_norm TEXT NOT NULL,
+    group_key TEXT NOT NULL DEFAULT '',
+    group_title TEXT,
+    created_by INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (chat_id, thread_id, subject_norm, group_key)
+  );
+  CREATE INDEX chat_slide_subs_subject ON chat_slide_subs (subject_norm);
+  -- Знакомства в чатах: «@ник это Фамилия Имя 12-23». Ник — в нижнем регистре
+  -- без «@»; человека без ника знаем по id. Один ник — один человек.
+  CREATE TABLE people_intros (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT,
+    user_id INTEGER,
+    name TEXT NOT NULL,
+    group_title TEXT,
+    chat_id INTEGER NOT NULL,
+    introduced_by INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX people_intros_username ON people_intros (username) WHERE username IS NOT NULL;
+  CREATE UNIQUE INDEX people_intros_user ON people_intros (user_id) WHERE user_id IS NOT NULL;
+  -- Идеи для бота, которые предложили в чатах («а сделай, чтобы…»).
+  CREATE TABLE feature_ideas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER,
+    user_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX feature_ideas_created ON feature_ideas (created_at);
+  `,
 ];

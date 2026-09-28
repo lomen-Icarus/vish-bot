@@ -9,7 +9,7 @@ import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
 import { decodeText, parseQa, QaBase, qaLine } from "../src/chat/qa.js";
 import { ChatService, type ChatClient } from "../src/chat/service.js";
-import { addressedToBot, groupChatHandlers, resetChatCooldowns, resetGroupChatState, stripMention } from "../src/bot/handlers/groupChat.js";
+import { ABOUT_QUESTION, addressedToBot, chatClock, groupChatHandlers, resetChatCooldowns, resetGroupChatState, stripMention } from "../src/bot/handlers/groupChat.js";
 import { chatAdminHandlers, parseQaAdd } from "../src/bot/handlers/chatAdmin.js";
 import { importLegacyCanned } from "../src/chat/importCanned.js";
 import { Db, migrate } from "../src/db/index.js";
@@ -17,7 +17,7 @@ import { MIGRATIONS } from "../src/db/migrations.js";
 import { DatabaseSync } from "node:sqlite";
 import { setChatLimit } from "../src/chat/limits.js";
 import type { BotContext, Deps } from "../src/bot/context.js";
-import { todayMsk } from "../src/time.js";
+import { todayMsk, wallClock } from "../src/time.js";
 
 const ME: UserFromGetMe = { id: 1, is_bot: true, first_name: "vish", username: "vish_bot", can_join_groups: true, can_read_all_group_messages: true, supports_inline_queries: true, can_connect_to_business: false, has_main_web_app: false };
 const CHAT = -1001234567890;
@@ -137,6 +137,8 @@ function setup(opts: { qa?: string; enabled?: boolean; answers?: string[] } = {}
   const config = { ADMIN_IDS: [99], CHAT_AI: true, CHAT_GROUP_IDS: [], CHAT_DAILY_LIMIT_PER_USER: 20, CHAT_DAILY_LIMIT_PER_CHAT: 150, CHAT_DAILY_LIMIT_GLOBAL: 400, BOT_TOKEN: "123:FAKE" } as unknown as Deps["config"];
   const deps = { config, repo, chat, pending: new Map() } as unknown as Deps;
   if (opts.enabled !== false) repo.upsertChatGroup(CHAT, { title: "ВИШ-12-23", enabled: true });
+  // Днём: ночью бот сначала сонно ворчит, и тесты зависели бы от часов.
+  chatClock.now = () => ({ ...wallClock(), minutes: 12 * 60 });
   return { deps, repo, requests, qa };
 }
 
@@ -274,7 +276,7 @@ describe("болталка в группе", () => {
     const { deps, repo, qa } = setup();
     const chat = new ChatService(null, { model: "m", contextMessages: 10, botUsername: "vish_bot" }, qa, { messages: { create: async () => fakeMessage("", "refusal") } });
     const sent = await send({ ...deps, chat } as Deps, groupText("что-то плохое"));
-    expect(sent.find((s) => s.method === "sendMessage")!.payload.text).toMatch(/не буду/);
+    expect(sent.find((s) => s.method === "sendMessage")!.payload.text).toMatch(/не отвечу до следующего обновления социальности/);
     expect(repo.chatUsage({ chatId: CHAT }, todayMsk())).toBe(1);
   });
 
@@ -286,7 +288,7 @@ describe("болталка в группе", () => {
     });
     const hello = await send(deps, added(-100500, 99), 99);
     expect(repo.chatGroup(-100500)).toMatchObject({ enabled: true, present: true });
-    expect(String(hello.find((s) => s.method === "sendMessage")!.payload.text)).toContain("@vish_bot");
+    expect(String(hello.find((s) => s.method === "sendMessage")!.payload.text)).toBe(ABOUT_QUESTION);
     await send(deps, added(-100600, 7), 7);
     expect(repo.chatGroup(-100600)).toMatchObject({ enabled: false, present: true });
   });

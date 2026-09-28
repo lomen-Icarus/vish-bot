@@ -3,6 +3,7 @@ import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { BTN, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor } from "../keyboards.js";
 import { autoTeacherStart, nameAndPatronymic } from "../teacherMode.js";
+import { knownFirstName } from "../social.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
 import { askAi } from "./ask.js";
 import { aiLimits } from "../../ai/limits.js";
@@ -20,12 +21,12 @@ import { logger } from "../../logger.js";
 export const miscHandlers = new Composer<BotContext>();
 
 /**
- * Имя человека, если бот его узнаёт: по телеграм-нику из файла старост.
- * «Усиленная анонимность» в настройках выключает узнавание целиком.
+ * Имя человека, если бот его узнаёт: по телеграм-нику из файла старост или
+ * по знакомству в групповом чате. «Усиленная анонимность» в настройках
+ * выключает узнавание целиком.
  */
 function knownName(ctx: BotContext): string | null {
-  if (ctx.user.anon) return null;
-  return ctx.deps.known?.byUsername(ctx.from?.username ?? ctx.user.username)?.firstName ?? null;
+  return knownFirstName(ctx.deps, ctx.from ?? { id: ctx.user.id }, ctx.user);
 }
 
 /**

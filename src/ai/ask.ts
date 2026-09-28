@@ -13,10 +13,12 @@ import { filterSubgroup } from "../schedule/format.js";
 import { lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import type { TeacherService } from "../portal/teachers.js";
 import type { WebinarService, WebinarTeacher } from "../portal/webinars.js";
-import { addDays, fmtHHMM, isLocalDate, mondayOf, todayMsk, weekdayName, type LocalDate } from "../time.js";
+import { addDays, fmtHHMM, isLocalDate, mondayOf, parseHHMM, todayMsk, weekdayName, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 import { whereNowPlain } from "../people/profile.js";
 import type { ChatTool } from "../chat/service.js";
+import { meetingVerdict } from "../chat/meeting.js";
+import { REFUSAL_PHRASE } from "../chat/social.js";
 
 export interface AskOptions {
   model: string;
@@ -69,8 +71,9 @@ function remember<T>(list: T[], item: T, same: (a: T, b: T) => boolean, limit = 
 
 const SYSTEM = `Ты — помощник по расписанию Высшей инженерной школы (ВИШ) ЧувГУ внутри Telegram-бота.
 Отвечай на вопросы о расписании и о самом боте: пары, время, аудитории, дни, недели, сессия, переносы, любые группы ВИШ, преподаватели (что ведут, у каких групп, когда), а также как пользоваться ботом, что он умеет, где что нажать, как включить уведомления и календарь.
-На любые другие темы (решение задач, лабы, код, тексты, советы, болтовня) отвечай ровно одной фразой:
-"Я отвечаю только на вопросы о расписании и о боте 🙂" — без исключений.
+На приветствие, «спасибо» или «как дела» можно ответить одной короткой живой фразой и предложить спросить про пары.
+На любые другие темы (решение задач, лабы, код, тексты, советы, долгая болтовня) отвечай ровно одной фразой:
+"${REFUSAL_PHRASE}" — без исключений.
 
 Как отвечать:
 - Студенты называют предметы разговорно: «математика»/«матан» = «Математический анализ», «Алгебра и геометрия» тоже математика; «физра» = «Физическая культура и спорт»; «инфа» = «Информатика»; «прога» = «Программирование»/«Основы программирования»; «англ» = «Иностранный язык»; «история» = «История России»; «ОРГ» = «Основы российской государственности». Если точного предмета нет — ищи по смыслу инструментом find_subject и предлагай ближайшие совпадения.
@@ -313,9 +316,30 @@ export class AskService {
       run: async () => botHelp ?? "Справка по боту недоступна.",
     });
 
+    // «Стоит ли провести собрание 12-23 в пятницу в 15:00?» — только в чатах.
+    const meetingSlot = betaZodTool({
+      name: "meeting_slot",
+      description: "Стоит ли проводить собрание (встречу, сбор) группы в такой-то день и время: сверяет время с парами группы и возвращает вердикт — занято парой, пары скоро (50/50), до пар, сразу после пар, поздновато, окно между парами или пар нет — и подсказку, как ответить.",
+      inputSchema: z.object({
+        group: z.string().describe("Группа, например 12-23"),
+        date: z.string().describe("Дата встречи YYYY-MM-DD"),
+        time: z.string().describe("Время начала встречи ЧЧ:ММ"),
+      }),
+      run: async (input) => {
+        const g = resolve(input.group);
+        if (!g) return `Группа «${input.group}» не найдена. Известные группы: ${service.groups().map((x) => x.title).join(", ")}`;
+        if (!isLocalDate(input.date)) return "Дата нужна в формате YYYY-MM-DD";
+        const at = parseHHMM(input.time);
+        if (at == null) return "Время нужно в формате ЧЧ:ММ";
+        remember(mentions.groupKeys, g.key, (a, b) => a === b);
+        const v = meetingVerdict(service.lessonsOn(g, input.date), at);
+        return `${g.title}, ${weekdayName(input.date)} ${input.date}, встреча в ${fmtHHMM(at)}.\n${v.facts}\nВердикт: ${v.kind}. Ответь коротко, своими словами в таком духе: «${v.hint}».`;
+      },
+    });
+
     // В общем чате про конкретных людей не говорим вовсе: «где сейчас Беляев»
     // в группе на сорок человек — это уже не расписание, а слежка на публике.
-    return students && mode === "private" ? [getSchedule, findSubject, listGroups, findTeacher, findStudent, botHelpTool] : [getSchedule, findSubject, listGroups, findTeacher, botHelpTool];
+    return students && mode === "private" ? [getSchedule, findSubject, listGroups, findTeacher, findStudent, botHelpTool] : mode === "group" ? [getSchedule, findSubject, listGroups, findTeacher, botHelpTool, meetingSlot] : [getSchedule, findSubject, listGroups, findTeacher, botHelpTool];
   }
 
   /**
@@ -368,7 +392,7 @@ export class AskService {
       outputTokens += message.usage.output_tokens;
       if (message.stop_reason === "refusal") {
         logger.warn({ category: message.stop_details?.category }, "ask: model refused");
-        return { text: "Я отвечаю только на вопросы о расписании 🙂", inputTokens, outputTokens, mentions };
+        return { text: REFUSAL_PHRASE, inputTokens, outputTokens, mentions };
       }
     }
     const final = await runner.done();
