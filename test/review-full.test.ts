@@ -23,13 +23,16 @@ import { QaBase } from "../src/chat/qa.js";
 
 describe("ревью всего проекта: логи", () => {
   it("токен бота из сетевой ошибки grammY не попадает в лог, а message и stack остаются", () => {
-    const inner = new Error("request to https://api.telegram.org/bot123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawA/getMe failed, reason: ECONNRESET");
+    // Токен собирается на ходу: целиком похожая на токен строка в репозитории —
+    // это срабатывание сканера секретов GitHub, даже если токен выдуманный.
+    const secret = ["fake", "Test", "Token"].join("_").padEnd(35, "x");
+    const inner = new Error(`request to https://api.telegram.org/bot${"1".repeat(9)}:${secret}/getMe failed, reason: ECONNRESET`);
     const out = JSON.stringify(scrubSecrets({ err: new HttpError("Network request for 'getMe' failed!", inner) }));
-    expect(out).not.toContain("AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsawA");
+    expect(out).not.toContain(secret);
     expect(out).toContain("<bot-token>");
     expect(out).toContain("Network request for 'getMe' failed!");
     expect(out).toContain("ECONNRESET");
-    expect(JSON.stringify(scrubSecrets({ err: "key sk-ant-api03-abcdefghijklmnop" }))).not.toContain("abcdefghijklmnop");
+    expect(JSON.stringify(scrubSecrets({ err: `key ${"sk-ant-"}api03-${"q".repeat(16)}` }))).not.toContain("q".repeat(16));
   });
 
   it("пустой или незнакомый LOG_LEVEL — info, а не падение при старте", () => {
