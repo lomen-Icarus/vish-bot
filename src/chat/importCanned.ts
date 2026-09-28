@@ -30,3 +30,33 @@ export function importLegacyCanned(repo: Repo, qa: QaBase): number {
   if (rows.length) logger.info({ total: rows.length, added }, "legacy canned replies moved to the chat scenario");
   return added;
 }
+
+const SEED_KEY = "chat:qa-seed:v1";
+
+/**
+ * Заготовки, которые владелец бота попросил положить в сценарий. Кладутся в
+ * файл один раз (отметка в meta): удалишь через /qa_del — не вернутся.
+ */
+export const DEFAULT_QA: Array<{ questions: string[]; answer: string; hint: string | null }> = [
+  { questions: ["иди нахуй", "иди на хуй", "пошёл нахуй", "пошел нахуй", "пошла нахуй", "нахуй иди"], answer: "Сам иди злюка :(", hint: "дословно" },
+];
+
+export function seedDefaultQa(repo: Repo, qa: QaBase): number {
+  if (repo.getMeta(SEED_KEY)) return 0;
+  let added = 0;
+  try {
+    for (const e of DEFAULT_QA) {
+      // Уже есть в сценарии (положили руками) — второй раз не пишем.
+      if (e.questions.some((q) => qa.match(q, 1)[0]?.how === "exact")) continue;
+      qa.append(e.questions, e.answer, e.hint);
+      added++;
+    }
+  } catch (err) {
+    // Файл не записался (нет прав, диск) — попробуем при следующем запуске.
+    logger.warn({ err: String(err) }, "default chat Q&A not written");
+    return added;
+  }
+  repo.setMeta(SEED_KEY, new Date().toISOString());
+  if (added) logger.info({ added }, "default chat Q&A added to the scenario");
+  return added;
+}
