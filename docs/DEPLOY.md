@@ -71,13 +71,26 @@
 
 ### Второй сервер: запись вебинаров
 
-`recorder/` — самостоятельный сервис с браузером внутри. Ему нужно ≥ 1.5 ГБ памяти и Chromium, поэтому он живёт не рядом с ботом, а на своём контейнере (`panel.frienworld.space`, сервер записи).
+`recorder/` — самостоятельный сервис с браузером внутри. Ему нужно ≥ 1,5 ГБ памяти и Chromium, поэтому он живёт не рядом с ботом, а на своём сервере. Принимает слайды бот (`POST /slides` на его HTTP-порту), так что записывалке ни домен, ни открытый порт не нужны — только выход в интернет.
 
-1. В GitHub → Secrets добавить `PTERO_RECORDER_SERVER_ID` — id второго сервера. Пока секрета нет, шаг деплоя записи просто пропускается.
-2. На сервере записи положить `.env` по образцу `recorder/.env.example`: учётка для входа в комнату, `BOT_SLIDES_URL=http://<адрес бота>:40070/slides`, тот же `SLIDES_TOKEN`.
-3. Поставить браузер: `npx playwright install chromium --with-deps` (или запускать образ из `recorder/Dockerfile`, там Chromium уже есть).
-4. Проверить разведкой во время живого вебинара: `npm run probe`, затем `npm run probe -- join`.
-5. `MAX_PARALLEL` (по умолчанию `1`) — сколько пар записывать одновременно. Каждая запись — отдельный Chromium (пустой ≈ 0,4 ГБ, в комнате BBB больше): на одну запись контейнеру нужно ≥ 1,5 ГБ, на две — от 2,5–3 ГБ. У ВИШ одновременно идёт не больше одной онлайн-пары, так что `1` хватает; вторая пара, если появится, подождёт, пока освободится место.
+**Вариант А — VPS (Docker, выкладка по SSH).** GitHub сам собирает образ на сервере и перезапускает контейнер после каждого мёржа в `main`.
+
+1. На VPS (под root): поставить Docker — `curl -fsSL https://get.docker.com | sh`; создать `/opt/vish-recorder/.env` по образцу `recorder/.env.example` (значения без кавычек).
+2. Ключ для деплоя — на своём компьютере: `ssh-keygen -t ed25519 -N "" -f vish-deploy`. Содержимое `vish-deploy.pub` дописать на VPS в `/root/.ssh/authorized_keys`.
+3. GitHub → Settings → Secrets and variables → Actions → New repository secret:
+   - `RECORDER_SSH_HOST` — IP сервера;
+   - `RECORDER_SSH_KEY` — всё содержимое файла `vish-deploy` (приватный ключ целиком, с `-----BEGIN…` и `-----END…`);
+   - по желанию: `RECORDER_SSH_USER` (по умолчанию `root`), `RECORDER_SSH_PORT` (по умолчанию `22`), `RECORDER_SSH_KNOWN_HOSTS` (строка из `ssh-keyscan <IP>`; без неё отпечаток сервера берётся при каждом деплое).
+4. Запустить Actions → «CI & Deploy» → Run workflow (или дождаться следующего мёржа). Шаг «Deploy recorder to the VPS» покажет последние строки лога записывалки; упавший контейнер делает шаг красным.
+5. Руками на VPS: `docker logs -f vish-recorder` — лог, `docker restart vish-recorder` — перезапуск (после правки `.env`), слайды и кадры — в `/opt/vish-recorder/data`.
+
+**Вариант Б — сервер в панели Pterodactyl.** Секрет `PTERO_RECORDER_SERVER_ID` — id сервера в панели; `.env` положить в его файлы; браузер — Docker-egg с образом из `recorder/Dockerfile` (или `npx playwright install chromium --with-deps` в Node-egg). Id обычного VPS сюда не подходит: выкладка идёт через API панели.
+
+Общее для обоих:
+- В `.env` записывалки: учётка для входа в комнату, `BOT_SLIDES_URL=https://<домен бота>/slides`, тот же `SLIDES_TOKEN`, что у бота (у бота он тоже должен быть задан, ≥ 16 символов).
+- Прокси перед ботом (nginx) должен пропускать загрузки до 50 МБ (`client_max_body_size 50m;`), иначе PDF упрётся в 413.
+- Проверить разведкой во время живого вебинара: на VPS — `docker exec -it vish-recorder node dist/probe.js`, затем `docker exec -it vish-recorder node dist/probe.js join`.
+- `MAX_PARALLEL` (по умолчанию `1`) — сколько пар записывать одновременно. Каждая запись — отдельный Chromium (пустой ≈ 0,4 ГБ, в комнате BBB больше): на одну запись нужно ≥ 1,5 ГБ памяти, на две — от 2,5–3 ГБ. У ВИШ одновременно идёт не больше одной онлайн-пары, так что `1` хватает.
 
 ### Inline-режим («@бот 12-23 завтра»)
 
