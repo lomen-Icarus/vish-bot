@@ -27,13 +27,25 @@ import { logger } from "../logger.js";
  * Имя для обращения: по нику из файла старост, иначе из знакомства в чате.
  * Анонимность («🕶» в настройках) выключает узнавание целиком.
  */
-export function knownFirstName(deps: Deps, from: { id: number; username?: string | undefined }, user: User): string | null {
+export function knownFirstName(deps: Deps, from: { id: number; username?: string | undefined }, user: User, opts: { intros?: boolean } = {}): string | null {
   if (user.anon) return null;
   const username = from.username ?? user.username;
   const known = deps.known?.byUsername(username);
   if (known) return known.firstName;
+  // Знакомство из чата написал кто-то другой, и оно могло быть шуткой: по
+  // умолчанию — только в группах, где его и записали; в личке — нет.
+  if (opts.intros === false) return null;
   const intro = deps.repo.introByUserId(from.id) ?? (username ? deps.repo.introByUsername(username) : null);
   return intro ? firstNameOf(intro.name) : null;
+}
+
+/** «@бот это не я» — стереть знакомства про этого человека. Сколько стёрто. */
+export function forgetIntro(deps: Deps, from: { id: number; username?: string | undefined }): number {
+  let n = 0;
+  for (const intro of [deps.repo.introByUserId(from.id), from.username ? deps.repo.introByUsername(from.username) : null]) {
+    if (intro && deps.repo.deleteIntro(intro.id)) n++;
+  }
+  return n;
 }
 
 /** Группа человека из знакомства в чате — если в боте он её не выбирал. */
@@ -57,22 +69,26 @@ export function handleIntro(deps: Deps, intro: IntroRequest, by: { id: number },
   const groups = findGroup(deps.service.groups(), intro.groupQuery);
   if (!groups.length) return addressed || intro.self ? `Не знаю группу «${intro.groupQuery}» 🤔 Напиши как 12-23.` : null;
   const group = groups[0]!;
+  // Человека могли упомянуть ником или без ника (text_mention): если он писал
+  // боту, знаем и то и другое — иначе одно знакомство расползлось бы на два.
   const target = intro.userId != null ? deps.repo.getUser(intro.userId) : intro.username ? deps.repo.userByUsername(intro.username) : null;
+  const username = intro.username ?? target?.username?.toLowerCase() ?? null;
+  const userId = intro.userId ?? target?.id ?? null;
   if (target?.anon) return "Приятно познакомиться 🙂 Но записывать не буду: у человека включена анонимность.";
   // Файл старост главнее: этого человека бот уже знает.
-  if (intro.username && deps.known?.byUsername(intro.username)) return "А я уже знаю этого человека 🙂";
-  const existing = (intro.userId != null ? deps.repo.introByUserId(intro.userId) : null) ?? (intro.username ? deps.repo.introByUsername(intro.username) : null);
+  if (username && deps.known?.byUsername(username)) return "А я уже знаю этого человека 🙂";
+  const existing = (userId != null ? deps.repo.introByUserId(userId) : null) ?? (username ? deps.repo.introByUsername(username) : null);
   const want = nameWords(intro.name);
   if (existing && !intro.self) {
     return samePersonWords(want, nameWords(existing.name)) ? "Да я уже знаю 🙂" : "Этот ник у меня уже записан за кем-то другим 🤔 Если это ошибка — пусть человек сам представится: «@бот я — Фамилия Имя 12-23».";
   }
   // Сам человек может поправить себя, но не присвоить чужое имя.
-  const takenInFile = deps.known?.nameTakenByOther(intro.name, intro.username) ?? false;
+  const takenInFile = deps.known?.nameTakenByOther(intro.name, username) ?? false;
   const takenInChats = deps.repo
     .intros(2000)
-    .some((i) => i.id !== existing?.id && !(intro.username && i.username === intro.username) && !(intro.userId != null && i.userId === intro.userId) && samePersonWords(want, nameWords(i.name)));
+    .some((i) => i.id !== existing?.id && !(username && i.username === username) && !(userId != null && i.userId === userId) && samePersonWords(want, nameWords(i.name)));
   if (takenInFile || takenInChats) return "А этого человека я уже знаю под другим ником 🤔";
-  deps.repo.saveIntro({ username: intro.username, userId: intro.userId, name: intro.name, groupTitle: group.title, chatId, introducedBy: by.id });
+  deps.repo.saveIntro({ username, userId, name: intro.name, groupTitle: group.title, chatId, introducedBy: by.id });
   logger.info({ chat: chatId, self: intro.self }, "group chat: intro saved");
   return "Приятно познакомиться, запишу 🙂";
 }
@@ -114,7 +130,7 @@ function inGroup(groupNames: string[], group: LogicalGroup): boolean {
  * Предметы онлайн-пар, похожие на запрос, с ближайшим вебинаром. Сначала —
  * у группы (названной в просьбе или своей у человека), не нашлось — у всех.
  */
-export function slideCandidates(deps: Deps, query: string, group: LogicalGroup | null, today: LocalDate = todayMsk()): SlideCandidate[] {
+export function slideCandidates(deps: Deps, query: string, group: LogicalGroup | null, strict = false, today: LocalDate = todayMsk()): SlideCandidate[] {
   const rows = deps.repo.webinarsBetween(addDays(today, -60), addDays(today, 30)).filter((r) => r.scheduled && r.subject);
   const scheduleFor = (g: LogicalGroup) => deps.service.materialize(g, today, addDays(today, 56)).filter((o) => o.isDistance && o.status !== "moved");
   const attempt = (g: LogicalGroup | null): SlideCandidate[] => {
@@ -128,7 +144,9 @@ export function slideCandidates(deps: Deps, query: string, group: LogicalGroup |
     });
   };
   const own = group ? attempt(group) : [];
-  return own.length ? own : attempt(null);
+  // Группу назвали прямо — чужие группы не предлагаем: иначе «для 12-23»
+  // превратилось бы в подписку на все группы.
+  return own.length || strict ? own : attempt(null);
 }
 
 function describe(c: SlideCandidate): string {
@@ -161,8 +179,8 @@ export function handleSlidesRequest(ctx: BotContext, req: SlidesRequest, speaker
     if (!found.length) return { text: `Не знаю группу «${req.group}» 🤔 Напиши как 12-23.` };
     group = found[0]!;
   }
-  const candidates = slideCandidates(deps, req.subject, group);
-  if (!candidates.length) return { text: `Не нашёл онлайн-пар по «${req.subject}» 🤔 Напиши название ближе к расписанию.` };
+  const candidates = slideCandidates(deps, req.subject, group, !!req.group);
+  if (!candidates.length) return { text: `Не нашёл онлайн-пар по «${req.subject}»${req.group && group ? ` у ${group.title}` : ""} 🤔 Напиши название ближе к расписанию.` };
   // Короткий id: callback_data у Telegram — не больше 64 байт.
   const id = randomBytes(4).toString("hex");
   for (const [k, v] of pendingSubs) if (v.expiresAt < Date.now()) pendingSubs.delete(k);
