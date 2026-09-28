@@ -22,8 +22,8 @@ async function listen(server: Server): Promise<number> {
   return (server.address() as { port: number }).port;
 }
 
-/** Как nginx хостинга по умолчанию: тело больше 1 МиБ — 413, до бота не доходит. */
-async function strictProxy(target: number): Promise<{ port: number; biggest: () => number; requests: () => number }> {
+/** Как nginx хостинга: тело больше лимита (по умолчанию у nginx 1 МиБ) — 413, до бота не доходит. */
+async function strictProxy(target: number, limit = 1024 * 1024): Promise<{ port: number; biggest: () => number; requests: () => number }> {
   let biggest = 0;
   let count = 0;
   const proxy = createServer((req, res) => {
@@ -33,7 +33,7 @@ async function strictProxy(target: number): Promise<{ port: number; biggest: () 
       const body = Buffer.concat(chunks);
       count++;
       biggest = Math.max(biggest, body.length);
-      if (body.length > 1024 * 1024) return void res.writeHead(413).end("413 Request Entity Too Large");
+      if (body.length > limit) return void res.writeHead(413).end("413 Request Entity Too Large");
       const up = request({ host: "127.0.0.1", port: target, path: req.url, method: req.method, headers: req.headers }, (r) => {
         res.writeHead(r.statusCode ?? 502, r.headers);
         r.pipe(res);
@@ -52,23 +52,32 @@ async function setup() {
   await once(bot, "listening");
   const botPort = (bot.address() as { port: number }).port;
   const proxy = await strictProxy(botPort);
-  return { dir, got, botPort, proxy };
+  const wide = await strictProxy(botPort, 50 * 1024 * 1024);
+  return { dir, got, botPort, proxy, wide };
 }
 
 const meta = Buffer.from(JSON.stringify({ date: "2026-09-29", subject: "Правоведение", teacher: "Кожина Т. Н.", groups: ["ВИШ-12-23"], slides: 42 })).toString("base64");
 const fakePdf = (bytes: number) => Buffer.concat([Buffer.from("%PDF-1.7\n"), randomBytes(bytes - 9)]);
 
 describe("слайды кусками: прокси перед ботом режет всё больше 1 МБ", () => {
-  it("PDF на 2,5 МБ целиком не проходит, а кусками доходит байт в байт", async () => {
+  it("лимит 50 МБ (как сейчас у хостинга): PDF на 2,5 МБ уходит одним запросом", async () => {
+    const { got, wide } = await setup();
+    const pdf = fakePdf(2_500_000);
+    const before = wide.requests();
+    expect(await uploadDeck({ url: `http://127.0.0.1:${wide.port}/slides`, token: TOKEN, pdf, meta, retryDelayMs: 1 })).toBe(true);
+    expect(wide.requests() - before).toBe(1);
+    expect(got).toHaveLength(1);
+    expect(createHash("sha256").update(readFileSync(got[0]!.file)).digest("hex")).toBe(createHash("sha256").update(pdf).digest("hex"));
+  });
+
+  it("лимит вернули к 1 МБ: целиком 413 — и PDF сам уходит кусками, доходит байт в байт", async () => {
     const { dir, got, proxy } = await setup();
     const pdf = fakePdf(2_500_000);
-    // Как было: одним запросом — 413 от прокси.
-    const whole = await fetch(`http://127.0.0.1:${proxy.port}/slides`, { method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "X-Slides-Meta": meta }, body: pdf });
-    expect(whole.status).toBe(413);
-    // Как стало: записывалка режет на куски по 900 КиБ.
     const before = proxy.requests();
     expect(await uploadDeck({ url: `http://127.0.0.1:${proxy.port}/slides`, token: TOKEN, pdf, meta, retryDelayMs: 1 })).toBe(true);
-    expect(proxy.requests() - before).toBe(Math.ceil(pdf.length / PART_BYTES) + 1);
+    // Одна попытка целиком (413), затем куски и сборка.
+    expect(proxy.requests() - before).toBe(1 + Math.ceil(pdf.length / PART_BYTES) + 1);
+    expect(proxy.biggest()).toBe(pdf.length);
     expect(got).toHaveLength(1);
     expect(got[0]!.bytes).toBe(pdf.length);
     expect(createHash("sha256").update(readFileSync(got[0]!.file)).digest("hex")).toBe(createHash("sha256").update(pdf).digest("hex"));
