@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "no
 import path from "node:path";
 import { deckBaseName } from "./plan.js";
 import { PDFDocument } from "pdf-lib";
-import { fetch as undiciFetch } from "undici";
+import { uploadDeck } from "./upload.js";
 import { log } from "./log.js";
 
 export interface DeckMeta {
@@ -41,8 +41,8 @@ export async function buildPdf(files: string[], outFile: string, meta: DeckMeta)
 }
 
 /**
- * Отдаёт PDF боту. Тело — сам файл, всё остальное в заголовках: так не нужен
- * multipart и не растёт память на больших пачках.
+ * Отдаёт PDF боту: маленький — одним запросом, большой — кусками меньше 1 МБ
+ * (прокси перед ботом больше не пропускает), см. upload.ts.
  */
 export async function deliver(opts: { url: string; token: string; pdf: Buffer; meta: DeckMeta; slides: number }): Promise<boolean> {
   if (!opts.url || !opts.token) {
@@ -50,22 +50,14 @@ export async function deliver(opts: { url: string; token: string; pdf: Buffer; m
     return false;
   }
   try {
-    const res = await undiciFetch(opts.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/pdf",
-        Authorization: `Bearer ${opts.token}`,
-        "X-Slides-Meta": Buffer.from(JSON.stringify({ ...opts.meta, slides: opts.slides }), "utf8").toString("base64"),
-      },
-      body: opts.pdf,
-      signal: AbortSignal.timeout(120_000),
+    const ok = await uploadDeck({
+      url: opts.url,
+      token: opts.token,
+      pdf: opts.pdf,
+      meta: Buffer.from(JSON.stringify({ ...opts.meta, slides: opts.slides }), "utf8").toString("base64"),
     });
-    if (res.status >= 200 && res.status < 300) {
-      log.info({ status: res.status, slides: opts.slides }, "слайды отданы боту");
-      return true;
-    }
-    log.warn({ status: res.status, body: (await res.text()).slice(0, 200) }, "бот не принял слайды");
-    return false;
+    if (ok) log.info({ slides: opts.slides, bytes: opts.pdf.length }, "слайды отданы боту");
+    return ok;
   } catch (err) {
     log.warn({ err: String(err) }, "не получилось отдать слайды боту");
     return false;
