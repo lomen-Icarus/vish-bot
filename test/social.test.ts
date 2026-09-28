@@ -10,8 +10,8 @@ import { Repo, type WebinarRow } from "../src/db/repo.js";
 import { QaBase } from "../src/chat/qa.js";
 import { ChatService, type ChatClient } from "../src/chat/service.js";
 import { ABOUT_QUESTION, chatClock, groupChatHandlers, resetChatCooldowns, resetGroupChatState } from "../src/bot/handlers/groupChat.js";
-import { resetSlideSubState } from "../src/bot/social.js";
-import { featureReply, matchSubjects, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, SLEEPY_LINES, isNight } from "../src/chat/social.js";
+import { knownFirstName, resetSlideSubState } from "../src/bot/social.js";
+import { featureReply, matchSubjects, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, sameSubject, SLEEPY_LINES, isNight } from "../src/chat/social.js";
 import { fmtDuration, meetingVerdict } from "../src/chat/meeting.js";
 import { DEFAULT_QA, seedDefaultQa } from "../src/chat/importCanned.js";
 import { KnownPeople } from "../src/students/known.js";
@@ -123,6 +123,21 @@ describe("разбор реплик", () => {
     expect(parseSlidesRequest("какие слайды сюда приходят")).toEqual({ kind: "list" });
     expect(parseSlidesRequest("слайды классные")).toBeNull();
     expect(parseSlidesRequest("когда физика")).toBeNull();
+    // Разовая просьба — к модели, не подписка; «кинь» внутри «скинь» не считается.
+    expect(parseSlidesRequest("скинь слайды по физике с прошлой пары")).toBeNull();
+    expect(parseSlidesRequest("скинь сюда слайды по физике")).toBeNull();
+    expect(parseSlidesRequest("хочу посмотреть слайды по физике")).toBeNull();
+    expect(parseSlidesRequest("нужны слайды по матану?")).toBeNull();
+    expect(parseSlidesRequest("а есть ли слайды по физике")).toBeNull();
+    expect(parseSlidesRequest("скидывай сюда слайды по физике")).toMatchObject({ kind: "subscribe", subject: "физике" });
+    expect(parseSlidesRequest("подпиши эту тему на слайды по химии")).toMatchObject({ kind: "subscribe", subject: "химии" });
+  });
+
+  it("тот же ли предмет: «Физика» и «Физика (лекция)» — да, «Программирование» и «Практикум по программированию» — нет", () => {
+    expect(sameSubject("Физика", "Физика (лекция)")).toBe(true);
+    expect(sameSubject("ФИЗИКА ", "физика")).toBe(true);
+    expect(sameSubject("Программирование", "Практикум по программированию")).toBe(false);
+    expect(sameSubject("Физика", "Химия")).toBe(false);
   });
 
   it("предмет по разговорному названию", () => {
@@ -210,7 +225,7 @@ async function send(deps: Deps, update: Update, userId = 7, username?: string): 
 }
 
 let nextId = 1000;
-function msg(text: string, opts: { userId?: number; username?: string; mention?: boolean; replyTo?: number; thread?: number } = {}): Update {
+function msg(text: string, opts: { userId?: number; username?: string; mention?: boolean; replyTo?: number; thread?: number; forwarded?: boolean } = {}): Update {
   const full = opts.mention === false ? text : `@vish_bot ${text}`;
   const entities = [...full.matchAll(/@\w+/g)].map((m) => ({ type: "mention" as const, offset: m.index!, length: m[0].length }));
   return {
@@ -223,6 +238,7 @@ function msg(text: string, opts: { userId?: number; username?: string; mention?:
       text: full,
       ...(entities.length ? { entities } : {}),
       ...(opts.thread ? { is_topic_message: true, message_thread_id: opts.thread } : {}),
+      ...(opts.forwarded ? { forward_origin: { type: "hidden_user", sender_user_name: "Кто-то", date: 0 } } : {}),
       ...(opts.replyTo ? { reply_to_message: { message_id: opts.replyTo, date: 0, chat: { id: CHAT, type: "supergroup" as const, title: "x" }, from: { id: 1, is_bot: true, first_name: "vish" } } as never } : {}),
     },
   };
@@ -317,7 +333,8 @@ describe("группа: слайды в тему", () => {
     const docs: Array<{ chatId: number; thread?: number }> = [];
     const api = { sendDocument: async (chatId: number, _doc: unknown, other: { message_thread_id?: number }) => (docs.push({ chatId, thread: other.message_thread_id }), { document: { file_id: "F" } }) } as never;
     const deckId = repo.addSlideDeck({ date: today, subject: "Физика", teacher: null, title: null, groups: ["ВИШ-12-23"], slides: 2, file, bytes: 9 });
-    const sentCount = await new Notifier(api, repo, makeService(), null).sendSlideDeck({ deckId, date: today, subject: "ФИЗИКА ", teacher: null, title: null, groups: ["ВИШ-12-23"], slides: 2, file });
+    // Слайды подписаны по странице вебинаров, подписка — по названию из расписания: «Физика (лекция)» — та же физика.
+    const sentCount = await new Notifier(api, repo, makeService(), null).sendSlideDeck({ deckId, date: today, subject: "Физика (лекция)", teacher: null, title: null, groups: ["ВИШ-12-23"], slides: 2, file });
     expect(sentCount).toBe(1);
     expect(docs).toEqual([{ chatId: CHAT, thread: 42 }]);
 
@@ -356,10 +373,30 @@ describe("группа: слайды в тему", () => {
     expect(repo.slideSubs(CHAT)).toHaveLength(0);
   });
 
-  it("без предмета — подсказка; незнакомый предмет — честное «не нашёл»", async () => {
-    const { deps } = setup();
+  it("без предмета — подсказка; незнакомый предмет — честное «не нашёл»; названная группа без таких пар — не подписка на все", async () => {
+    const { deps, repo } = setup();
     expect(texts(await send(deps, msg("сюда слайды")))[0]).toMatch(/По какому предмету/);
     expect(texts(await send(deps, msg("сюда слайды по алхимии")))[0]).toMatch(/Не нашёл онлайн-пар/);
+    repo.replaceWebinars(addDays(today, 2), [webinar({ groups: ["ВИШ-12-23"] })]);
+    const strict = await send(deps, msg("кидай сюда слайды по физике для 14-23"));
+    expect(texts(strict)[0]).toBe("Не нашёл онлайн-пар по «физике» у ВИШ-14-23 🤔 Напиши название ближе к расписанию.");
+    expect(strict.find((s) => s.method === "sendMessage")!.payload.reply_markup).toBeUndefined();
+  });
+
+  it("группа стала супергруппой (новый id) — подписки старого id снимаются", async () => {
+    const { repo } = setup();
+    repo.addSlideSub({ chatId: CHAT, threadId: null, subject: "Физика", subjectNorm: "физика", groupKey: null, groupTitle: null, createdBy: 7 });
+    repo.addSlideSub({ chatId: CHAT, threadId: 5, subject: "Химия", subjectNorm: "химия", groupKey: null, groupTitle: null, createdBy: 7 });
+    const file = tmpFile("deck.pdf");
+    writeFileSync(file, Buffer.from("%PDF-1.4\n"));
+    const api = {
+      sendDocument: async () => {
+        throw new Error("Bad Request: group chat was upgraded to a supergroup chat");
+      },
+    } as never;
+    const deckId = repo.addSlideDeck({ date: today, subject: "Физика", teacher: null, title: null, groups: ["ВИШ-12-23"], slides: 1, file, bytes: 9 });
+    await new Notifier(api, repo, makeService(), null).sendSlideDeck({ deckId, date: today, subject: "Физика", teacher: null, title: null, groups: ["ВИШ-12-23"], slides: 1, file });
+    expect(repo.slideSubs(CHAT)).toHaveLength(0);
   });
 });
 
@@ -416,6 +453,32 @@ describe("группа: люди", () => {
     await send(withFile.deps, msg("привет ещё", { userId: 40, username: "masha" }), 40, "masha");
     expect(lastUserText(withFile.requests[1]!)).not.toContain("Мария");
     expect(requests.length).toBe(0);
+  });
+
+  it("пересланное знакомство не записывается; ник и упоминание без ника — один человек", async () => {
+    const { deps, repo, requests } = setup();
+    expect(await send(deps, msg("@kira это Петрова Кира 12-23", { mention: false, forwarded: true }))).toEqual([]);
+    expect(repo.intros()).toEqual([]);
+    // Петя писал боту: по нику известен и его id.
+    repo.touchUser(21, "petya", "P");
+    await send(deps, msg("@petya это Петров Пётр 12-23", { mention: false }));
+    expect(repo.introByUsername("petya")).toMatchObject({ userId: 21 });
+    const tm: Update = { update_id: nextId++, message: { message_id: nextId++, date: 0, chat: { id: CHAT, type: "supergroup", title: "Чат 12-23" }, from: { id: 8, is_bot: false, first_name: "Оля" }, text: "Петя это Петров Пётр 12-23", entities: [{ type: "text_mention", offset: 0, length: 4, user: { id: 21, is_bot: false, first_name: "Петя" } }] } };
+    expect(texts(await send(deps, tm, 8))).toEqual(["Да я уже знаю 🙂"]);
+    expect(repo.intros()).toHaveLength(1);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("«@бот это не я» стирает знакомство про себя; в личке знакомства из чатов не используются", async () => {
+    const { deps, repo } = setup();
+    await send(deps, msg("@kira это Петрова Кира 12-23", { mention: false }));
+    const kira = { id: 20, username: "kira" };
+    const user = repo.touchUser(20, "kira", "K");
+    expect(knownFirstName(deps, kira, user)).toBe("Кира");
+    expect(knownFirstName(deps, kira, user, { intros: false })).toBeNull();
+    expect(texts(await send(deps, msg("это не я", { userId: 20, username: "kira" }), 20, "kira"))).toEqual(["Ок, забыл 🙂"]);
+    expect(repo.introByUsername("kira")).toBeNull();
+    expect(texts(await send(deps, msg("не я!", { userId: 20, username: "kira" }), 20, "kira"))).toEqual(["А я тебя и не записывал 🙂"]);
   });
 
   it("/soon стирает знакомство о человеке", () => {

@@ -1263,10 +1263,6 @@ export class Repo {
     return rows.map(rowToSlideSub);
   }
 
-  slideSubsForSubject(subjectNorm: string): SlideSub[] {
-    return (this.db.prepare("SELECT * FROM chat_slide_subs WHERE subject_norm = ?").all(subjectNorm) as SlideSubRow[]).map(rowToSlideSub);
-  }
-
   /** Снять подписки темы (все или на один предмет); threadId undefined — во всём чате. */
   removeSlideSubs(chatId: number, threadId?: number | null, subjectNorm?: string): number {
     const where = ["chat_id = ?"];
