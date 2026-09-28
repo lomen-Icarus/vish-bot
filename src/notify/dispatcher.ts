@@ -16,7 +16,7 @@ import { parseRefKey } from "../people/ref.js";
 import { webinarRowsToLessons } from "../people/profile.js";
 import { readFileSync } from "node:fs";
 import { isUnreachable } from "../bot/errors.js";
-import { subjectKey } from "../chat/social.js";
+import { sameSubject } from "../chat/social.js";
 
 /** За сколько минут до первой пары преподавателя писать подписчикам. */
 const TEACHER_LEAD_MIN = 120;
@@ -68,11 +68,13 @@ export class Notifier {
   async sendSlideDeck(deck: { deckId: number; date: string; subject: string; teacher: string | null; title: string | null; groups: string[]; slides: number; file: string }, now: WallClock = wallClock()): Promise<number> {
     const keys = new Set(deck.groups.map((g) => logicalKeyFor(g)));
     const users = this.repo.listUsers({ onlyActive: true }).filter((u) => u.wantSlides && u.groupKey && keys.has(u.groupKey));
-    // Подписки чатов: тот же предмет и либо любая группа, либо одна из групп пары.
+    // Подписки чатов: тот же предмет (с поправкой на «Физика» / «Физика лекция»:
+    // подписку могли сделать по названию из расписания, а слайды подписаны по
+    // странице вебинаров) и либо любая группа, либо одна из групп пары.
     const seen = new Set<string>();
-    const chats = this.repo.slideSubsForSubject(subjectKey(deck.subject)).filter((s) => {
+    const chats = this.repo.slideSubs().filter((s) => {
       const key = `${s.chatId}|${s.threadId ?? 0}`;
-      if ((s.groupKey && !keys.has(s.groupKey)) || seen.has(key)) return false;
+      if (!sameSubject(s.subject, deck.subject) || (s.groupKey && !keys.has(s.groupKey)) || seen.has(key)) return false;
       seen.add(key);
       return true;
     });
@@ -121,9 +123,10 @@ export class Notifier {
         const text = err instanceof GrammyError ? err.description : String(err);
         logger.warn({ err: text.slice(0, 200), chat: sub.chatId, thread: sub.threadId }, "слайды в чат не ушли");
         // Тему удалили — подписка этой темы больше не нужна (закрытую тему
-        // могут открыть снова — её не трогаем); бота выгнали — все подписки чата.
+        // могут открыть снова — её не трогаем); бота выгнали или группа стала
+        // супергруппой с новым id — все подписки чата: старого id больше нет.
         if (/thread not found|topic_deleted/i.test(text)) this.repo.removeSlideSubs(sub.chatId, sub.threadId);
-        else if (isUnreachable(err)) this.repo.removeSlideSubs(sub.chatId);
+        else if (isUnreachable(err) || /upgraded to a supergroup/i.test(text)) this.repo.removeSlideSubs(sub.chatId);
       }
     }
     for (const user of users) {

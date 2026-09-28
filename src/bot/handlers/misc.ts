@@ -21,12 +21,12 @@ import { logger } from "../../logger.js";
 export const miscHandlers = new Composer<BotContext>();
 
 /**
- * Имя человека, если бот его узнаёт: по телеграм-нику из файла старост или
- * по знакомству в групповом чате. «Усиленная анонимность» в настройках
- * выключает узнавание целиком.
+ * Имя человека, если бот его узнаёт: по телеграм-нику из файла старост.
+ * Знакомства из чатов («@ник это …») в личке не используются: их писал
+ * кто-то другой. «Усиленная анонимность» выключает узнавание целиком.
  */
 function knownName(ctx: BotContext): string | null {
-  return knownFirstName(ctx.deps, ctx.from ?? { id: ctx.user.id }, ctx.user);
+  return knownFirstName(ctx.deps, ctx.from ?? { id: ctx.user.id }, ctx.user, { intros: false });
 }
 
 /**
