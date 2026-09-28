@@ -76,8 +76,10 @@ jobs:
           tar -C recorder --exclude=./node_modules --exclude=./dist --exclude=./data --exclude=./.env -czf recorder-src.tar.gz .
           scp "${opts[@]}" -P "$port" recorder-src.tar.gz recorder/deploy/vps-update.sh "$user@$SSH_HOST:/tmp/"
           ssh "${opts[@]}" -p "$port" "$user@$SSH_HOST" "bash /tmp/vps-update.sh /tmp/recorder-src.tar.gz"
+      # Путь через панель — только если записывалка не на VPS: оставшийся
+      # PTERO_RECORDER_SERVER_ID не должен делать деплой VPS красным.
       - name: Build recorder
-        if: env.SERVER_ID != ''
+        if: env.SERVER_ID != '' && env.SSH_HOST == ''
         working-directory: recorder
         run: |
           npm install --no-audit --no-fund
@@ -88,10 +90,15 @@ jobs:
           printf 'omit=dev\naudit=false\nfund=false\n' > release/.npmrc
           tar -C release -czf ../recorder.tar.gz .
       - name: Upload recorder to the panel
-        if: env.SERVER_ID != ''
+        if: env.SERVER_ID != '' && env.SSH_HOST == ''
         run: |
           set -euo pipefail
           api() { curl -sS --fail-with-body -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$@"; }
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID" || true)
+          if [ "$status" = "404" ]; then
+            echo "::error::Сервера PTERO_RECORDER_SERVER_ID нет в панели Pterodactyl (404). Если записывалка на обычном VPS — удали секрет PTERO_RECORDER_SERVER_ID и задай RECORDER_SSH_HOST и RECORDER_SSH_KEY (docs/DEPLOY.md, «Вариант А»)."
+            exit 1
+          fi
           upload_url=$(api "$PANEL_URL/api/client/servers/$SERVER_ID/files/upload" | python3 -c 'import json,sys; print(json.load(sys.stdin)["attributes"]["url"])')
           curl -sS --fail-with-body -F "files=@recorder.tar.gz" "$upload_url&directory=%2F"
           api -X POST -H "Content-Type: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID/files/decompress" -d '{"root":"/","file":"recorder.tar.gz"}'
