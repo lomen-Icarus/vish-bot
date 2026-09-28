@@ -84,11 +84,11 @@
 4. Запустить Actions → «CI & Deploy» → Run workflow (или дождаться следующего мёржа). Шаг «Deploy recorder to the VPS» покажет последние строки лога записывалки; упавший контейнер делает шаг красным.
 5. Руками на VPS: `docker logs -f vish-recorder` — лог, `docker restart vish-recorder` — перезапуск (после правки `.env`), слайды и кадры — в `/opt/vish-recorder/data`.
 
-**Вариант Б — сервер в панели Pterodactyl.** Секрет `PTERO_RECORDER_SERVER_ID` — id сервера в панели; `.env` положить в его файлы; браузер — Docker-egg с образом из `recorder/Dockerfile` (или `npx playwright install chromium --with-deps` в Node-egg). Id обычного VPS сюда не подходит: выкладка идёт через API панели.
+**Вариант Б — сервер в панели Pterodactyl.** Секрет `PTERO_RECORDER_SERVER_ID` — id сервера в панели; `.env` положить в его файлы; браузер — Docker-egg с образом из `recorder/Dockerfile` (или `npx playwright install chromium --with-deps` в Node-egg). Id обычного VPS сюда не подходит: выкладка идёт через API панели (с id VPS шаг падает с 404 и подсказкой). Если заданы секреты `RECORDER_SSH_*`, путь через панель не запускается.
 
 Общее для обоих:
 - В `.env` записывалки: учётка для входа в комнату, `BOT_SLIDES_URL=https://<домен бота>/slides`, тот же `SLIDES_TOKEN`, что у бота (у бота он тоже должен быть задан, ≥ 16 символов).
-- Прокси перед ботом (nginx) должен пропускать загрузки до 50 МБ (`client_max_body_size 50m;`), иначе PDF упрётся в 413.
+- Большой PDF записывалка шлёт кусками по 900 КиБ (`/slides/part`, потом `/slides/complete` с контрольной суммой), так что лимит прокси перед ботом (у nginx по умолчанию 1 МБ) трогать не нужно.
 - Проверить разведкой во время живого вебинара: на VPS — `docker exec -it vish-recorder node dist/probe.js`, затем `docker exec -it vish-recorder node dist/probe.js join`.
 - `MAX_PARALLEL` (по умолчанию `1`) — сколько пар записывать одновременно. Каждая запись — отдельный Chromium (пустой ≈ 0,4 ГБ, в комнате BBB больше): на одну запись нужно ≥ 1,5 ГБ памяти, на две — от 2,5–3 ГБ. У ВИШ одновременно идёт не больше одной онлайн-пары, так что `1` хватает.
 
