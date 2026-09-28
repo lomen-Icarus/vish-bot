@@ -25,7 +25,7 @@ import { todayMsk, wallClock, type WallClock } from "../../time.js";
 import { logger } from "../../logger.js";
 import type { ChatTool } from "../../chat/service.js";
 import { featureReply, isNight, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, SLEEPY_IDLE_MS, sleepyLine } from "../../chat/social.js";
-import { confirmSlideSub, handleIntro, handleSlidesRequest, introGroup, knownFirstName } from "../social.js";
+import { confirmSlideSub, forgetIntro, handleIntro, handleSlidesRequest, introGroup, knownFirstName } from "../social.js";
 
 export const groupChatHandlers = new Composer<BotContext>();
 
@@ -109,6 +109,9 @@ async function mayDescribeChat(ctx: BotContext): Promise<boolean> {
 
 /** Часы и случай — отдельно, чтобы тесты не зависели от того, ночь ли сейчас. */
 export const chatClock: { now: () => WallClock; random: (n: number) => number } = { now: () => wallClock(), random: (n) => randomInt(n) };
+
+/** «Это не я», «не зови меня так» — стереть знакомство про себя. */
+const NOT_ME = /^(?:(?:это|нет,?)\s+)?не\s+я(?:[\s.!)]|$)|^не\s+зови\s+меня|^забудь\s+(?:меня|моё\s+имя|мое\s+имя)/iu;
 
 /** Сколько идей в сутки от одного человека доходит до админов; остальные только пишутся в базу. */
 const IDEAS_NOTIFY_PER_DAY = 5;
@@ -233,8 +236,9 @@ groupChatHandlers.on("message", async (ctx, next) => {
     // Переписку бот запоминает только там, где ему разрешено болтать.
     if (enabled && raw && !isCommand) {
       service.memory.push(chatId, { at: Date.now(), userId: ctx.from.id, name: speakerName(msg), text: raw });
-      // «@ник это Фамилия Имя 12-23» — знакомят и без обращения к боту.
-      const intro = parseIntro(raw, msg.entities ?? msg.caption_entities ?? [], me.username, me.id, ctx.from, false);
+      // «@ник это Фамилия Имя 12-23» — знакомят и без обращения к боту. Но не
+      // пересылкой: её писали не здесь и не боту.
+      const intro = msg.forward_origin ? null : parseIntro(raw, msg.entities ?? msg.caption_entities ?? [], me.username, me.id, ctx.from, false);
       const answer = intro && Date.now() - (lastReplyAt.get(chatId) ?? 0) >= CHAT_COOLDOWN_MS ? handleIntro(deps, intro, ctx.from, chatId, false) : null;
       if (answer) {
         lastReplyAt.set(chatId, Date.now());
@@ -382,6 +386,8 @@ async function quickReply(ctx: BotContext, raw: string, text: string, group: Ret
   }
   const slides = parseSlidesRequest(text);
   if (slides) return handleSlidesRequest(ctx, slides, group);
+  // «@бот это не я» — человек не хочет, чтобы его знали по чужому знакомству.
+  if (NOT_ME.test(text)) return { text: forgetIntro(deps, ctx.from!) ? "Ок, забыл 🙂" : "А я тебя и не записывал 🙂" };
   const intro = parseIntro(raw, msg.entities ?? msg.caption_entities ?? [], ctx.me.username, ctx.me.id, ctx.from!, true);
   const introAnswer = intro ? handleIntro(deps, intro, ctx.from!, chatId, true) : null;
   if (introAnswer) return { text: introAnswer };
@@ -407,11 +413,14 @@ function ideaTool(ctx: BotContext, chatTitle: string | null): ChatTool {
       deps.repo.addIdea(chatId, from.id, idea);
       if (perDay < IDEAS_NOTIFY_PER_DAY) {
         const who = from.username ? `@${from.username}` : from.first_name;
-        for (const adminId of deps.config.ADMIN_IDS) {
-          await ctx.api
-            .sendMessage(adminId, `💡 <b>Идея для бота</b> из чата «${esc(chatTitle ?? String(chatId))}» от ${esc(who)}:\n${esc(idea)}\n\nВсе идеи: /ideas`, { parse_mode: "HTML" })
-            .catch((err: unknown) => logger.debug({ err: String(err), adminId }, "idea notice failed"));
-        }
+        // Админам — в фоне: ответ в чате не должен ждать доставки в личку.
+        void (async () => {
+          for (const adminId of deps.config.ADMIN_IDS) {
+            await ctx.api
+              .sendMessage(adminId, `💡 <b>Идея для бота</b> из чата «${esc(chatTitle ?? String(chatId))}» от ${esc(who)}:\n${esc(idea)}\n\nВсе идеи: /ideas`, { parse_mode: "HTML" })
+              .catch((err: unknown) => logger.debug({ err: String(err), adminId }, "idea notice failed"));
+          }
+        })();
       }
       return `Записал. Ответь ровно: «${featureReply(deps.config.OWNER_USERNAME ?? null)}»`;
     },
