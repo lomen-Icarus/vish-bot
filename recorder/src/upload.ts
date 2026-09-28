@@ -1,8 +1,11 @@
 /**
- * Отправка PDF боту. Прокси перед ботом (nginx хостинга) режет тело запроса
- * больше 1 МБ, поэтому большой PDF уходит кусками по 900 КиБ: каждый кусок —
- * POST <адрес>/part, потом POST <адрес>/complete с контрольной суммой, и бот
- * собирает файл. Маленький PDF — одним запросом, как раньше.
+ * Отправка PDF боту. Сначала — целиком, одним запросом: лимит nginx хостинга
+ * перед ботом подняли до 50 МБ, а бот принимает до 40 МБ. Если прокси всё же
+ * ответит 413 (лимит вернули к 1 МБ по умолчанию, домен переехал), PDF сам
+ * уходит кусками по 900 КиБ: каждый — POST <адрес>/part, потом
+ * POST <адрес>/complete с контрольной суммой, и бот собирает файл.
+ * Куски по 5–20 МБ не нужны: при большом лимите хватает одного запроса, а при
+ * маленьком их отбьют так же, как целый файл.
  * Отдельный модуль (без pdf-lib), чтобы его можно было проверить тестом.
  */
 import { createHash, randomBytes } from "node:crypto";
@@ -52,12 +55,14 @@ export async function uploadDeck(opts: UploadOptions): Promise<boolean> {
   const delay = opts.retryDelayMs ?? 2000;
   const base = opts.url.replace(/\/+$/, "");
   const auth = { Authorization: `Bearer ${opts.token}` };
-  if (opts.pdf.length <= partBytes) {
-    const r = await postWithRetry(base, { ...auth, "Content-Type": "application/pdf", "X-Slides-Meta": opts.meta }, opts.pdf, delay);
-    if (r.status >= 200 && r.status < 300) return true;
-    log.warn({ status: r.status, body: r.text }, "бот не принял слайды");
+  const whole = await postWithRetry(base, { ...auth, "Content-Type": "application/pdf", "X-Slides-Meta": opts.meta }, opts.pdf, delay);
+  if (whole.status >= 200 && whole.status < 300) return true;
+  // 413 на маленьком PDF кусками не лечится; на большом — это лимит прокси.
+  if (whole.status !== 413 || opts.pdf.length <= partBytes) {
+    log.warn({ status: whole.status, body: whole.text }, "бот не принял слайды");
     return false;
   }
+  log.info({ bytes: opts.pdf.length }, "прокси не пропустил PDF целиком (413) — отправляю кусками");
   const id = randomBytes(16).toString("hex");
   const count = Math.ceil(opts.pdf.length / partBytes);
   for (let i = 0; i < count; i++) {
