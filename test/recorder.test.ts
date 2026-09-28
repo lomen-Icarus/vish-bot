@@ -4,6 +4,8 @@ import path from "node:path";
 import { looksLikeLoginPage, parseWebinarRows } from "../recorder/src/portal.js";
 import { deckBaseName, keyOf, mskNow, planRecording, wanted, type RecordState } from "../recorder/src/plan.js";
 import { envNumber } from "../recorder/src/config.js";
+import { PORTAL_CA_CERTS as RECORDER_CA } from "../recorder/src/certs.js";
+import { PORTAL_CA_CERTS as BOT_CA } from "../src/portal/certs.js";
 import type { WebinarRow } from "../recorder/src/portal.js";
 
 const html = readFileSync(path.resolve("test/fixtures/webinar-fac32.html"), "utf8");
@@ -114,5 +116,13 @@ describe("записывалка вебинаров: планировщик", ()
     expect(envNumber("abc", 5)).toBe(5);
     expect(envNumber("0", 5)).toBe(0);
     expect(envNumber("12", 5)).toBe(12);
+  });
+});
+
+describe("записывалка вебинаров: сертификаты портала", () => {
+  it("те же закреплённые сертификаты, что у бота: портал отдаёт неполную цепочку", () => {
+    // Без них записывалка не могла даже войти гостем («unable to verify the first certificate»).
+    expect(RECORDER_CA).toEqual(BOT_CA);
+    expect(RECORDER_CA.length).toBeGreaterThan(0);
   });
 });

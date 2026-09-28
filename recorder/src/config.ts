@@ -58,8 +58,9 @@ export interface RecorderConfig {
   /** Сколько минут максимум сидеть на одном вебинаре. */
   maxMinutes: number;
   /**
-   * Сколько вебинаров записывать одновременно. Параллельные пары разных групп
-   * — обычное дело; каждая запись — отдельный Chromium со своей памятью.
+   * Сколько вебинаров записывать одновременно. Каждая запись — отдельный
+   * Chromium со своей памятью. По умолчанию 1: у ВИШ онлайн-пар одновременно
+   * не бывает больше одной (поток на 5–7 групп — это одна пара).
    */
   maxParallel: number;
   /** Куда отдавать готовую пачку слайдов: <PUBLIC_URL бота>/slides */
@@ -87,7 +88,7 @@ export function loadConfig(): RecorderConfig {
     pollSeconds: num("POLL_SECONDS", 30),
     captureSeconds: Math.max(1, num("CAPTURE_SECONDS", 5)),
     maxMinutes: Math.max(5, num("MAX_MINUTES", 110)),
-    maxParallel: Math.max(1, Math.floor(num("MAX_PARALLEL", 2))),
+    maxParallel: Math.max(1, Math.floor(num("MAX_PARALLEL", 1))),
     botUrl: str("BOT_SLIDES_URL"),
     botToken: str("SLIDES_TOKEN"),
     outDir: str("OUT_DIR", "./data/slides"),
