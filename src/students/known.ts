@@ -41,7 +41,7 @@ export type KnownStatus =
   | "ambiguous";
 
 /** «Фамилия Имя Отчество» → «Имя». Одно слово — им и обращаемся. */
-function firstNameOf(fio: string): string {
+export function firstNameOf(fio: string): string {
   const parts = fio.split(/\s+/).filter(Boolean);
   return parts[1] ?? parts[0] ?? fio;
 }
@@ -152,6 +152,22 @@ export class KnownPeople {
     }
     if (!found) return "no-handle";
     return botUsernames.has(found) ? "uses" : "not-seen";
+  }
+
+  /**
+   * Есть ли в файле этот человек под другим ником (или без ника вовсе не
+   * бывает — в файле все с ником). Для знакомств в чатах: «@ник это ФИО» не
+   * должно перезаписать человека, которого бот уже знает. Ник наружу не идёт.
+   */
+  nameTakenByOther(fio: string, username: string | null): boolean {
+    this.reloadIfChanged();
+    const want = nameWords(fio);
+    if (want.length < 2) return false;
+    const mine = normalizeHandle(username);
+    for (const [handle, person] of this.byHandle) {
+      if (handle !== mine && samePersonWords(want, person.words)) return true;
+    }
+    return false;
   }
 
   count(): number {
