@@ -210,3 +210,34 @@ describe("ревью всего проекта: начало семестра", 
     expect(repo.occurrences(key, today, addDays(today, 14)).length).toBe(lessons.length);
   });
 });
+
+describe("загрузка .env: пустая строка из образца не прячет настоящее значение", () => {
+  it("бот: пустое SLIDES_TOKEN= сверху и токен в конце — берётся токен", async () => {
+    const { parseDotEnv } = await import("../src/config.js");
+    const env = parseDotEnv("BOT_TOKEN=x\nSLIDES_TOKEN=\nSLIDES_DIR=./data/slides\r\n# дописал в конец\nSLIDES_TOKEN=abcdef0123456789abcdef\n");
+    expect(env.get("SLIDES_TOKEN")).toBe("abcdef0123456789abcdef");
+    // Последняя заполненная строка главнее, пустая заполненную не перебивает.
+    expect(parseDotEnv("A=1\nA=2").get("A")).toBe("2");
+    expect(parseDotEnv("A=1\nA=").get("A")).toBe("1");
+    expect(parseDotEnv('A="в кавычках"').get("A")).toBe("в кавычках");
+  });
+
+  it("бот: пустая переменная окружения (панель) не глушит значение из файла, заполненная — главнее", async () => {
+    const { loadDotEnv } = await import("../src/config.js");
+    const dir = mkdtempSync(path.join(tmpdir(), "env-"));
+    const file = path.join(dir, ".env");
+    writeFileSync(file, "RV_TEST_EMPTY=из файла\nRV_TEST_SET=из файла\n", "utf8");
+    process.env.RV_TEST_EMPTY = "";
+    process.env.RV_TEST_SET = "из окружения";
+    loadDotEnv(file);
+    expect(process.env.RV_TEST_EMPTY).toBe("из файла");
+    expect(process.env.RV_TEST_SET).toBe("из окружения");
+    delete process.env.RV_TEST_EMPTY;
+    delete process.env.RV_TEST_SET;
+  });
+
+  it("записывалка читает .env по тем же правилам", async () => {
+    const { parseDotEnv } = await import("../recorder/src/config.js");
+    expect(parseDotEnv("SLIDES_TOKEN=\nWEBINAR_AUTH=1\nSLIDES_TOKEN=abcdef0123456789abcdef").get("SLIDES_TOKEN")).toBe("abcdef0123456789abcdef");
+  });
+});

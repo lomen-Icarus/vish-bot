@@ -3,10 +3,17 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { logLevel } from "./logger.js";
 
-/** Minimal .env loader (no dependency): KEY=VALUE lines, # comments, no interpolation. */
-export function loadDotEnv(file = path.resolve(process.cwd(), ".env")): void {
-  if (!existsSync(file)) return;
-  for (const raw of readFileSync(file, "utf8").split(/\r?\n/)) {
+/**
+ * Minimal .env loader (no dependency): KEY=VALUE lines, # comments, no interpolation.
+ *
+ * Повтор ключа в файле: действует последняя строка, но пустая заполненную не
+ * перебивает. Иначе пустое «SLIDES_TOKEN=» из образца .env.example сверху
+ * прятало настоящий токен, дописанный в конец. Переменная окружения главнее
+ * файла, если она не пустая (пустая переменная в панели — это «не задано»).
+ */
+export function parseDotEnv(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const eq = line.indexOf("=");
@@ -16,7 +23,15 @@ export function loadDotEnv(file = path.resolve(process.cwd(), ".env")): void {
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
-    if (process.env[key] === undefined) process.env[key] = value;
+    if (value !== "" || !out.get(key)) out.set(key, value);
+  }
+  return out;
+}
+
+export function loadDotEnv(file = path.resolve(process.cwd(), ".env")): void {
+  if (!existsSync(file)) return;
+  for (const [key, value] of parseDotEnv(readFileSync(file, "utf8"))) {
+    if (process.env[key] === undefined || (process.env[key] === "" && value !== "")) process.env[key] = value;
   }
 }
 

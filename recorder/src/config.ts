@@ -5,9 +5,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-export function loadDotEnv(file = path.resolve(process.cwd(), ".env")): void {
-  if (!existsSync(file)) return;
-  for (const raw of readFileSync(file, "utf8").split(/\r?\n/)) {
+/**
+ * .env: повтор ключа — действует последняя строка, но пустая заполненную не
+ * перебивает (пустое «SLIDES_TOKEN=» из образца сверху иначе прятало
+ * настоящее значение, дописанное в конец). Окружение главнее, если не пустое.
+ */
+export function parseDotEnv(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const eq = line.indexOf("=");
@@ -15,7 +20,15 @@ export function loadDotEnv(file = path.resolve(process.cwd(), ".env")): void {
     const key = line.slice(0, eq).trim();
     let value = line.slice(eq + 1).trim();
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1);
-    if (process.env[key] === undefined) process.env[key] = value;
+    if (value !== "" || !out.get(key)) out.set(key, value);
+  }
+  return out;
+}
+
+export function loadDotEnv(file = path.resolve(process.cwd(), ".env")): void {
+  if (!existsSync(file)) return;
+  for (const [key, value] of parseDotEnv(readFileSync(file, "utf8"))) {
+    if (process.env[key] === undefined || (process.env[key] === "" && value !== "")) process.env[key] = value;
   }
 }
 
