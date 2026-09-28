@@ -8,15 +8,24 @@
  * /chatoff прямо в чате.
  * Лимиты на день — там же. Всё остальное в группах работает как раньше:
  * команды получают подсказку «пиши в личку», inline — как был.
+ *
+ * «Социальность» (src/bot/social.ts, src/chat/social.ts): войдя в чат, бот
+ * спрашивает «а что это за группа?» и запоминает ответ; знакомится
+ * («@ник это Фамилия Имя 12-23»); подписывает тему чата на слайды вебинаров;
+ * ночью, если его долго не трогали, сначала сонно ворчит.
  */
-import { Composer, InlineKeyboard } from "grammy";
+import { Composer, InlineKeyboard, type Api } from "grammy";
 import type { Message, UserFromGetMe } from "grammy/types";
+import { randomInt } from "node:crypto";
 import type { BotContext, Deps } from "../context.js";
 import { chatAllowance, type ChatVerdict } from "../../chat/limits.js";
 import { featuresText, needGroup } from "../views.js";
 import { esc } from "../../schedule/format.js";
-import { todayMsk, wallClock } from "../../time.js";
+import { todayMsk, wallClock, type WallClock } from "../../time.js";
 import { logger } from "../../logger.js";
+import type { ChatTool } from "../../chat/service.js";
+import { featureReply, isNight, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, SLEEPY_IDLE_MS, sleepyLine } from "../../chat/social.js";
+import { confirmSlideSub, handleIntro, handleSlidesRequest, introGroup, knownFirstName } from "../social.js";
 
 export const groupChatHandlers = new Composer<BotContext>();
 
@@ -63,8 +72,51 @@ function speakerName(msg: Message): string {
 /** Пауза между ответами в одном чате: чтобы бота не раскачали в пинг-понг. */
 export const CHAT_COOLDOWN_MS = 3000;
 
+/** Первое, что бот пишет в новом чате; ответ на это сообщение — описание чата. */
+export const ABOUT_QUESTION = "Привет, а что это за группа?";
+const aboutAskKey = (chatId: number): string => `chat:about-ask:${chatId}`;
+const aboutKey = (chatId: number): string => `chat:about:${chatId}`;
+const adderKey = (chatId: number): string => `chat:adder:${chatId}`;
+/** Длиннее описание чата не бывает: это уже простыня в каждом запросе к модели. */
+const ABOUT_MAX = 1500;
+
+/** Что это за чат — со слов участников; null — ещё не рассказали. */
+export function chatAbout(deps: Deps, chatId: number): string | null {
+  return deps.repo.getMeta(aboutKey(chatId)) || null;
+}
+
+/** Спросить в чате «а что это за группа?» и запомнить, на какое сообщение ждать ответ. */
+export async function askAboutChat(api: Api, deps: Deps, chatId: number): Promise<void> {
+  const sent = await api.sendMessage(chatId, ABOUT_QUESTION).catch((err: unknown) => {
+    logger.debug({ err: String(err), chat: chatId }, "group chat: about question failed");
+    return null;
+  });
+  if (sent) deps.repo.setMeta(aboutAskKey(chatId), String(sent.message_id));
+}
+
+/** Рассказать боту о чате может его админ, админ чата или тот, кто бота добавил. */
+async function mayDescribeChat(ctx: BotContext): Promise<boolean> {
+  const from = ctx.from;
+  if (!from || !ctx.chat) return false;
+  if (ctx.isAdmin || ctx.deps.repo.getMeta(adderKey(ctx.chat.id)) === String(from.id)) return true;
+  try {
+    const m = await ctx.getChatMember(from.id);
+    return m.status === "creator" || m.status === "administrator";
+  } catch {
+    return false;
+  }
+}
+
+/** Часы и случай — отдельно, чтобы тесты не зависели от того, ночь ли сейчас. */
+export const chatClock: { now: () => WallClock; random: (n: number) => number } = { now: () => wallClock(), random: (n) => randomInt(n) };
+
+/** Сколько идей в сутки от одного человека доходит до админов; остальные только пишутся в базу. */
+const IDEAS_NOTIFY_PER_DAY = 5;
+
 // ---- состояние процесса ----
 const lastReplyAt = new Map<number, number>();
+/** Когда к боту в чате последний раз обращались: для «разбудили ночью». */
+const lastTouchAt = new Map<number, number>();
 /** Кому бот отвечает прямо сейчас: второй вопрос того же человека ждёт, а не идёт параллельно. */
 const busy = new Set<number>();
 const inFlightByChat = new Map<number, number>();
@@ -84,6 +136,7 @@ export function resetChatCooldowns(): void {
 /** Для тестов: сбросить память процесса. */
 export function resetGroupChatState(): void {
   lastReplyAt.clear();
+  lastTouchAt.clear();
   busy.clear();
   inFlightByChat.clear();
   inFlightGlobal = 0;
@@ -110,6 +163,17 @@ groupChatHandlers.chatType(["group", "supergroup"]).command(["chaton", "chatoff"
   await ctx.reply(`Привет! Теперь я здесь отвечаю, если меня позвать: «@${ctx.me.username} …» или ответом на моё сообщение.`);
 });
 
+// Переспросить «а что это за группа?» — админ бота или админ чата.
+groupChatHandlers.chatType(["group", "supergroup"]).command("chatabout", async (ctx) => {
+  if (!ctx.deps.chat || !chatEnabled(ctx.deps, ctx.chat.id) || !(await mayDescribeChat(ctx))) return;
+  await askAboutChat(ctx.api, ctx.deps, ctx.chat.id);
+});
+
+// Кнопка под вопросом «Ты хочешь получать слайды …?».
+groupChatHandlers.callbackQuery(/^css:([0-9a-f]{8}):(\d|n)$/, async (ctx) => {
+  await confirmSlideSub(ctx, ctx.match[1]!, ctx.match[2]!);
+});
+
 // Бота добавили в группу или удалили из неё.
 groupChatHandlers.on("my_chat_member", async (ctx, next) => {
   const chat = ctx.chat;
@@ -134,10 +198,11 @@ groupChatHandlers.on("my_chat_member", async (ctx, next) => {
   else deps.repo.upsertChatGroup(chat.id, { title, present: true, enabled });
   logger.info({ chat: chat.id, enabled, byAdmin }, "group chat: bot added");
   if (wasPresent) return;
+  // Кто добавил — тот может рассказать, что это за чат.
+  deps.repo.setMeta(adderKey(chat.id), String(ctx.from.id));
   if (enabled || chatEnabled(deps, chat.id)) {
     if (!deps.chat) return;
-    const me = ctx.me;
-    await ctx.reply(`Привет! Зовите: «@${me.username} …» или отвечайте на мои сообщения — поболтаю, подскажу про пары и преподавателей.`).catch(() => undefined);
+    await askAboutChat(ctx.api, deps, chat.id);
     return;
   }
   // Добавил кто-то другой: бот молчит, а админам приходит вопрос с кнопкой.
@@ -166,7 +231,18 @@ groupChatHandlers.on("message", async (ctx, next) => {
 
   if (!addressed) {
     // Переписку бот запоминает только там, где ему разрешено болтать.
-    if (enabled && raw && !isCommand) service.memory.push(chatId, { at: Date.now(), userId: ctx.from.id, name: speakerName(msg), text: raw });
+    if (enabled && raw && !isCommand) {
+      service.memory.push(chatId, { at: Date.now(), userId: ctx.from.id, name: speakerName(msg), text: raw });
+      // «@ник это Фамилия Имя 12-23» — знакомят и без обращения к боту.
+      const intro = parseIntro(raw, msg.entities ?? msg.caption_entities ?? [], me.username, me.id, ctx.from, false);
+      const answer = intro && Date.now() - (lastReplyAt.get(chatId) ?? 0) >= CHAT_COOLDOWN_MS ? handleIntro(deps, intro, ctx.from, chatId, false) : null;
+      if (answer) {
+        lastReplyAt.set(chatId, Date.now());
+        await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } }).catch(() => undefined);
+        service.memory.push(chatId, { at: Date.now(), userId: null, name: me.first_name, text: answer, toUserId: ctx.from.id });
+        return;
+      }
+    }
     return next();
   }
 
@@ -193,6 +269,9 @@ groupChatHandlers.on("message", async (ctx, next) => {
   const userId = ctx.from.id;
   const speaker = speakerName(msg);
   const text = stripMention(raw, me.username);
+  // «Не трогали 30+ минут» считается от прошлого обращения, а после перезапуска — по журналу.
+  const idleSince = lastTouchAt.get(chatId) ?? deps.repo.lastChatAt(chatId) ?? 0;
+  lastTouchAt.set(chatId, Date.now());
   // Контекст — до того, как текущая реплика попадёт в память.
   const transcript = service.memory.recent(chatId);
   // Бот ещё отвечает этому человеку на прошлое — новую реплику не отвечаем, но
@@ -204,6 +283,19 @@ groupChatHandlers.on("message", async (ctx, next) => {
   }
   service.memory.push(chatId, { at: Date.now(), userId, name: speaker, text: text || raw, addressed: true });
   if (Date.now() - (lastReplyAt.get(chatId) ?? 0) < CHAT_COOLDOWN_MS) return;
+  // Своя группа человека — если он пользуется ботом в личке или его представили в чате.
+  const group = needGroup(ctx) ?? introGroup(deps, ctx.from, ctx.user);
+
+  // Ответы без модели: описание чата, слайды в тему, знакомство. Лимиты ИИ они не тратят.
+  const quick = await quickReply(ctx, raw, text, group);
+  if (quick) {
+    lastReplyAt.set(chatId, Date.now());
+    await ctx.reply(quick.text, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(quick.kb ? { reply_markup: quick.kb } : {}) }).catch((err: unknown) => logger.warn({ err: String(err).slice(0, 200), chat: chatId }, "group chat: quick reply failed"));
+    deps.repo.logChat(chatId, userId, text || raw, quick.text);
+    service.memory.push(chatId, { at: Date.now(), userId: null, name: me.first_name, text: quick.text, toUserId: userId });
+    return;
+  }
+
   const day = todayMsk();
   const { verdict } = chatAllowance(deps.repo, deps.config, { userId, chatId, isAdmin: ctx.isAdmin }, day, { chat: inFlightByChat.get(chatId) ?? 0, global: inFlightGlobal });
   if (verdict !== "ok") {
@@ -228,14 +320,29 @@ groupChatHandlers.on("message", async (ctx, next) => {
   inFlightByChat.set(chatId, (inFlightByChat.get(chatId) ?? 0) + 1);
   inFlightGlobal++;
   try {
+    const now = chatClock.now();
+    // Ночь, и в чате бота полчаса не трогали: сначала сонно ворчит, потом отвечает.
+    const sleepy = isNight(now.minutes) && Date.now() - idleSince >= SLEEPY_IDLE_MS;
+    if (sleepy) await ctx.reply(sleepyLine(chatClock.random)).catch(() => undefined);
     await ctx.replyWithChatAction("typing").catch(() => undefined);
     const history = deps.repo.recentChat(chatId, userId, 6 * 60 * 60_000, 6).map((h) => ({ question: h.question, answer: h.answer }));
-    const now = wallClock();
-    // Своя группа человека — если он пользуется ботом в личке: «что у меня завтра».
-    const group = needGroup(ctx);
-    const tools = deps.ask?.groupTools({ group, subgroup: ctx.user.subgroup, userId, botHelp: featuresText(deps) });
-    const result = await service.reply({ chatTitle: title, speaker, speakerId: userId, text, history, transcript, repliedTo, now: { date: now.date, minutes: now.minutes }, speakerGroup: group?.title ?? null, ...(tools ? { tools } : {}) });
-    const answer = result.refused ? "На это отвечать не буду 🙂" : result.text || "Хм, даже не знаю, что сказать 🙂";
+    const tools: ChatTool[] = [...(deps.ask?.groupTools({ group, subgroup: needGroup(ctx) ? ctx.user.subgroup : null, userId, botHelp: featuresText(deps) }) ?? []), ideaTool(ctx, title)];
+    const result = await service.reply({
+      chatTitle: title,
+      speaker,
+      speakerId: userId,
+      text,
+      history,
+      transcript,
+      repliedTo,
+      now: { date: now.date, minutes: now.minutes },
+      speakerGroup: group?.title ?? null,
+      speakerRealName: knownFirstName(deps, ctx.from, ctx.user),
+      chatAbout: chatAbout(deps, chatId),
+      sleepy,
+      tools,
+    });
+    const answer = result.refused ? REFUSAL_PHRASE : result.text || "Хм, даже не знаю, что сказать 🙂";
     deps.repo.bumpChatUsage(chatId, userId, day, result.inputTokens, result.outputTokens);
     await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } });
     deps.repo.logChat(chatId, userId, text || "(позвал без текста)", answer);
@@ -255,3 +362,58 @@ groupChatHandlers.on("message", async (ctx, next) => {
     inFlightGlobal = Math.max(0, inFlightGlobal - 1);
   }
 });
+
+/**
+ * Ответ без модели, если реплика — одно из «социальных» действий:
+ *  1) ответ на «а что это за группа?» от того, кто может описать чат;
+ *  2) слайды вебинаров в эту тему: подписка, отписка, список;
+ *  3) знакомство «@ник это Фамилия Имя 12-23» или «я — …».
+ */
+async function quickReply(ctx: BotContext, raw: string, text: string, group: ReturnType<typeof needGroup>): Promise<{ text: string; kb?: InlineKeyboard } | null> {
+  const deps = ctx.deps;
+  const msg = ctx.msg!;
+  const chatId = ctx.chat!.id;
+  const reply = msg.reply_to_message;
+  const askId = deps.repo.getMeta(aboutAskKey(chatId));
+  if (askId && reply?.from?.id === ctx.me.id && String(reply.message_id) === askId && (text || raw).trim() && (await mayDescribeChat(ctx))) {
+    deps.repo.setMeta(aboutKey(chatId), (text || raw).trim().slice(0, ABOUT_MAX));
+    logger.info({ chat: chatId }, "group chat: about saved");
+    return { text: "Понял, запомнил 🙂 Зовите: «@" + (ctx.me.username ?? "бот") + " …» или отвечайте на мои сообщения." };
+  }
+  const slides = parseSlidesRequest(text);
+  if (slides) return handleSlidesRequest(ctx, slides, group);
+  const intro = parseIntro(raw, msg.entities ?? msg.caption_entities ?? [], ctx.me.username, ctx.me.id, ctx.from!, true);
+  const introAnswer = intro ? handleIntro(deps, intro, ctx.from!, chatId, true) : null;
+  if (introAnswer) return { text: introAnswer };
+  return null;
+}
+
+/** Инструмент «записать идею»: модель зовёт его, когда боту предлагают новую функцию. */
+function ideaTool(ctx: BotContext, chatTitle: string | null): ChatTool {
+  const deps = ctx.deps;
+  const from = ctx.from!;
+  const chatId = ctx.chat!.id;
+  return {
+    name: "suggest_feature",
+    description: "Записать идею новой функции для бота, которую предложил человек в чате («добавь…», «сделай, чтобы бот…»). Идея уходит владельцу бота.",
+    input_schema: { type: "object", properties: { idea: { type: "string", description: "Суть идеи одной-двумя фразами" } }, required: ["idea"] },
+    parse: (input: unknown) => {
+      const idea = String((input as { idea?: unknown } | null)?.idea ?? "").trim();
+      if (!idea) throw new Error("пустая идея");
+      return { idea: idea.slice(0, 1000) };
+    },
+    run: async ({ idea }: { idea: string }) => {
+      const perDay = deps.repo.ideasSince(new Date(Date.now() - 86_400_000).toISOString(), from.id);
+      deps.repo.addIdea(chatId, from.id, idea);
+      if (perDay < IDEAS_NOTIFY_PER_DAY) {
+        const who = from.username ? `@${from.username}` : from.first_name;
+        for (const adminId of deps.config.ADMIN_IDS) {
+          await ctx.api
+            .sendMessage(adminId, `💡 <b>Идея для бота</b> из чата «${esc(chatTitle ?? String(chatId))}» от ${esc(who)}:\n${esc(idea)}\n\nВсе идеи: /ideas`, { parse_mode: "HTML" })
+            .catch((err: unknown) => logger.debug({ err: String(err), adminId }, "idea notice failed"));
+        }
+      }
+      return `Записал. Ответь ровно: «${featureReply(deps.config.OWNER_USERNAME ?? null)}»`;
+    },
+  };
+}

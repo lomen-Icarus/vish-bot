@@ -212,13 +212,14 @@ describe("слайды вебинаров", () => {
     const { writeFileSync } = await import("node:fs");
     writeFileSync(file, Buffer.from("%PDF-1.4\n"));
     repo.touchUser(1, "a", "A");
-    repo.updateUser(1, { groupKey: group.key });
+    repo.updateUser(1, { groupKey: group.key, wantSlides: true });
     repo.touchUser(2, "b", "B");
-    repo.updateUser(2, { groupKey: group.key });
+    repo.updateUser(2, { groupKey: group.key, wantSlides: true });
     repo.touchUser(3, "c", "C");
-    repo.updateUser(3, { groupKey: other.key });
-    repo.touchUser(4, "d", "D");
-    repo.updateUser(4, { groupKey: group.key, wantSlides: false });
+    repo.updateUser(3, { groupKey: other.key, wantSlides: true });
+    // Слайды в личку по умолчанию выключены: этот человек их не включал.
+    expect(repo.touchUser(4, "d", "D").wantSlides).toBe(false);
+    repo.updateUser(4, { groupKey: group.key });
 
     const uploads: Array<{ chatId: number; byFileId: boolean }> = [];
     const api = {

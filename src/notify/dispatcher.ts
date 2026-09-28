@@ -16,6 +16,7 @@ import { parseRefKey } from "../people/ref.js";
 import { webinarRowsToLessons } from "../people/profile.js";
 import { readFileSync } from "node:fs";
 import { isUnreachable } from "../bot/errors.js";
+import { subjectKey } from "../chat/social.js";
 
 /** За сколько минут до первой пары преподавателя писать подписчикам. */
 const TEACHER_LEAD_MIN = 120;
@@ -58,15 +59,25 @@ export class Notifier {
   ) {}
 
   /**
-   * Слайды записанного вебинара: PDF уходит тем, у кого эта пара в расписании.
-   * Первому получателю файл загружается, остальным — по file_id, чтобы не
-   * гонять один и тот же PDF через сеть десятки раз.
+   * Слайды записанного вебинара: PDF уходит тем, у кого эта пара в расписании
+   * и кто включил слайды в настройках, и в темы групповых чатов, подписанные
+   * на этот предмет («@бот сюда слайды по физике»). Первому получателю файл
+   * загружается, остальным — по file_id, чтобы не гонять один и тот же PDF
+   * через сеть десятки раз.
    */
   async sendSlideDeck(deck: { deckId: number; date: string; subject: string; teacher: string | null; title: string | null; groups: string[]; slides: number; file: string }, now: WallClock = wallClock()): Promise<number> {
     const keys = new Set(deck.groups.map((g) => logicalKeyFor(g)));
     const users = this.repo.listUsers({ onlyActive: true }).filter((u) => u.wantSlides && u.groupKey && keys.has(u.groupKey));
-    if (!users.length) {
-      logger.info({ deckId: deck.deckId, groups: deck.groups }, "слайды никому не нужны: нет людей из этих групп");
+    // Подписки чатов: тот же предмет и либо любая группа, либо одна из групп пары.
+    const seen = new Set<string>();
+    const chats = this.repo.slideSubsForSubject(subjectKey(deck.subject)).filter((s) => {
+      const key = `${s.chatId}|${s.threadId ?? 0}`;
+      if ((s.groupKey && !keys.has(s.groupKey)) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (!users.length && !chats.length) {
+      logger.info({ deckId: deck.deckId, groups: deck.groups }, "слайды никому не нужны: ни людей из этих групп, ни подписанных чатов");
       this.repo.markDeckSent(deck.deckId, null, 0);
       return 0;
     }
@@ -96,6 +107,25 @@ export class Notifier {
     const name = `${deck.date}-${deck.subject.replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 50) || "slides"}.pdf`;
     let fileId: string | null = null;
     let sent = 0;
+    for (const sub of chats) {
+      try {
+        const msg = await this.api.sendDocument(sub.chatId, fileId ?? new InputFile(bytes, name), {
+          caption,
+          parse_mode: "HTML",
+          ...(sub.threadId ? { message_thread_id: sub.threadId } : {}),
+        });
+        fileId ??= msg.document?.file_id ?? null;
+        sent++;
+        await sleep(45);
+      } catch (err) {
+        const text = err instanceof GrammyError ? err.description : String(err);
+        logger.warn({ err: text.slice(0, 200), chat: sub.chatId, thread: sub.threadId }, "слайды в чат не ушли");
+        // Тему удалили — подписка этой темы больше не нужна (закрытую тему
+        // могут открыть снова — её не трогаем); бота выгнали — все подписки чата.
+        if (/thread not found|topic_deleted/i.test(text)) this.repo.removeSlideSubs(sub.chatId, sub.threadId);
+        else if (isUnreachable(err)) this.repo.removeSlideSubs(sub.chatId);
+      }
+    }
     for (const user of users) {
       try {
         const quiet = this.inQuietHours(user, now);
@@ -117,7 +147,7 @@ export class Notifier {
       }
     }
     this.repo.markDeckSent(deck.deckId, fileId, sent);
-    logger.info({ deckId: deck.deckId, sent, of: users.length }, "слайды разосланы");
+    logger.info({ deckId: deck.deckId, sent, of: users.length + chats.length, chats: chats.length }, "слайды разосланы");
     return sent;
   }
 

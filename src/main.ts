@@ -23,7 +23,7 @@ import { filterSubgroup } from "./schedule/format.js";
 import { todayMsk } from "./time.js";
 import { QaBase } from "./chat/qa.js";
 import { ChatService } from "./chat/service.js";
-import { importLegacyCanned } from "./chat/importCanned.js";
+import { importLegacyCanned, seedDefaultQa } from "./chat/importCanned.js";
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -105,12 +105,14 @@ async function main(): Promise<void> {
   const chatKey = config.CHAT_ANTHROPIC_API_KEY ?? config.ANTHROPIC_API_KEY;
   const chat =
     config.CHAT_AI && chatKey
-      ? new ChatService(chatKey, { model: config.CHAT_AI_MODEL ?? config.AI_MODEL, contextMessages: config.CHAT_CONTEXT_MESSAGES, botUsername: null }, new QaBase(config.CHAT_QA_DB))
+      ? new ChatService(chatKey, { model: config.CHAT_AI_MODEL ?? config.AI_MODEL, contextMessages: config.CHAT_CONTEXT_MESSAGES, botUsername: null, ownerUsername: config.OWNER_USERNAME }, new QaBase(config.CHAT_QA_DB))
       : null;
   if (config.CHAT_AI && !chatKey) logger.warn("болталка в группах выключена: нет ни CHAT_ANTHROPIC_API_KEY, ни ANTHROPIC_API_KEY");
   else if (chat) {
     // Ответы, добавленные через /reply_add в первой версии, переезжают в сценарий.
     importLegacyCanned(repo, chat.qa);
+    // Заготовки, о которых попросил владелец бота («иди нахуй» → «Сам иди злюка :(»).
+    seedDefaultQa(repo, chat.qa);
     logger.info({ model: chat.model, qa: chat.qa.stats().count, file: config.CHAT_QA_DB }, "group chat enabled");
   } else logger.info("group chat disabled (CHAT_AI=FALSE)");
 
