@@ -68,6 +68,8 @@ export interface RecorderConfig {
   pollSeconds: number;
   /** Как часто снимать слайд (секунды). */
   captureSeconds: number;
+  /** На сколько пикселей расширять кадр вверх и вниз от области презентации. */
+  capturePad: number;
   /** Сколько минут максимум сидеть на одном вебинаре. */
   maxMinutes: number;
   /**
@@ -100,6 +102,7 @@ export function loadConfig(): RecorderConfig {
     leadMinutes: num("LEAD_MINUTES", 7),
     pollSeconds: num("POLL_SECONDS", 30),
     captureSeconds: Math.max(1, num("CAPTURE_SECONDS", 5)),
+    capturePad: Math.max(0, num("CAPTURE_PAD", 40)),
     maxMinutes: Math.max(5, num("MAX_MINUTES", 110)),
     maxParallel: Math.max(1, Math.floor(num("MAX_PARALLEL", 1))),
     botUrl: str("BOT_SLIDES_URL"),
