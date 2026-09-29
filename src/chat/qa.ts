@@ -16,6 +16,8 @@
  * - разделитель «;» (Excel), табуляция или «,» (Google Таблицы) — определяется сам;
  * - несколько вариантов вопроса — через «|»;
  * - третья колонка необязательна: подсказка модели, как отвечать («дословно», «с сарказмом»);
+ * - ответ может быть гифкой: «gif:<file_id> подпись» (подпись необязательна);
+ *   file_id даёт бот — /qa_fileid ответом на гифку или /qa_add с гифкой;
  * - поле с «;», кавычками или переносом строки берётся в двойные кавычки, "" внутри — это одна ";
  * - строки, начинающиеся с «#», — комментарии; первая строка «вопрос;ответ» — заголовок.
  *
@@ -27,15 +29,45 @@ import { editDistance, typoBudget } from "../text/match.js";
 import { logger } from "../logger.js";
 import { decodeText } from "../text/decode.js";
 
+export type QaMediaKind = "gif" | "sticker" | "photo";
+
+/** Гифка, стикер или фото, которые бот пришлёт вместо (или вместе с) текста: file_id из Telegram. */
+export interface QaMedia {
+  kind: QaMediaKind;
+  fileId: string;
+}
+
 export interface QaEntry {
   /** Варианты вопроса как в файле. */
   questions: string[];
+  /** Текст ответа; при медиа — подпись к нему (может быть пустой). */
   answer: string;
   /** Подсказка модели, как отвечать; null — отвечать заготовкой по смыслу. */
   hint: string | null;
   /** Варианты вопроса в нормальном виде: считаются один раз при загрузке. */
   norm: string[];
+  /** Ответ-гифка (стикер, фото): «gif:<file_id> подпись» в колонке ответа. */
+  media: QaMedia | null;
 }
+
+/**
+ * Ответ из файла: «gif:<file_id> подпись» → медиа и подпись. file_id бот
+ * получает из Telegram (/qa_fileid, /qa_add с гифкой); он работает только
+ * у этого бота — при смене токена гифки придётся добавить заново.
+ */
+export function splitMedia(cell: string): { media: QaMedia | null; text: string } {
+  const trimmed = cell.trim();
+  const m = /^(gif|sticker|photo):(\S+)\s*/i.exec(trimmed);
+  if (!m) return { media: null, text: trimmed };
+  return { media: { kind: m[1]!.toLowerCase() as QaMediaKind, fileId: m[2]! }, text: trimmed.slice(m[0].length).trim() };
+}
+
+/** Обратно в ячейку файла: «gif:<file_id> подпись». */
+export function answerCell(answer: string, media: QaMedia | null): string {
+  return media ? `${media.kind}:${media.fileId}${answer ? ` ${answer}` : ""}` : answer;
+}
+
+export const MEDIA_LABELS: Record<QaMediaKind, string> = { gif: "гифка", sticker: "стикер", photo: "картинка" };
 
 export interface QaParseResult {
   entries: QaEntry[];
@@ -146,9 +178,10 @@ export function parseQa(raw: string): QaParseResult {
       .split("|")
       .map((q) => q.trim())
       .filter(Boolean);
-    const answer = (cells[1] ?? "").trim();
+    const { media, text: answer } = splitMedia(cells[1] ?? "");
     const norm = questions.map(normQa).filter(Boolean);
-    if (!norm.length || !answer) {
+    // Ответ может быть одной гифкой без текста — это не пустая строка.
+    if (!norm.length || (!answer && !media)) {
       skipped++;
       continue;
     }
@@ -157,7 +190,7 @@ export function parseQa(raw: string): QaParseResult {
       continue;
     }
     const hint = (cells[2] ?? "").trim() || null;
-    entries.push({ questions, answer, hint, norm });
+    entries.push({ questions, answer, hint, norm, media });
   }
   return { entries, skipped, delimiter };
 }
@@ -338,7 +371,7 @@ export class QaBase {
     const removed = all.length - keep.length;
     if (!removed) return 0;
     const d = this.delimiter;
-    const body = [`вопрос${d}ответ${d}подсказка`, ...keep.map((e) => qaLine(e.questions, e.answer, e.hint, d))].join("\n") + "\n";
+    const body = [`вопрос${d}ответ${d}подсказка`, ...keep.map((e) => qaLine(e.questions, answerCell(e.answer, e.media), e.hint, d))].join("\n") + "\n";
     this.ensureDir();
     if (existsSync(this.file)) copyFileSync(this.file, `${this.file}.bak`);
     const tmp = `${this.file}.tmp`;

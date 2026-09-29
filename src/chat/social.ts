@@ -116,7 +116,12 @@ export function parseIntro(text: string, entities: MessageEntity[], botUsername:
 
 // ---------- слайды в чат ----------
 
-export type SlidesRequest = { kind: "subscribe"; subject: string | null; group: string | null } | { kind: "unsubscribe"; subject: string | null } | { kind: "list" };
+export type SlidesRequest =
+  | { kind: "subscribe"; subject: string | null; group: string | null }
+  /** Разовое «скинь слайды по …»: прислать готовый PDF, а нет его — предложить подписку. */
+  | { kind: "send"; subject: string | null; group: string | null }
+  | { kind: "unsubscribe"; subject: string | null }
+  | { kind: "list" };
 
 const GROUP_IN_TEXT = new RegExp(`(?:для\\s+|у\\s+|группы\\s+|группе\\s+)?(${GROUP})`, "iu");
 /** Хвосты, которые к названию предмета не относятся. */
@@ -146,22 +151,8 @@ const HERE = new RegExp(`${W}(?:сюда|здесь|тут|в\\s+этот\\s+ч�
 const OFF = new RegExp(`${W}(?:не\\s+(?:присылай|присылайте|присылать|кидай|кидайте|скидывай|скидывайте|шли|шлите|отправляй|отправлять|надо|нужно|нужны)|отпиш|отключ|хватит|стоп|убери|уберите|больше\\s+не)`, "u");
 const LIST = new RegExp(`${W}(?:какие|список|куда)(?:[^\\p{L}]|$)`, "u");
 
-/**
- * Просьба про слайды вебинаров в чате: «сюда присылай слайды по физике»,
- * «не присылай сюда слайды по физике», «какие слайды сюда приходят».
- * Разовое «скинь слайды по физике» — не просьба о подписке: null.
- */
-export function parseSlidesRequest(text: string): SlidesRequest | null {
-  const t = norm(text);
-  if (!/слайд/.test(t)) return null;
-  if (OFF.test(t)) {
-    const subject = subjectAfterPo(text);
-    return { kind: "unsubscribe", subject: subject ? subject.replace(GROUP_IN_TEXT, "").trim() || null : null };
-  }
-  if (LIST.test(t) && !/(?:^|\s)по\s/.test(t)) return { kind: "list" };
-  const ongoing = ONGOING.test(t);
-  if (ONE_OFF.test(t) && !ongoing) return null;
-  if (!ongoing && !HERE.test(t)) return null;
+/** Предмет после «по …» и группа, если названа (в предмете или где угодно в тексте). */
+function subjectAndGroup(text: string): { subject: string | null; group: string | null } {
   let subject = subjectAfterPo(text);
   let group: string | null = null;
   if (subject) {
@@ -172,7 +163,26 @@ export function parseSlidesRequest(text: string): SlidesRequest | null {
     }
   }
   if (!group) group = GROUP_IN_TEXT.exec(text.replace(/@\w+/g, " "))?.[1]?.trim() ?? null;
-  return { kind: "subscribe", subject, group };
+  return { subject, group };
+}
+
+/**
+ * Просьба про слайды вебинаров в чате: «сюда присылай слайды по физике»,
+ * «не присылай сюда слайды по физике», «какие слайды сюда приходят».
+ * Разовое «скинь слайды по физике» — прислать готовый PDF (kind send).
+ */
+export function parseSlidesRequest(text: string): SlidesRequest | null {
+  const t = norm(text);
+  if (!/слайд/.test(t)) return null;
+  if (OFF.test(t)) {
+    const subject = subjectAfterPo(text);
+    return { kind: "unsubscribe", subject: subject ? subject.replace(GROUP_IN_TEXT, "").trim() || null : null };
+  }
+  if (LIST.test(t) && !/(?:^|\s)по\s/.test(t)) return { kind: "list" };
+  const ongoing = ONGOING.test(t);
+  if (ONE_OFF.test(t) && !ongoing) return { kind: "send", ...subjectAndGroup(text) };
+  if (!ongoing && !HERE.test(t)) return null;
+  return { kind: "subscribe", ...subjectAndGroup(text) };
 }
 
 // ---------- подбор предмета ----------
@@ -192,7 +202,11 @@ const SUBJECT_ALIASES: Array<[RegExp, string]> = [
 ];
 
 /** Слова, которые к названию предмета не относятся: «по вебинарам физики». */
-const SUBJECT_STOP = new Set(["вебинар", "вебинара", "вебинаров", "вебинарам", "вебинары", "пара", "пары", "пар", "парам", "лекция", "лекции", "лекций", "лекциям", "предмет", "предмету", "предмета", "слайды", "слайдов", "онлайн"]);
+const SUBJECT_STOP = new Set([
+  "вебинар", "вебинара", "вебинаров", "вебинарам", "вебинары", "пара", "пары", "пар", "парам", "паре", "лекция", "лекции", "лекций", "лекциям", "предмет", "предмету", "предмета", "слайды", "слайдов", "онлайн",
+  // «с прошлой пары», «за сегодня», «последней лекции» — время, а не предмет.
+  "прошлой", "прошлую", "прошлого", "последней", "последнюю", "последнего", "вчерашней", "вчерашнюю", "сегодняшней", "сегодняшнюю", "вчера", "сегодня", "завтра", "недавней",
+]);
 
 function normSubject(s: string): string {
   return s.toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
@@ -211,6 +225,19 @@ export function sameSubject(a: string, b: string): boolean {
   const y = subjectKey(b);
   if (!x || !y) return false;
   return x === y || ` ${x} `.includes(` ${y} `) || ` ${y} `.includes(` ${x} `);
+}
+
+/**
+ * То же, но терпимо к хвосту: «по БЖД пожаслуйста», «по физике плз» — не
+ * нашлось целиком, пробуем без одного-трёх последних слов.
+ */
+export function matchSubjectsLoose(query: string, subjects: string[], limit = 4): string[] {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  for (let n = words.length; n >= 1 && n >= words.length - 3; n--) {
+    const found = matchSubjects(words.slice(0, n).join(" "), subjects, limit);
+    if (found.length) return found;
+  }
+  return [];
 }
 
 /**

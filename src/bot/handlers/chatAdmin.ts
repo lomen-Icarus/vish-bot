@@ -11,7 +11,8 @@ import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { clampHtml, esc } from "../../schedule/format.js";
 import { addChatBonus, CHAT_BONUS_STEP, CHAT_STEPS, chatLimits, resetChatLimits, setChatLimit, type ChatLimitKind } from "../../chat/limits.js";
-import { decodeText, qaLine } from "../../chat/qa.js";
+import { answerCell, decodeText, qaLine, type QaMedia } from "../../chat/qa.js";
+import type { Message } from "grammy/types";
 import { stepValue } from "../../ai/limits.js";
 import { askAboutChat, chatAbout, chatEnabled, switchChat } from "./groupChat.js";
 import { todayMsk } from "../../time.js";
@@ -31,6 +32,7 @@ export const QA_FORMAT_HELP = [
   "• разделитель «;» (Excel), «,» (Google Таблицы) или табуляция — бот поймёт сам;",
   "• варианты вопроса — через «|»;",
   "• подсказка (3-я колонка) необязательна: как отвечать — «дословно», «с сарказмом»…;",
+  "• ответ может быть гифкой: <code>gif:&lt;file_id&gt; подпись</code> (подпись необязательна). file_id даст бот: пришли ему гифку с подписью <code>/qa_add вопрос = подпись</code> или ответь на гифку командой /qa_fileid;",
   "• поле с «;», кавычками или переносом строки — в двойных кавычках;",
   "• строки с «#» в начале — комментарии.",
 ].join("\n");
@@ -241,7 +243,17 @@ adminOnly.command(["qa", "replies"], async (ctx) => {
  * «вопрос | вариант = ответ = подсказка» или «вопрос => ответ» (так было в
  * /reply_add; ответ после «=>» берётся целиком, со всеми «=» и переносами).
  */
-export function parseQaAdd(raw: string): { questions: string[]; answer: string; hint: string | null } | null {
+/** Гифка, стикер или фото из сообщения (или из того, на которое ответили) — для заготовки. */
+export function mediaOf(msg: Message | undefined): QaMedia | null {
+  if (!msg) return null;
+  if (msg.animation) return { kind: "gif", fileId: msg.animation.file_id };
+  if (msg.sticker) return { kind: "sticker", fileId: msg.sticker.file_id };
+  const photo = msg.photo?.[msg.photo.length - 1];
+  if (photo) return { kind: "photo", fileId: photo.file_id };
+  return null;
+}
+
+export function parseQaAdd(raw: string, allowEmptyAnswer = false): { questions: string[]; answer: string; hint: string | null } | null {
   let q: string;
   let a: string;
   let hint: string | null = null;
@@ -259,15 +271,17 @@ export function parseQaAdd(raw: string): { questions: string[]; answer: string; 
     .split("|")
     .map((x) => x.trim())
     .filter(Boolean);
-  return questions.length && a ? { questions, answer: a, hint } : null;
+  return questions.length && (a || allowEmptyAnswer) ? { questions, answer: a, hint } : null;
 }
 
-adminOnly.command(["qa_add", "reply_add"], async (ctx) => {
+/** /qa_add: текстом, ответом на гифку или подписью к гифке — ответ тогда сама гифка. */
+async function qaAdd(ctx: BotContext, raw: string, media: QaMedia | null): Promise<void> {
   const chat = ctx.deps.chat;
   if (!chat) return void (await ctx.reply("Болталка выключена — добавлять некуда."));
-  const parsed = parseQaAdd(ctx.match ?? "");
-  if (!parsed) return void (await ctx.reply("Так: <code>/qa_add как дела | как ты = Лучше всех!</code>\nТретьей частью можно дать подсказку: <code>= шутливо</code>. Если в ответе есть «=»: <code>/qa_add вопрос =&gt; ответ</code>.", { parse_mode: "HTML" }));
-  const { questions, answer, hint } = parsed;
+  const parsed = parseQaAdd(raw, media !== null);
+  if (!parsed) return void (await ctx.reply("Так: <code>/qa_add как дела | как ты = Лучше всех!</code>\nТретьей частью можно дать подсказку: <code>= шутливо</code>. Если в ответе есть «=»: <code>/qa_add вопрос =&gt; ответ</code>.\nГифкой: пришли гифку с подписью <code>/qa_add вопрос = подпись</code> (подпись можно не писать) или ответь так на гифку.", { parse_mode: "HTML" }));
+  const { questions, hint } = parsed;
+  const answer = answerCell(parsed.answer, media);
   try {
     chat.qa.append(questions, answer, hint);
   } catch (err) {
@@ -275,6 +289,24 @@ adminOnly.command(["qa_add", "reply_add"], async (ctx) => {
     return void (await ctx.reply(`Не смог записать файл: ${esc(String(err).slice(0, 200))}`, { parse_mode: "HTML" }));
   }
   await ctx.reply(`Добавил. Заготовок теперь: ${chat.qa.stats().count}.\n<code>${esc(qaLine(questions, answer, hint))}</code>`, { parse_mode: "HTML" });
+}
+
+adminOnly.command(["qa_add", "reply_add"], async (ctx) => qaAdd(ctx, ctx.match ?? "", mediaOf(ctx.msg.reply_to_message)));
+
+// Команды в подписи к гифке grammY не ловит: разбираем подпись сами.
+adminOnly.on(["message:animation", "message:sticker", "message:photo"], async (ctx, next) => {
+  const m = /^\/(qa_add|reply_add|qa_fileid)(?:@\w+)?(?:\s+([\s\S]*))?$/u.exec((ctx.msg.caption ?? "").trim());
+  if (!m) return next();
+  const media = mediaOf(ctx.msg);
+  if (m[1] === "qa_fileid") return void (await ctx.reply(`В колонку «ответ» файла сценария: <code>${esc(answerCell("", media))} подпись</code> (подпись необязательна).`, { parse_mode: "HTML" }));
+  await qaAdd(ctx, m[2] ?? "", media);
+});
+
+// file_id гифки — чтобы вписать «gif:…» в файл сценария руками.
+adminOnly.command("qa_fileid", async (ctx) => {
+  const media = mediaOf(ctx.msg) ?? mediaOf(ctx.msg.reply_to_message);
+  if (!media) return void (await ctx.reply("Ответь этой командой на гифку, стикер или фото — покажу, что вписать в ответ заготовки."));
+  await ctx.reply(`В колонку «ответ» файла сценария: <code>${esc(answerCell("", media))} подпись</code> (подпись необязательна).`, { parse_mode: "HTML" });
 });
 
 adminOnly.command(["qa_del", "reply_del"], async (ctx) => {
