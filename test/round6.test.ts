@@ -203,6 +203,10 @@ describe("слайды вебинаров", () => {
     expect(decks[0]!.subject).toBe("Правоведение");
     expect(decks[0]!.groups).toEqual(["ВИШ-12-23"]);
     expect(readFileSync(decks[0]!.file).subarray(0, 4).toString()).toBe("%PDF");
+    // /health показывает, дошла ли запись: снаружи это единственный способ узнать.
+    const health = (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { slides: { decks: number; last: { date: string; subject: string; slides: number } | null } };
+    expect(health.slides.decks).toBe(1);
+    expect(health.slides.last).toMatchObject({ date: today, subject: "Правоведение", slides: 3 });
   });
 
   it("рассылает PDF студентам этой группы и один раз его загружает", async () => {
