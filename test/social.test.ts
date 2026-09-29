@@ -7,9 +7,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { openDatabase } from "../src/db/index.js";
 import { Repo, type WebinarRow } from "../src/db/repo.js";
-import { QaBase } from "../src/chat/qa.js";
+import { answerCell, parseQa, QaBase, splitMedia } from "../src/chat/qa.js";
 import { ChatService, type ChatClient } from "../src/chat/service.js";
 import { ABOUT_QUESTION, chatClock, groupChatHandlers, resetChatCooldowns, resetGroupChatState } from "../src/bot/handlers/groupChat.js";
+import { chatAdminHandlers } from "../src/bot/handlers/chatAdmin.js";
 import { knownFirstName, resetSlideSubState } from "../src/bot/social.js";
 import { featureReply, matchSubjects, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, sameSubject, SLEEPY_LINES, isNight } from "../src/chat/social.js";
 import { fmtDuration, meetingVerdict } from "../src/chat/meeting.js";
@@ -123,12 +124,14 @@ describe("разбор реплик", () => {
     expect(parseSlidesRequest("какие слайды сюда приходят")).toEqual({ kind: "list" });
     expect(parseSlidesRequest("слайды классные")).toBeNull();
     expect(parseSlidesRequest("когда физика")).toBeNull();
-    // Разовая просьба — к модели, не подписка; «кинь» внутри «скинь» не считается.
-    expect(parseSlidesRequest("скинь слайды по физике с прошлой пары")).toBeNull();
-    expect(parseSlidesRequest("скинь сюда слайды по физике")).toBeNull();
+    // Разовая просьба — прислать готовый PDF (kind send); «кинь» внутри «скинь» не считается подпиской.
+    expect(parseSlidesRequest("скинь слайды по физике с прошлой пары")).toEqual({ kind: "send", subject: "физике с прошлой пары", group: null });
+    expect(parseSlidesRequest("скинь сюда слайды по физике")).toEqual({ kind: "send", subject: "физике", group: null });
+    expect(parseSlidesRequest("пришли сюда слайды по БЖД")).toEqual({ kind: "send", subject: "БЖД", group: null });
+    expect(parseSlidesRequest("а есть ли слайды по физике")).toMatchObject({ kind: "send", subject: "физике" });
+    // Без глагола и без «сюда» — пусть разбирается модель (у неё есть инструмент chat_slides).
     expect(parseSlidesRequest("хочу посмотреть слайды по физике")).toBeNull();
     expect(parseSlidesRequest("нужны слайды по матану?")).toBeNull();
-    expect(parseSlidesRequest("а есть ли слайды по физике")).toBeNull();
     expect(parseSlidesRequest("скидывай сюда слайды по физике")).toMatchObject({ kind: "subscribe", subject: "физике" });
     expect(parseSlidesRequest("подпиши эту тему на слайды по химии")).toMatchObject({ kind: "subscribe", subject: "химии" });
   });
@@ -184,9 +187,9 @@ function webinar(over: Partial<WebinarRow> = {}): WebinarRow {
   return { date: addDays(today, 2), slot: 3, start: 11 * 60 + 40, end: 13 * 60, subject: "Физика", type: "лк", teacher: "Иванова К. Ю.", position: null, degree: null, subgroup: null, title: null, groups: ["ВИШ-12-23"], scheduled: true, ...over };
 }
 
-function setup(opts: { answers?: Anthropic.Message[]; known?: string; slidesToken?: boolean } = {}) {
+function setup(opts: { answers?: Anthropic.Message[]; known?: string; slidesToken?: boolean; qa?: string } = {}) {
   const repo = new Repo(openDatabase(":memory:"));
-  const qa = new QaBase(tmpFile("qa.csv", "вопрос;ответ\n"));
+  const qa = new QaBase(tmpFile("qa.csv", opts.qa ?? "вопрос;ответ\n"));
   const requests: Anthropic.MessageCreateParamsNonStreaming[] = [];
   const answers = [...(opts.answers ?? [])];
   const client: ChatClient = {
@@ -202,11 +205,11 @@ function setup(opts: { answers?: Anthropic.Message[]; known?: string; slidesToke
   const known = opts.known !== undefined ? new KnownPeople(tmpFile("known.csv", opts.known)) : null;
   const deps = { config, repo, chat, known, service: makeService(), ask: null, pending: new Map() } as unknown as Deps;
   repo.upsertChatGroup(CHAT, { title: "Чат 12-23", enabled: true });
-  return { deps, repo, requests };
+  return { deps, repo, requests, qa };
 }
 
 let chatMemberStatus = "member";
-async function send(deps: Deps, update: Update, userId = 7, username?: string): Promise<Sent[]> {
+async function send(deps: Deps, update: Update, userId = 7, username?: string, composer: Composer<BotContext> = groupChatHandlers): Promise<Sent[]> {
   // Пауза между ответами в чате (3 с) проверяется в round8-chat; здесь мешает.
   resetChatCooldowns();
   const sent: Sent[] = [];
@@ -220,7 +223,7 @@ async function send(deps: Deps, update: Update, userId = 7, username?: string): 
   ctx.deps = deps;
   ctx.user = deps.repo.peekUser(userId, username ?? null, "U");
   ctx.isAdmin = deps.config.ADMIN_IDS.includes(userId);
-  await new Composer<BotContext>().use(groupChatHandlers).middleware()(ctx, async () => undefined);
+  await new Composer<BotContext>().use(composer).middleware()(ctx, async () => undefined);
   return sent;
 }
 
@@ -545,5 +548,123 @@ describe("группа: ночь, идеи, отказ, сценарий", () =>
     qa.remove("иди нахуй");
     expect(seedDefaultQa(repo, qa)).toBe(0);
     expect(qa.match("иди нахуй")).toEqual([]);
+  });
+});
+
+describe("группа: слайды — разовая просьба, опечатки в хвосте, инструмент модели", () => {
+  beforeEach(() => {
+    resetGroupChatState();
+    resetSlideSubState();
+    chatClock.now = () => ({ ...wallClock(), minutes: 12 * 60 });
+  });
+
+  it("«скинь слайды по …» без записей — предлагает подписку; с записью — шлёт PDF", async () => {
+    const { deps, repo, requests } = setup();
+    repo.replaceWebinars(addDays(today, 2), [webinar()]);
+    const none = await send(deps, msg("пришли сюда слайды по физике"));
+    const q = none.find((s) => s.method === "sendMessage")!;
+    expect(String(q.payload.text)).toMatch(/^Таких слайдов у меня пока нет — появятся, как запишу ближайший вебинар\. Ты хочешь получать слайды «Физика»/);
+    expect(q.payload.reply_markup).toBeDefined();
+    expect(requests).toHaveLength(0);
+
+    const file = tmpFile("deck.pdf");
+    writeFileSync(file, Buffer.from("%PDF-1.4\n"));
+    repo.addSlideDeck({ date: today, subject: "Физика (лекция)", teacher: null, title: null, groups: ["ВИШ-12-23"], slides: 12, file, bytes: 9 });
+    const sent = await send(deps, msg("скинь слайды по физике с прошлой пары"));
+    expect(texts(sent)[0]).toMatch(/^Держи: слайды «Физика \(лекция\)» за \d\d\.\d\d \(ВИШ-12-23\) 👇$/);
+    const doc = sent.find((s) => s.method === "sendDocument")!;
+    expect(doc).toBeDefined();
+    expect(String(doc.payload.caption)).toContain("12 слайдов");
+    expect(requests).toHaveLength(0);
+  });
+
+  it("хвост с опечаткой («по БЖД пожаслуйста») не мешает найти предмет", async () => {
+    const { deps, repo } = setup();
+    repo.replaceWebinars(addDays(today, 1), [webinar({ subject: "Безопасность жизнедеятельности", groups: ["ВИШ-14-24"] })]);
+    const asked = await send(deps, msg("присылай сюда слайды по БЖД пожаслуйста"));
+    expect(texts(asked)[0]).toMatch(/^Ты хочешь получать слайды «Безопасность жизнедеятельности» — ближайший вебинар/);
+  });
+
+  it("модель знает про слайды и зовёт chat_slides; кнопки бот прикладывает к её ответу", async () => {
+    const question = "Ты хочешь получать слайды «Физика» — ближайший вебинар … в этот чат?";
+    const { deps, repo, requests } = setup({
+      answers: [fakeMessage([{ type: "tool_use", id: "tu1", name: "chat_slides", input: { action: "subscribe", subject: "физика" } } as Anthropic.ToolUseBlock], "tool_use"), textMsg(question)],
+    });
+    repo.replaceWebinars(addDays(today, 2), [webinar()]);
+    const sent = await send(deps, msg("безопасность жизнедеятельности и физика присылай сюда, ну"));
+    expect(systemText(requests[0]!)).toContain("вызови chat_slides");
+    expect(systemText(requests[0]!)).toContain("Никогда не говори, что слайды не раздаёшь");
+    expect(requests[0]!.tools!.map((t) => t.name)).toContain("chat_slides");
+    const toolResult = JSON.stringify(requests[1]!.messages.at(-1)!.content);
+    expect(toolResult).toContain("Ответь ровно этим текстом");
+    expect(toolResult).toContain("Кнопки «Да/Нет» бот приложит");
+    const reply = sent.find((s) => s.method === "sendMessage")!;
+    expect(String(reply.payload.text)).toBe(question);
+    expect((reply.payload.reply_markup as { inline_keyboard: unknown[][] }).inline_keyboard[0]).toHaveLength(2);
+    // Имя — редко, не в каждой фразе.
+    expect(systemText(requests[0]!)).not.toContain("не в каждом ответе");
+  });
+});
+
+describe("сценарий: ответ гифкой", () => {
+  beforeEach(() => {
+    resetGroupChatState();
+    chatClock.now = () => ({ ...wallClock(), minutes: 12 * 60 });
+  });
+
+  it("разбор «gif:<file_id> подпись» и запись обратно в файл", () => {
+    expect(splitMedia("gif:CgACAgIAAxkB лови")).toEqual({ media: { kind: "gif", fileId: "CgACAgIAAxkB" }, text: "лови" });
+    expect(splitMedia("STICKER:AAA")).toEqual({ media: { kind: "sticker", fileId: "AAA" }, text: "" });
+    expect(splitMedia("обычный ответ")).toEqual({ media: null, text: "обычный ответ" });
+    expect(answerCell("лови", { kind: "gif", fileId: "X" })).toBe("gif:X лови");
+    expect(answerCell("", { kind: "gif", fileId: "X" })).toBe("gif:X");
+    const parsed = parseQa("вопрос;ответ\nгифка;gif:FILE1\nржака;gif:FILE2 держи\nпусто;\n");
+    expect(parsed.entries).toHaveLength(2);
+    expect(parsed.entries[0]).toMatchObject({ answer: "", media: { kind: "gif", fileId: "FILE1" } });
+    expect(parsed.entries[1]).toMatchObject({ answer: "держи", media: { kind: "gif", fileId: "FILE2" } });
+    expect(parsed.skipped).toBe(1);
+    // Удаление другой заготовки пересобирает файл — гифка не теряется.
+    const qa = new QaBase(tmpFile("qa.csv", "вопрос;ответ\nгифка;gif:FILE1\nпривет;Здарова\n"));
+    qa.remove("привет");
+    expect(qa.entries()[0]).toMatchObject({ media: { kind: "gif", fileId: "FILE1" } });
+    expect(qa.raw()).toContain("гифка;gif:FILE1");
+  });
+
+  it("гифка без текста уходит сразу, без модели; гифка с текстом — подпись пишет модель", async () => {
+    const { deps, requests } = setup({ qa: "вопрос;ответ\nгифка;gif:FILE1\nржака;gif:FILE2 держи\n", answers: [textMsg("лови 😄")] });
+    const plain = await send(deps, msg("гифка"));
+    const anim = plain.find((s) => s.method === "sendAnimation")!;
+    expect(anim.payload.animation).toBe("FILE1");
+    expect(anim.payload.caption).toBeUndefined();
+    expect(plain.filter((s) => s.method === "sendMessage")).toHaveLength(0);
+    expect(requests).toHaveLength(0);
+
+    const captioned = await send(deps, msg("ржака"));
+    expect(requests).toHaveLength(1);
+    expect(systemText(requests[0]!)).toContain("О: [гифка] держи");
+    const anim2 = captioned.find((s) => s.method === "sendAnimation")!;
+    expect(anim2.payload.animation).toBe("FILE2");
+    expect(anim2.payload.caption).toBe("лови 😄");
+    expect(captioned.filter((s) => s.method === "sendMessage")).toHaveLength(0);
+  });
+
+  it("/qa_add гифкой с подписью и /qa_fileid ответом на гифку", async () => {
+    const { deps, qa } = setup();
+    const animation = { file_id: "CgACAgIAAxkBAAI", file_unique_id: "u", width: 1, height: 1, duration: 1 };
+    const withCaption: Update = {
+      update_id: nextId++,
+      message: { message_id: nextId++, date: 0, chat: { id: 99, type: "private", first_name: "A" }, from: { id: 99, is_bot: false, first_name: "A" }, animation, caption: "/qa_add ржака | смешно = держи", caption_entities: [{ type: "bot_command", offset: 0, length: 7 }] } as never,
+    };
+    const added = await send(deps, withCaption, 99, undefined, chatAdminHandlers);
+    expect(texts(added)[0]).toMatch(/Добавил/);
+    expect(qa.entries()[0]).toMatchObject({ questions: ["ржака", "смешно"], answer: "держи", media: { kind: "gif", fileId: "CgACAgIAAxkBAAI" } });
+    expect(qa.raw()).toContain("ржака|смешно;gif:CgACAgIAAxkBAAI держи");
+
+    const replyToGif: Update = {
+      update_id: nextId++,
+      message: { message_id: nextId++, date: 0, chat: { id: 99, type: "private", first_name: "A" }, from: { id: 99, is_bot: false, first_name: "A" }, text: "/qa_fileid", entities: [{ type: "bot_command", offset: 0, length: 10 }], reply_to_message: { message_id: 1, date: 0, chat: { id: 99, type: "private", first_name: "A" }, animation } } as never,
+    };
+    const shown = await send(deps, replyToGif, 99, undefined, chatAdminHandlers);
+    expect(texts(shown)[0]).toContain("gif:CgACAgIAAxkBAAI");
   });
 });
