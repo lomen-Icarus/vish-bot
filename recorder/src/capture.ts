@@ -12,6 +12,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright-core";
 import { log } from "./log.js";
+import { padClip } from "./frame.js";
 
 export interface CaptureOptions {
   url: string;
@@ -23,6 +24,11 @@ export interface CaptureOptions {
   headless: boolean;
   chromiumPath?: string;
   displayName?: string;
+  /**
+   * На сколько пикселей расширить кадр вверх и вниз относительно найденной
+   * области презентации: у BBB верх слайда бывает под кромкой контейнера.
+   */
+  padPx?: number;
   /** Вызывается на каждом новом слайде — удобно для логов и живого прогресса. */
   onSlide?: (index: number, file: string) => void;
 }
@@ -50,10 +56,23 @@ const PRESENTATION_SELECTORS = [
   '[class*="whiteboard"]',
 ];
 
-/** Кнопки, которыми BBB встречает гостя. Нажимаем то, что найдём. */
+/**
+ * Кнопки, которыми BBB встречает гостя. Нажимаем то, что найдём. Сначала —
+ * крестик диалога «как войти в аудио»: звук записывалке не нужен, а «только
+ * слушать» тянет аудиопоток; потом — «только слушать» в обеих формулировках
+ * (у разных версий BBB порядок слов разный: «Только слушать» и «Слушать только»).
+ */
 const ENTRY_BUTTONS = [
-  '[data-test="listenOnlyBtn"]',
   '[data-test="closeModal"]',
+  'button[aria-label="Закрыть"]',
+  'button[aria-label*="Закрыть"]',
+  'button[aria-label="Close"]',
+  'button[aria-label*="close" i]',
+  '[data-test="listenOnlyBtn"]',
+  'button[aria-label*="Только слушать"]',
+  'button:has-text("Только слушать")',
+  '[aria-label*="Только слушать"]',
+  'button[aria-label*="лушать"]',
   'button[aria-label*="Слушать"]',
   'button[aria-label*="Listen"]',
   'button:has-text("Слушать только")',
@@ -63,6 +82,9 @@ const ENTRY_BUTTONS = [
 
 /** Поле имени, которое BBB иногда показывает перед входом. */
 const NAME_INPUT = 'input[name="joinName"], input#joinName, input[placeholder*="мя"]';
+
+/** Диалог поверх слайда: аудио, предупреждения, опросы — всё, что BBB рисует как модальное окно. */
+const DIALOG = '[role="dialog"], [aria-modal="true"]';
 
 /** Признаки того, что комнату закрыли. */
 const ENDED = '[data-test="meetingEndedModal"], :text("Конференция завершена"), :text("Meeting ended")';
@@ -139,6 +161,38 @@ async function passEntry(page: Page, displayName: string | undefined, notes: str
   notes.push("кнопка входа за 30 секунд не появилась");
 }
 
+/**
+ * Диалог BBB всплыл поверх слайда уже во время съёмки (аудио спрашивает не
+ * сразу, а через несколько секунд после загрузки клиента; после переподключения
+ * — снова). Закрываем кнопкой, иначе Escape, а если и это не помогло —
+ * прячем диалоги стилем, чтобы кадры были чистыми.
+ */
+async function dismissDialog(page: Page, notes: string[], state: { hidden: boolean }): Promise<void> {
+  const dialog = page.locator(DIALOG).first();
+  if (!(await visibleNow(dialog))) return;
+  for (const selector of ENTRY_BUTTONS) {
+    const btn = page.locator(selector).first();
+    if (await visibleNow(btn)) {
+      await btn.click({ timeout: 5000 }).catch(() => undefined);
+      await sleep(500);
+      if (!(await visibleNow(dialog))) {
+        notes.push(`диалог во время съёмки закрыт: ${selector}`);
+        return;
+      }
+    }
+  }
+  await page.keyboard.press("Escape").catch(() => undefined);
+  await sleep(500);
+  if (!(await visibleNow(dialog))) {
+    notes.push("диалог во время съёмки закрыт клавишей Escape");
+    return;
+  }
+  if (state.hidden) return;
+  state.hidden = true;
+  notes.push("диалог не закрылся — прячу диалоги стилем");
+  await page.addStyleTag({ content: `${DIALOG} { visibility: hidden !important; }` }).catch(() => undefined);
+}
+
 export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResult> {
   const notes: string[] = [];
   mkdirSync(opts.outDir, { recursive: true });
@@ -151,7 +205,8 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
       ...(opts.chromiumPath ? { executablePath: opts.chromiumPath } : {}),
       args: ["--no-sandbox", "--disable-dev-shm-usage", "--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
     });
-    context = await browser.newContext({ viewport: { width: 1600, height: 900 }, locale: "ru-RU", permissions: [] });
+    const viewport = { width: 1600, height: 900 };
+    context = await browser.newContext({ viewport, locale: "ru-RU", permissions: [] });
     const page = await context.newPage();
     page.on("console", (msg) => log.debug({ text: msg.text().slice(0, 200) }, "browser console"));
     await page.goto(opts.url, { waitUntil: "domcontentloaded", timeout: 90_000 });
@@ -174,6 +229,7 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
     result.usedSelector = area?.selector ?? null;
     if (!area) notes.push("область презентации сразу не нашлась, ищу дальше");
 
+    const dialogState = { hidden: false };
     const deadline = Date.now() + opts.maxMinutes * 60_000;
     let lastHash = "";
     let pendingHash = "";
@@ -191,6 +247,8 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
         result.ended = true;
         break;
       }
+      // Диалог «как войти в аудио» и прочие окна всплывают и во время съёмки.
+      await dismissDialog(page, notes, dialogState);
       // Область пропала (демонстрация экрана, смена презентации) — ищем заново.
       if (area && !(await visibleNow(area.locator))) {
         notes.push(`область ${area.selector} пропала, ищу заново`);
@@ -205,7 +263,11 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
       }
       let png: Buffer;
       try {
-        png = area ? await area.locator.screenshot({ timeout: 15_000 }) : await page.screenshot({ timeout: 15_000 });
+        if (area && opts.padPx) {
+          // Чуть шире области: верх слайда у BBB бывает под кромкой контейнера.
+          const box = await area.locator.boundingBox({ timeout: 5000 });
+          png = box ? await page.screenshot({ timeout: 15_000, clip: padClip(box, opts.padPx, viewport) }) : await area.locator.screenshot({ timeout: 15_000 });
+        } else png = area ? await area.locator.screenshot({ timeout: 15_000 }) : await page.screenshot({ timeout: 15_000 });
       } catch (err) {
         log.debug({ err: String(err) }, "кадр не снялся");
         // Не снялось — возможно, элемент подменили: на следующем круге ищем заново.
