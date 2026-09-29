@@ -94,9 +94,22 @@ jobs:
         run: |
           set -euo pipefail
           api() { curl -sS --fail-with-body -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$@"; }
+          # Client API панели знает сервер по короткому id из адреса страницы
+          # (panel…/server/cf0acdc5 → cf0acdc5). Номер VPS из биллинга или
+          # адрес целиком дают 404, и по замаскированному секрету этого не видно.
+          if ! [[ "$SERVER_ID" =~ ^[0-9a-f]{8}$ ]]; then
+            hint=""; [[ "$SERVER_ID" == */* ]] && hint=", в нём есть «/» — похоже, вставлен адрес целиком"
+            echo "::error::PTERO_RECORDER_SERVER_ID должен быть коротким id сервера из адреса панели: 8 символов (цифры и a–f), то, что стоит после /server/. Сейчас в секрете ${#SERVER_ID} символ(ов)$hint."
+            exit 1
+          fi
           status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID" || true)
           if [ "$status" = "404" ]; then
-            echo "::error::Сервера PTERO_RECORDER_SERVER_ID нет в панели Pterodactyl (404). Если записывалка на обычном VPS — удали секрет PTERO_RECORDER_SERVER_ID и задай RECORDER_SSH_HOST и RECORDER_SSH_KEY (docs/DEPLOY.md, «Вариант А»)."
+            # Какие сервера ключ видит вообще: если нужного нет — ключ от другого аккаунта панели.
+            visible=$(api "$PANEL_URL/api/client?per_page=100" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(", ".join(s["attributes"]["identifier"] for s in d) or "ни одного")' 2>/dev/null || echo "список не получен")
+            echo "::error::Сервера с id из PTERO_RECORDER_SERVER_ID нет среди серверов, доступных ключу PTERO_API_KEY (404). Ключу видны сервера: $visible. Нет нужного — ключ выдан другим аккаунтом панели: создай ключ в аккаунте-владельце сервера (панель → Account → API Credentials) или добавь этот аккаунт на страницу сервера (Users). Если записывалка на обычном VPS — удали секрет PTERO_RECORDER_SERVER_ID и задай RECORDER_SSH_HOST и RECORDER_SSH_KEY (docs/DEPLOY.md, «Вариант А»)."
+            exit 1
+          elif [ "$status" != "200" ]; then
+            echo "::error::Панель ответила $status на запрос сервера PTERO_RECORDER_SERVER_ID: проверь PTERO_PANEL_URL и PTERO_API_KEY."
             exit 1
           fi
           upload_url=$(api "$PANEL_URL/api/client/servers/$SERVER_ID/files/upload" | python3 -c 'import json,sys; print(json.load(sys.stdin)["attributes"]["url"])')
