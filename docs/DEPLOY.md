@@ -75,7 +75,7 @@
 
 **Вариант А — VPS (Docker, выкладка по SSH).** GitHub сам собирает образ на сервере и перезапускает контейнер после каждого мёржа в `main`.
 
-1. На VPS (под root): поставить Docker — `curl -fsSL https://get.docker.com | sh`; создать `/opt/vish-recorder/.env` по образцу `recorder/.env.example` (значения без кавычек).
+1. На VPS (под root): создать `/opt/vish-recorder/.env` по образцу `recorder/.env.example` (значения без кавычек). Docker деплой поставит сам, если его нет (официальный `get.docker.com`); памяти нужно ≥ 1,5 ГБ — на меньшей машине добавить swap.
 2. Ключ для деплоя — на своём компьютере: `ssh-keygen -t ed25519 -N "" -f vish-deploy`. Содержимое `vish-deploy.pub` дописать на VPS в `/root/.ssh/authorized_keys`.
 3. GitHub → Settings → Secrets and variables → Actions → New repository secret:
    - `RECORDER_SSH_HOST` — IP сервера;
