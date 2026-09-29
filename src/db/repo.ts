@@ -916,6 +916,10 @@ export class Repo {
     this.db.prepare("UPDATE slide_decks SET sent = ?, file_id = COALESCE(?, file_id) WHERE id = ?").run(sent, fileId, id);
   }
 
+  slideDeckCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM slide_decks").get() as { n: number }).n;
+  }
+
   recentSlideDecks(limit = 10): Array<{ id: number; date: string; subject: string; teacher: string | null; groups: string[]; slides: number; file: string; bytes: number; fileId: string | null; sent: number; createdAt: string }> {
     const rows = this.db.prepare("SELECT * FROM slide_decks ORDER BY id DESC LIMIT ?").all(limit) as Array<Record<string, unknown>>;
     return rows.map((r) => ({
