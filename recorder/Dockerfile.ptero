@@ -1,0 +1,22 @@
+# Образ для сервера записывалки в панели Pterodactyl (docs/DEPLOY.md, «Вариант
+# Б»). В образе Playwright уже есть Chromium со всеми системными библиотеками и
+# Node 24; здесь добавляется только точка входа как у yolks: Wings передаёт
+# стартовую команду в STARTUP и запускает контейнер от своего пользователя.
+# Кода записывалки в образе нет — его заливает workflow через API панели, как у
+# бота, и стартовая команда сервера ставит зависимости и запускает dist/main.js.
+#
+# Версия образа ОБЯЗАНА совпадать с playwright-core в package.json: каждая
+# версия ищет браузер своей ревизии (тест это проверяет).
+ARG PW_VERSION=1.63.0
+FROM mcr.microsoft.com/playwright:v${PW_VERSION}-noble
+
+# Wings запускает процесс под своим uid: браузеры в /ms-playwright в образе
+# Playwright уже с правами 777, домашний каталог — bind-mount /home/container.
+RUN useradd -m -d /home/container -s /bin/bash container
+COPY --chmod=755 deploy/ptero-entrypoint.sh /entrypoint.sh
+
+USER container
+ENV USER=container HOME=/home/container PLAYWRIGHT_BROWSERS_PATH=/ms-playwright NODE_ENV=production
+WORKDIR /home/container
+
+CMD ["/bin/bash", "/entrypoint.sh"]
