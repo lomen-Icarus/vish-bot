@@ -11,9 +11,16 @@ ARCHIVE="${1:-/tmp/recorder-src.tar.gz}"
 NAME=vish-recorder
 IMAGE=vish-recorder:latest
 
-command -v docker >/dev/null || { echo "Docker не установлен. Поставь: curl -fsSL https://get.docker.com | sh" >&2; exit 1; }
 [ -f "$DIR/.env" ] || { echo "Нет $DIR/.env — положи его по образцу recorder/.env.example и запусти деплой снова" >&2; exit 1; }
 [ -f "$ARCHIVE" ] || { echo "Нет архива с кодом: $ARCHIVE" >&2; exit 1; }
+# Docker ставится сам официальным скриптом: это единственное, что нужно на
+# чистом сервере, и забывать этот шаг руками — обычное дело.
+if ! command -v docker >/dev/null; then
+  echo "Docker не установлен — ставлю (curl -fsSL https://get.docker.com | sh)…"
+  curl -fsSL https://get.docker.com | sh || { echo "Docker не поставился: см. вывод выше, поставь руками и запусти деплой снова" >&2; exit 1; }
+fi
+systemctl is-active --quiet docker 2>/dev/null || systemctl start docker 2>/dev/null || true
+docker info >/dev/null 2>&1 || { echo "Docker установлен, но не запущен (docker info не отвечает): systemctl status docker" >&2; exit 1; }
 
 # Собираем рядом, пока старая версия работает: сломанная сборка её не трогает.
 rm -rf "$DIR/app.new"
