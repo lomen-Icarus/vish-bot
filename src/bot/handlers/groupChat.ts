@@ -14,18 +14,20 @@
  * («@ник это Фамилия Имя 12-23»); подписывает тему чата на слайды вебинаров;
  * ночью, если его долго не трогали, сначала сонно ворчит.
  */
-import { Composer, InlineKeyboard, type Api } from "grammy";
+import { Composer, InlineKeyboard, InputFile, type Api } from "grammy";
 import type { Message, UserFromGetMe } from "grammy/types";
 import { randomInt } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { BotContext, Deps } from "../context.js";
 import { chatAllowance, type ChatVerdict } from "../../chat/limits.js";
 import { featuresText, needGroup } from "../views.js";
-import { esc } from "../../schedule/format.js";
-import { todayMsk, wallClock, type WallClock } from "../../time.js";
+import { esc, plural } from "../../schedule/format.js";
+import { fmtDDMM, todayMsk, wallClock, type WallClock } from "../../time.js";
 import { logger } from "../../logger.js";
 import type { ChatTool } from "../../chat/service.js";
+import type { QaMedia } from "../../chat/qa.js";
 import { featureReply, isNight, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, SLEEPY_IDLE_MS, sleepyLine } from "../../chat/social.js";
-import { confirmSlideSub, forgetIntro, handleIntro, handleSlidesRequest, introGroup, knownFirstName } from "../social.js";
+import { confirmSlideSub, forgetIntro, handleIntro, handleSlidesRequest, introGroup, knownFirstName, slidesTool, type DeckToSend, type SlidesReply, type SlidesToolState } from "../social.js";
 
 export const groupChatHandlers = new Composer<BotContext>();
 
@@ -294,9 +296,12 @@ groupChatHandlers.on("message", async (ctx, next) => {
   const quick = await quickReply(ctx, raw, text, group);
   if (quick) {
     lastReplyAt.set(chatId, Date.now());
-    await ctx.reply(quick.text, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(quick.kb ? { reply_markup: quick.kb } : {}) }).catch((err: unknown) => logger.warn({ err: String(err).slice(0, 200), chat: chatId }, "group chat: quick reply failed"));
-    deps.repo.logChat(chatId, userId, text || raw, quick.text);
-    service.memory.push(chatId, { at: Date.now(), userId: null, name: me.first_name, text: quick.text, toUserId: userId });
+    if (quick.media) await sendMedia(ctx, quick.media, quick.text);
+    else await ctx.reply(quick.text, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(quick.kb ? { reply_markup: quick.kb } : {}) }).catch((err: unknown) => logger.warn({ err: String(err).slice(0, 200), chat: chatId }, "group chat: quick reply failed"));
+    if (quick.deck) await sendDeck(ctx, quick.deck);
+    const logged = quick.text || `[${quick.media?.kind ?? "media"}]`;
+    deps.repo.logChat(chatId, userId, text || raw, logged);
+    service.memory.push(chatId, { at: Date.now(), userId: null, name: me.first_name, text: logged, toUserId: userId });
     return;
   }
 
@@ -330,7 +335,9 @@ groupChatHandlers.on("message", async (ctx, next) => {
     if (sleepy) await ctx.reply(sleepyLine(chatClock.random)).catch(() => undefined);
     await ctx.replyWithChatAction("typing").catch(() => undefined);
     const history = deps.repo.recentChat(chatId, userId, 6 * 60 * 60_000, 6).map((h) => ({ question: h.question, answer: h.answer }));
-    const tools: ChatTool[] = [...(deps.ask?.groupTools({ group, subgroup: needGroup(ctx) ? ctx.user.subgroup : null, userId, botHelp: featuresText(deps) }) ?? []), ideaTool(ctx, title)];
+    // Слайды: модель зовёт chat_slides, а кнопки или PDF бот прикладывает к её ответу сам.
+    const slides: SlidesToolState = {};
+    const tools: ChatTool[] = [...(deps.ask?.groupTools({ group, subgroup: needGroup(ctx) ? ctx.user.subgroup : null, userId, botHelp: featuresText(deps) }) ?? []), ideaTool(ctx, title), slidesTool(ctx, group, slides)];
     const result = await service.reply({
       chatTitle: title,
       speaker,
@@ -348,7 +355,11 @@ groupChatHandlers.on("message", async (ctx, next) => {
     });
     const answer = result.refused ? REFUSAL_PHRASE : result.text || "Хм, даже не знаю, что сказать 🙂";
     deps.repo.bumpChatUsage(chatId, userId, day, result.inputTokens, result.outputTokens);
-    await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } });
+    // Заготовка-гифка: её шлёт бот, ответ модели — подпись.
+    const media = !result.refused && result.top?.entry.media ? result.top.entry.media : null;
+    if (media) await sendMedia(ctx, media, answer);
+    else await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(slides.kb ? { reply_markup: slides.kb } : {}) });
+    if (slides.deck) await sendDeck(ctx, slides.deck);
     deps.repo.logChat(chatId, userId, text || "(позвал без текста)", answer);
     service.memory.push(chatId, { at: Date.now(), userId: null, name: me.first_name, text: answer, toUserId: userId });
     // Ни имён, ни текста в логах: только цифры.
@@ -373,10 +384,16 @@ groupChatHandlers.on("message", async (ctx, next) => {
  *  2) слайды вебинаров в эту тему: подписка, отписка, список;
  *  3) знакомство «@ник это Фамилия Имя 12-23» или «я — …».
  */
-async function quickReply(ctx: BotContext, raw: string, text: string, group: ReturnType<typeof needGroup>): Promise<{ text: string; kb?: InlineKeyboard } | null> {
+type QuickReply = SlidesReply & { media?: QaMedia };
+
+async function quickReply(ctx: BotContext, raw: string, text: string, group: ReturnType<typeof needGroup>): Promise<QuickReply | null> {
   const deps = ctx.deps;
   const msg = ctx.msg!;
   const chatId = ctx.chat!.id;
+  // Заготовка — одна гифка без текста, и реплика совпала с вопросом (не по
+  // опечатке): модели тут нечего писать, шлём гифку сразу, лимит не тратим.
+  const top = deps.chat?.qa.match(text, 1)[0];
+  if (top && top.how !== "typo" && top.entry.media && !top.entry.answer) return { text: "", media: top.entry.media };
   const reply = msg.reply_to_message;
   const askId = deps.repo.getMeta(aboutAskKey(chatId));
   if (askId && reply?.from?.id === ctx.me.id && String(reply.message_id) === askId && (text || raw).trim() && (await mayDescribeChat(ctx))) {
@@ -392,6 +409,49 @@ async function quickReply(ctx: BotContext, raw: string, text: string, group: Ret
   const introAnswer = intro ? handleIntro(deps, intro, ctx.from!, chatId, true) : null;
   if (introAnswer) return { text: introAnswer };
   return null;
+}
+
+/** Гифка, стикер или картинка из сценария — ответом на реплику; подпись — текст модели. */
+async function sendMedia(ctx: BotContext, media: QaMedia, caption: string): Promise<void> {
+  const msg = ctx.msg!;
+  const reply = { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true } };
+  // Подпись у Telegram — до 1024 символов; у стикера подписи нет вовсе.
+  const text = caption.trim().slice(0, 1000);
+  try {
+    if (media.kind === "gif") await ctx.replyWithAnimation(media.fileId, { ...reply, ...(text ? { caption: text } : {}) });
+    else if (media.kind === "photo") await ctx.replyWithPhoto(media.fileId, { ...reply, ...(text ? { caption: text } : {}) });
+    else {
+      await ctx.replyWithSticker(media.fileId, reply);
+      if (text) await ctx.reply(text).catch(() => undefined);
+    }
+  } catch (err) {
+    // file_id умер (сменили токен бота) или гифку удалили — отвечаем хотя бы текстом.
+    logger.warn({ err: String(err).slice(0, 200), kind: media.kind }, "group chat: media reply failed");
+    await ctx.reply(text || "Тут должна была быть гифка, но она потерялась 😔", reply).catch(() => undefined);
+  }
+}
+
+/**
+ * Прислать готовый PDF в чат (в ту же тему): по file_id, если он уже уходил
+ * в Telegram, иначе файлом с диска — и запомнить file_id на будущее.
+ */
+async function sendDeck(ctx: BotContext, deck: DeckToSend): Promise<void> {
+  const name = `${deck.date}-${deck.subject.replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 50) || "slides"}.pdf`;
+  let doc: string | InputFile;
+  try {
+    doc = deck.fileId ?? new InputFile(readFileSync(deck.file), name);
+  } catch (err) {
+    logger.warn({ err: String(err).slice(0, 200), deck: deck.id }, "group chat: deck file unreadable");
+    await ctx.reply("Файл этой записи у меня потерялся 😔").catch(() => undefined);
+    return;
+  }
+  try {
+    const sent = await ctx.replyWithDocument(doc, { caption: `📎 ${deck.subject} · ${fmtDDMM(deck.date)} · ${deck.slides} ${plural(deck.slides, "слайд", "слайда", "слайдов")}` });
+    if (!deck.fileId && sent.document?.file_id) ctx.deps.repo.markDeckSent(deck.id, sent.document.file_id, 0);
+  } catch (err) {
+    logger.warn({ err: String(err).slice(0, 200), deck: deck.id }, "group chat: deck send failed");
+    await ctx.reply("Не смог отправить файл, попробуй позже 🙂").catch(() => undefined);
+  }
 }
 
 /** Инструмент «записать идею»: модель зовёт его, когда боту предлагают новую функцию. */
