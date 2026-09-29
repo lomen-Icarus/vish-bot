@@ -23,11 +23,12 @@ import { chatAllowance, type ChatVerdict } from "../../chat/limits.js";
 import { featuresText, needGroup } from "../views.js";
 import { esc, plural } from "../../schedule/format.js";
 import { fmtDDMM, todayMsk, wallClock, type WallClock } from "../../time.js";
+import { deckFileName } from "../../notify/deckName.js";
 import { logger } from "../../logger.js";
 import type { ChatTool } from "../../chat/service.js";
 import type { QaMedia } from "../../chat/qa.js";
 import { featureReply, isNight, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, SLEEPY_IDLE_MS, sleepyLine } from "../../chat/social.js";
-import { confirmSlideSub, forgetIntro, handleIntro, handleSlidesRequest, introGroup, knownFirstName, slidesTool, type DeckToSend, type SlidesReply, type SlidesToolState } from "../social.js";
+import { confirmSlideSub, forgetIntro, handleIntro, handleSlidesRequest, introGroup, introTargets, introTool, knownFirstName, slidesTool, type DeckToSend, type SlidesReply, type SlidesToolState } from "../social.js";
 
 export const groupChatHandlers = new Composer<BotContext>();
 
@@ -112,8 +113,12 @@ async function mayDescribeChat(ctx: BotContext): Promise<boolean> {
 /** Часы и случай — отдельно, чтобы тесты не зависели от того, ночь ли сейчас. */
 export const chatClock: { now: () => WallClock; random: (n: number) => number } = { now: () => wallClock(), random: (n) => randomInt(n) };
 
-/** «Это не я», «не зови меня так» — стереть знакомство про себя. */
-const NOT_ME = /^(?:(?:это|нет,?)\s+)?не\s+я(?:[\s.!)]|$)|^не\s+зови\s+меня|^забудь\s+(?:меня|моё\s+имя|мое\s+имя)/iu;
+/**
+ * «Это не я», «не зови меня так» — стереть знакомство про себя. Только вся
+ * реплика целиком: «не я ли вчера спрашивал…» или «забудь меня разбудить»
+ * знакомство стирать не должны.
+ */
+export const NOT_ME = /^(?:(?:это|нет,?)\s+)?не\s+я[.!)\s]*$|^не\s+зови\s+меня(?:\s+(?:так|по\s+имени))?[.!)\s]*$|^забудь\s+(?:меня|моё\s+имя|мое\s+имя)[.!)\s]*$/iu;
 
 /** Сколько идей в сутки от одного человека доходит до админов; остальные только пишутся в базу. */
 const IDEAS_NOTIFY_PER_DAY = 5;
@@ -337,7 +342,13 @@ groupChatHandlers.on("message", async (ctx, next) => {
     const history = deps.repo.recentChat(chatId, userId, 6 * 60 * 60_000, 6).map((h) => ({ question: h.question, answer: h.answer }));
     // Слайды: модель зовёт chat_slides, а кнопки или PDF бот прикладывает к её ответу сам.
     const slides: SlidesToolState = {};
-    const tools: ChatTool[] = [...(deps.ask?.groupTools({ group, subgroup: needGroup(ctx) ? ctx.user.subgroup : null, userId, botHelp: featuresText(deps) }) ?? []), ideaTool(ctx, title), slidesTool(ctx, group, slides)];
+    const tools: ChatTool[] = [
+      ...(deps.ask?.groupTools({ group, subgroup: needGroup(ctx) ? ctx.user.subgroup : null, userId, botHelp: featuresText(deps) }) ?? []),
+      ideaTool(ctx, title),
+      slidesTool(ctx, group, slides),
+      // Знакомство в свободной форме: «знакомься, это Фамилия Имя — @ник».
+      introTool(ctx, introTargets(msg, me)),
+    ];
     const result = await service.reply({
       chatTitle: title,
       speaker,
@@ -355,11 +366,14 @@ groupChatHandlers.on("message", async (ctx, next) => {
     });
     const answer = result.refused ? REFUSAL_PHRASE : result.text || "Хм, даже не знаю, что сказать 🙂";
     deps.repo.bumpChatUsage(chatId, userId, day, result.inputTokens, result.outputTokens);
-    // Заготовка-гифка: её шлёт бот, ответ модели — подпись.
-    const media = !result.refused && result.top?.entry.media ? result.top.entry.media : null;
+    // Заготовка-гифка: её шлёт бот, ответ модели — подпись. Только при точном
+    // совпадении вопроса (похожий вопрос — ещё не повод для гифки) и не когда
+    // к ответу нужны кнопки слайдов: у гифки-ответа их не будет.
+    const kb = result.refused ? undefined : slides.kb;
+    const media = !result.refused && !kb && result.top?.how === "exact" && result.top.entry.media ? result.top.entry.media : null;
     if (media) await sendMedia(ctx, media, answer);
-    else await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(slides.kb ? { reply_markup: slides.kb } : {}) });
-    if (slides.deck) await sendDeck(ctx, slides.deck);
+    else await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(kb ? { reply_markup: kb } : {}) });
+    if (slides.deck && !result.refused) await sendDeck(ctx, slides.deck);
     deps.repo.logChat(chatId, userId, text || "(позвал без текста)", answer);
     service.memory.push(chatId, { at: Date.now(), userId: null, name: me.first_name, text: answer, toUserId: userId });
     // Ни имён, ни текста в логах: только цифры.
@@ -390,10 +404,11 @@ async function quickReply(ctx: BotContext, raw: string, text: string, group: Ret
   const deps = ctx.deps;
   const msg = ctx.msg!;
   const chatId = ctx.chat!.id;
-  // Заготовка — одна гифка без текста, и реплика совпала с вопросом (не по
-  // опечатке): модели тут нечего писать, шлём гифку сразу, лимит не тратим.
+  // Заготовка — одна гифка без текста, и реплика совпала с вопросом дословно:
+  // модели тут нечего писать, шлём гифку сразу, лимит не тратим. Похожая
+  // реплика («привет, а где пара?» к гифке на «привет») идёт к модели.
   const top = deps.chat?.qa.match(text, 1)[0];
-  if (top && top.how !== "typo" && top.entry.media && !top.entry.answer) return { text: "", media: top.entry.media };
+  if (top && top.how === "exact" && top.entry.media && !top.entry.answer) return { text: "", media: top.entry.media };
   const reply = msg.reply_to_message;
   const askId = deps.repo.getMeta(aboutAskKey(chatId));
   if (askId && reply?.from?.id === ctx.me.id && String(reply.message_id) === askId && (text || raw).trim() && (await mayDescribeChat(ctx))) {
@@ -436,10 +451,9 @@ async function sendMedia(ctx: BotContext, media: QaMedia, caption: string): Prom
  * в Telegram, иначе файлом с диска — и запомнить file_id на будущее.
  */
 async function sendDeck(ctx: BotContext, deck: DeckToSend): Promise<void> {
-  const name = `${deck.date}-${deck.subject.replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 50) || "slides"}.pdf`;
   let doc: string | InputFile;
   try {
-    doc = deck.fileId ?? new InputFile(readFileSync(deck.file), name);
+    doc = deck.fileId ?? new InputFile(readFileSync(deck.file), deckFileName(deck));
   } catch (err) {
     logger.warn({ err: String(err).slice(0, 200), deck: deck.id }, "group chat: deck file unreadable");
     await ctx.reply("Файл этой записи у меня потерялся 😔").catch(() => undefined);
@@ -447,7 +461,8 @@ async function sendDeck(ctx: BotContext, deck: DeckToSend): Promise<void> {
   }
   try {
     const sent = await ctx.replyWithDocument(doc, { caption: `📎 ${deck.subject} · ${fmtDDMM(deck.date)} · ${deck.slides} ${plural(deck.slides, "слайд", "слайда", "слайдов")}` });
-    if (!deck.fileId && sent.document?.file_id) ctx.deps.repo.markDeckSent(deck.id, sent.document.file_id, 0);
+    // Только file_id: отметку «разослано» и число получателей ставит рассылка.
+    if (!deck.fileId && sent.document?.file_id) ctx.deps.repo.setDeckFileId(deck.id, sent.document.file_id);
   } catch (err) {
     logger.warn({ err: String(err).slice(0, 200), deck: deck.id }, "group chat: deck send failed");
     await ctx.reply("Не смог отправить файл, попробуй позже 🙂").catch(() => undefined);
