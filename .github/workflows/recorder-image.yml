@@ -1,0 +1,53 @@
+# Образ для сервера записывалки в панели Pterodactyl: Chromium из образа
+# Playwright плюс точка входа под Wings (recorder/Dockerfile.ptero). Кода в
+# образе нет, поэтому пересобирается только когда меняются сам Dockerfile,
+# точка входа или версия playwright-core; можно и вручную (Run workflow).
+# Панель тянет его как ghcr.io/<владелец>/vish-recorder:latest — пакет должен
+# быть публичным (Packages → vish-recorder → Package settings → Visibility).
+name: Recorder image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - recorder/Dockerfile.ptero
+      - recorder/deploy/ptero-entrypoint.sh
+      - recorder/package.json
+      - .github/workflows/recorder-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image name and Playwright version
+        id: meta
+        run: |
+          set -euo pipefail
+          # Реестр требует имя в нижнем регистре; версия — из package.json,
+          # чтобы образ и playwright-core не разошлись.
+          echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/vish-recorder" >> "$GITHUB_OUTPUT"
+          echo "pw=$(node -p 'require("./recorder/package.json").dependencies["playwright-core"]')" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: recorder
+          file: recorder/Dockerfile.ptero
+          push: true
+          build-args: PW_VERSION=${{ steps.meta.outputs.pw }}
+          tags: |
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:pw${{ steps.meta.outputs.pw }}
+      - name: Done
+        run: |
+          echo "Образ ${{ steps.meta.outputs.image }}:latest (Playwright ${{ steps.meta.outputs.pw }}) опубликован."
+          echo "В панели: Admin → Nests → egg записывалки → Docker Images → добавить эту строку, затем выбрать её у сервера."
