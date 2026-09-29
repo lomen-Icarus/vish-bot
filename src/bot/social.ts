@@ -16,7 +16,7 @@ import { findGroup, logicalKeyFor, type LogicalGroup } from "../schedule/groups.
 import { sameGroup } from "../portal/webinars.js";
 import { firstNameOf } from "../students/known.js";
 import type { ChatTool } from "../chat/service.js";
-import { matchSubjects, matchSubjectsLoose, sameSubject, subjectKey, type IntroRequest, type SlidesRequest } from "../chat/social.js";
+import { cleanName, matchSubjects, matchSubjectsLoose, sameSubject, subjectKey, type IntroRequest, type SlidesRequest } from "../chat/social.js";
 import { nameWords, samePersonWords } from "../text/match.js";
 import { addDays, fmtDDMM, todayMsk, weekdayShort, type LocalDate } from "../time.js";
 import { esc } from "../schedule/format.js";
@@ -59,39 +59,126 @@ export function introGroup(deps: Deps, from: { id: number; username?: string | u
 
 // ---------- знакомства ----------
 
-export const INTRO_HINT = "Запишу, если скажешь и группу: «@ник это Фамилия Имя 12-23» 🙂";
+/**
+ * Ответ на знакомство. Один и тот же — и когда записали, и когда молча не
+ * стали (человек в файле старост, анонимность): иначе по ответу любой в чате
+ * узнал бы, есть ли ник в KNOWN_DB.
+ */
+function introOk(withGroup: boolean): string {
+  return withGroup ? "Приятно познакомиться, запишу 🙂" : "Приятно познакомиться, запишу 🙂 Группу не знаю — скажешь, запомню и её.";
+}
 
 /**
  * Что ответить на знакомство и записать ли его. null — это не знакомство
  * (например, без группы и не боту): пусть сообщение идёт дальше.
  */
 export function handleIntro(deps: Deps, intro: IntroRequest, by: { id: number }, chatId: number, addressed: boolean): string | null {
-  if (!intro.groupQuery) return addressed ? INTRO_HINT : null;
-  const groups = findGroup(deps.service.groups(), intro.groupQuery);
-  if (!groups.length) return addressed || intro.self ? `Не знаю группу «${intro.groupQuery}» 🤔 Напиши как 12-23.` : null;
-  const group = groups[0]!;
+  // Без группы знакомство пишем, только если знакомили именно бота: в общем
+  // потоке «@ник это …» без группы слишком часто оказывается не знакомством.
+  if (!intro.groupQuery && !addressed) return null;
+  let group: LogicalGroup | null = null;
+  if (intro.groupQuery) {
+    const groups = findGroup(deps.service.groups(), intro.groupQuery);
+    if (!groups.length) return addressed || intro.self ? `Не знаю группу «${intro.groupQuery}» 🤔 Напиши как 12-23.` : null;
+    group = groups[0]!;
+  }
   // Человека могли упомянуть ником или без ника (text_mention): если он писал
   // боту, знаем и то и другое — иначе одно знакомство расползлось бы на два.
   const target = intro.userId != null ? deps.repo.getUser(intro.userId) : intro.username ? deps.repo.userByUsername(intro.username) : null;
   const username = intro.username ?? target?.username?.toLowerCase() ?? null;
   const userId = intro.userId ?? target?.id ?? null;
-  if (target?.anon) return "Приятно познакомиться 🙂 Но записывать не буду: у человека включена анонимность.";
-  // Файл старост главнее: этого человека бот уже знает.
-  if (username && deps.known?.byUsername(username)) return "А я уже знаю этого человека 🙂";
+  // Анонимность и файл старост: не записываем, но отвечаем как обычно — ответ
+  // не должен выдавать ни анонимность, ни то, что ник есть в KNOWN_DB.
+  const silently = (): string => {
+    logger.info({ chat: chatId }, "group chat: intro not saved (private)");
+    return introOk(group !== null);
+  };
+  if (target?.anon) return silently();
+  if (username && deps.known?.byUsername(username)) return silently();
   const existing = (userId != null ? deps.repo.introByUserId(userId) : null) ?? (username ? deps.repo.introByUsername(username) : null);
   const want = nameWords(intro.name);
   if (existing && !intro.self) {
     return samePersonWords(want, nameWords(existing.name)) ? "Да я уже знаю 🙂" : "Этот ник у меня уже записан за кем-то другим 🤔 Если это ошибка — пусть человек сам представится: «@бот я — Фамилия Имя 12-23».";
   }
   // Сам человек может поправить себя, но не присвоить чужое имя.
-  const takenInFile = deps.known?.nameTakenByOther(intro.name, username) ?? false;
+  if (deps.known?.nameTakenByOther(intro.name, username)) return silently();
+  // Знакомства из чатов публичны — о совпадении с ними говорить можно.
   const takenInChats = deps.repo
     .intros(2000)
     .some((i) => i.id !== existing?.id && !(username && i.username === username) && !(userId != null && i.userId === userId) && samePersonWords(want, nameWords(i.name)));
-  if (takenInFile || takenInChats) return "А этого человека я уже знаю под другим ником 🤔";
-  deps.repo.saveIntro({ username, userId, name: intro.name, groupTitle: group.title, chatId, introducedBy: by.id });
+  if (takenInChats) return "А этого человека я уже знаю под другим ником 🤔";
+  deps.repo.saveIntro({ username, userId, name: intro.name, groupTitle: group?.title ?? null, chatId, introducedBy: by.id });
   logger.info({ chat: chatId, self: intro.self }, "group chat: intro saved");
-  return "Приятно познакомиться, запишу 🙂";
+  return introOk(group !== null);
+}
+
+/** Кого можно знакомить в этом сообщении: упомянутые (кроме бота) и автор реплики, на которую ответили. */
+export interface IntroTargets {
+  mentions: Array<{ username: string | null; userId: number | null }>;
+  replied: { username: string | null; userId: number } | null;
+}
+
+export function introTargets(msg: Message, me: { id: number; username?: string | undefined }): IntroTargets {
+  const text = msg.text ?? msg.caption ?? "";
+  const bot = me.username ? `@${me.username.toLowerCase()}` : null;
+  const mentions: IntroTargets["mentions"] = [];
+  for (const e of msg.entities ?? msg.caption_entities ?? []) {
+    if (e.type === "mention") {
+      const piece = text.slice(e.offset, e.offset + e.length).toLowerCase();
+      if (piece !== bot) mentions.push({ username: piece.replace(/^@/, ""), userId: null });
+    } else if (e.type === "text_mention" && e.user.id !== me.id && !e.user.is_bot) mentions.push({ username: e.user.username?.toLowerCase() ?? null, userId: e.user.id });
+  }
+  const r = msg.reply_to_message?.from;
+  const replied = r && !r.is_bot && r.id !== me.id && r.id !== msg.from?.id ? { username: r.username?.toLowerCase() ?? null, userId: r.id } : null;
+  return { mentions, replied };
+}
+
+/**
+ * Инструмент для модели: знакомство в любой формулировке («знакомься, это
+ * Фамилия Имя — @ник», «это Коля Петров» ответом на его сообщение, «я — …»).
+ * Модель только достаёт ФИО и группу; кого знакомят, бот берёт из самого
+ * сообщения (упоминание или ответ), так что чужой ник модель не подставит.
+ */
+export function introTool(ctx: BotContext, targets: IntroTargets): ChatTool {
+  const deps = ctx.deps;
+  const from = ctx.from!;
+  const chatId = ctx.chat!.id;
+  return {
+    name: "remember_person",
+    description:
+      "Запомнить человека, с которым тебя знакомят в чате: «знакомься, это Фамилия Имя @ник», «@ник — Фамилия Имя 12-23», «это Фамилия Имя» ответом на его сообщение, «я — Фамилия Имя». Вызывай при любом знакомстве, как бы его ни сформулировали. Имя потом можно использовать при обращении.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Фамилия и имя (можно с отчеством), как написали: «Лаврентьев Николай»" },
+        username: { type: "string", description: "Ник этого человека без @, если он есть в сообщении" },
+        group: { type: "string", description: "Группа, если назвали: «12-23»" },
+        self: { type: "boolean", description: "true — человек представляется сам («я — …»)" },
+      },
+      required: ["name"],
+    },
+    parse: (input: unknown) => {
+      const raw = (input ?? {}) as { name?: unknown; username?: unknown; group?: unknown; self?: unknown };
+      const plain = typeof raw.name === "string" ? raw.name.replace(/[,.!]+/g, " ").replace(/\s+/g, " ").trim() : "";
+      // Только буквы (и дефис в двойной фамилии): ни ников, ни цифр, ни эмодзи в «имени».
+      const name = /^\p{L}+(?:-\p{L}+)?(?: \p{L}+(?:-\p{L}+)?){1,2}$/u.test(plain) ? cleanName(plain) : null;
+      if (!name) throw new Error("name: нужно 2–3 слова — фамилия и имя");
+      const username = typeof raw.username === "string" && raw.username.trim() ? raw.username.trim().replace(/^@/, "").toLowerCase() : null;
+      const group = typeof raw.group === "string" && raw.group.trim() ? raw.group.trim().slice(0, 30) : null;
+      return { name, username, group, self: raw.self === true };
+    },
+    run: async ({ name, username, group, self }: { name: string; username: string | null; group: string | null; self: boolean }) => {
+      let who: { username: string | null; userId: number | null } | null = null;
+      if (username) who = targets.mentions.find((m) => m.username === username) ?? null;
+      else if (self) who = { username: from.username?.toLowerCase() ?? null, userId: from.id };
+      else if (targets.mentions.length === 1) who = targets.mentions[0]!;
+      else if (!targets.mentions.length && targets.replied) who = targets.replied;
+      if (!who) return "Не понял, кого знакомят. Ответь ровно: «А кто это? Отметь человека через @ник или ответь на его сообщение 🙂»";
+      const isSelf = who.userId === from.id || (!!who.username && who.username === from.username?.toLowerCase());
+      const text = handleIntro(deps, { username: who.username, userId: who.userId, name, groupQuery: group, self: isSelf }, from, chatId, true);
+      return `Ответь ровно этим текстом, ничего не добавляя: «${text ?? introOk(false)}».`;
+    },
+  };
 }
 
 // ---------- слайды в чат ----------
@@ -107,7 +194,20 @@ interface PendingSub {
   threadId: number | null;
   requester: number;
   candidates: SlideCandidate[];
+  /** Вопрос «отписать всё?»: какие предметы снять по «Да». */
+  unsubscribe?: string[];
   expiresAt: number;
+}
+
+/** Новый вопрос того же человека в той же теме заменяет прежний: висящих кнопок не копим. */
+function putPending(p: PendingSub): string {
+  for (const [k, v] of pendingSubs) {
+    if (v.expiresAt < Date.now() || (v.requester === p.requester && v.chatId === p.chatId && v.threadId === p.threadId)) pendingSubs.delete(k);
+  }
+  // Короткий id: callback_data у Telegram — не больше 64 байт.
+  const id = randomBytes(4).toString("hex");
+  pendingSubs.set(id, p);
+  return id;
 }
 
 const pendingSubs = new Map<string, PendingSub>();
@@ -205,7 +305,14 @@ export function handleSlidesRequest(ctx: BotContext, req: SlidesRequest, speaker
   }
   if (req.kind === "unsubscribe") {
     if (!subs.length) return { text: "Сюда и так никакие слайды не приходят 🙂" };
-    const hit = req.subject ? matchSubjects(req.subject, subs.map((s) => s.subject)) : subs.map((s) => s.subject);
+    if (!req.subject) {
+      // «Больше не присылай слайды» без предмета снимает всё — только по «Да» того, кто просил.
+      const all = [...new Set(subs.map((s) => s.subject))];
+      const id = putPending({ chatId, threadId, requester: ctx.from!.id, candidates: [], unsubscribe: all, expiresAt: Date.now() + PENDING_TTL_MS });
+      const kb = new InlineKeyboard().text("✅ Да, отписать", `css:${id}:0`).text("❌ Нет", `css:${id}:n`);
+      return { text: `Больше не присылать ${where} все слайды (${all.map((s) => `«${s}»`).join(", ")})?`, kb };
+    }
+    const hit = matchSubjects(req.subject, subs.map((s) => s.subject));
     if (!hit.length) return { text: `Слайдов «${req.subject}» сюда и не было. Приходят: ${subs.map((s) => `«${s.subject}»`).join(", ")}.` };
     for (const subject of new Set(hit)) deps.repo.removeSlideSubs(chatId, threadId, subjectKey(subject));
     return { text: `Ок, слайды ${[...new Set(hit)].map((s) => `«${s}»`).join(", ")} сюда больше не присылаю.` };
@@ -219,10 +326,7 @@ export function handleSlidesRequest(ctx: BotContext, req: SlidesRequest, speaker
   }
   const candidates = slideCandidates(deps, req.subject, group, !!req.group);
   if (!candidates.length) return { text: `Не нашёл онлайн-пар по «${req.subject}»${req.group && group ? ` у ${group.title}` : ""} 🤔 Напиши название ближе к расписанию.` };
-  // Короткий id: callback_data у Telegram — не больше 64 байт.
-  const id = randomBytes(4).toString("hex");
-  for (const [k, v] of pendingSubs) if (v.expiresAt < Date.now()) pendingSubs.delete(k);
-  pendingSubs.set(id, { chatId, threadId, requester: ctx.from!.id, candidates, expiresAt: Date.now() + PENDING_TTL_MS });
+  const id = putPending({ chatId, threadId, requester: ctx.from!.id, candidates, expiresAt: Date.now() + PENDING_TTL_MS });
   const kb = new InlineKeyboard();
   if (candidates.length === 1) {
     kb.text("✅ Да", `css:${id}:0`).text("❌ Нет", `css:${id}:n`);
@@ -269,8 +373,9 @@ export function slidesTool(ctx: BotContext, speakerGroup: LogicalGroup | null, s
     run: async ({ action, subject, group }: { action: "subscribe" | "send" | "unsubscribe" | "list"; subject: string | null; group: string | null }) => {
       const req: SlidesRequest = action === "list" ? { kind: "list" } : action === "unsubscribe" ? { kind: "unsubscribe", subject } : { kind: action, subject, group };
       const r = handleSlidesRequest(ctx, req, speakerGroup);
-      state.kb = r.kb;
-      state.deck = r.deck;
+      // Второй вызов за ответ (например, list после send) не стирает уже найденное.
+      if (r.kb) state.kb = r.kb;
+      if (r.deck) state.deck = r.deck;
       const attach = r.kb ? " Кнопки «Да/Нет» бот приложит к твоему ответу сам." : r.deck ? " PDF бот пришлёт следом за твоим ответом сам." : "";
       return `Ответь ровно этим текстом, ничего не добавляя: «${r.text}».${attach}`;
     },
@@ -297,6 +402,13 @@ export async function confirmSlideSub(ctx: BotContext, id: string, choice: strin
   if (choice === "n") {
     await ctx.answerCallbackQuery({ text: "Ок" });
     await ctx.editMessageText("Ок, не буду.").catch(() => undefined);
+    return;
+  }
+  if (pending.unsubscribe) {
+    for (const subject of pending.unsubscribe) ctx.deps.repo.removeSlideSubs(pending.chatId, pending.threadId, subjectKey(subject));
+    logger.info({ chat: pending.chatId, thread: pending.threadId }, "group chat: slides subscriptions removed");
+    await ctx.answerCallbackQuery({ text: "Готово" });
+    await ctx.editMessageText(`Ок, слайды ${pending.unsubscribe.map((s) => `«${s}»`).join(", ")} ${where} больше не присылаю.`).catch(() => undefined);
     return;
   }
   const c = pending.candidates[Number(choice)];

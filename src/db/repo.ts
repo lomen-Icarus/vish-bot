@@ -916,6 +916,14 @@ export class Repo {
     this.db.prepare("UPDATE slide_decks SET sent = ?, file_id = COALESCE(?, file_id) WHERE id = ?").run(sent, fileId, id);
   }
 
+  /**
+   * Запомнить file_id записи, не трогая счётчик рассылки: PDF ушёл в чат по
+   * просьбе «скинь слайды», а не рассылкой. Уже известный file_id не меняем.
+   */
+  setDeckFileId(id: number, fileId: string): void {
+    this.db.prepare("UPDATE slide_decks SET file_id = COALESCE(file_id, ?) WHERE id = ?").run(fileId, id);
+  }
+
   slideDeckCount(): number {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM slide_decks").get() as { n: number }).n;
   }

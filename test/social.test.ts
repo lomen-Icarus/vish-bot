@@ -9,7 +9,7 @@ import { openDatabase } from "../src/db/index.js";
 import { Repo, type WebinarRow } from "../src/db/repo.js";
 import { answerCell, parseQa, QaBase, splitMedia } from "../src/chat/qa.js";
 import { ChatService, type ChatClient } from "../src/chat/service.js";
-import { ABOUT_QUESTION, chatClock, groupChatHandlers, resetChatCooldowns, resetGroupChatState } from "../src/bot/handlers/groupChat.js";
+import { ABOUT_QUESTION, chatClock, groupChatHandlers, NOT_ME, resetChatCooldowns, resetGroupChatState } from "../src/bot/handlers/groupChat.js";
 import { chatAdminHandlers } from "../src/bot/handlers/chatAdmin.js";
 import { knownFirstName, resetSlideSubState } from "../src/bot/social.js";
 import { featureReply, matchSubjects, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, sameSubject, SLEEPY_LINES, isNight } from "../src/chat/social.js";
@@ -17,6 +17,7 @@ import { fmtDuration, meetingVerdict } from "../src/chat/meeting.js";
 import { DEFAULT_QA, seedDefaultQa } from "../src/chat/importCanned.js";
 import { KnownPeople } from "../src/students/known.js";
 import { Notifier } from "../src/notify/dispatcher.js";
+import { deckFileName } from "../src/notify/deckName.js";
 import { AskService } from "../src/ai/ask.js";
 import type { BotContext, Deps } from "../src/bot/context.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
@@ -100,8 +101,16 @@ describe("разбор реплик", () => {
   const from = { id: 7, username: "anya" };
 
   it("знакомство: «@ник это Фамилия Имя 12-23», с обращением к боту и «я — …»", () => {
-    const t1 = "@kira это петрова кира андреевна из 12-23";
+    const t1 = "@kira это Петрова Кира Андреевна из 12-23";
     expect(parseIntro(t1, ents(t1), "vish_bot", 1, from, false)).toEqual({ username: "kira", userId: null, name: "Петрова Кира Андреевна", groupQuery: "12-23", self: false });
+    // Без обращения к боту имя — только с заглавных: «@kira это новый чел 12-23» — не знакомство.
+    for (const t of ["@kira это петрова кира 12-23", "@kira это новый чел 12-23"]) expect(parseIntro(t, ents(t), "vish_bot", 1, from, false)).toBeNull();
+    // Боту можно и строчными — имя выправится.
+    const lower = "@vish_bot @kira это петрова кира 12-23";
+    expect(parseIntro(lower, ents(lower), "vish_bot", 1, from, true)).toMatchObject({ username: "kira", name: "Петрова Кира" });
+    // «Яна Иванова» — не «я — На Иванова».
+    const yana = "@vish_bot Яна Иванова 12-23";
+    expect(parseIntro(yana, ents(yana), "vish_bot", 1, from, true)).toBeNull();
     const t2 = "@vish_bot @kira — Петрова Кира, ВИШ-12-23";
     expect(parseIntro(t2, ents(t2), "vish_bot", 1, from, true)).toMatchObject({ username: "kira", name: "Петрова Кира", groupQuery: "ВИШ-12-23" });
     const t3 = "@vish_bot я — Иванов Иван 14-23";
@@ -118,9 +127,16 @@ describe("разбор реплик", () => {
     expect(parseSlidesRequest("сюда присылать слайды вебинаров по физике")).toEqual({ kind: "subscribe", subject: "физике", group: null });
     expect(parseSlidesRequest("кидай сюда слайды по матану для 12-23 пожалуйста")).toEqual({ kind: "subscribe", subject: "матану", group: "12-23" });
     expect(parseSlidesRequest("присылай слайды по практикуму по программированию")).toMatchObject({ subject: "практикуму по программированию" });
-    expect(parseSlidesRequest("сюда слайды")).toEqual({ kind: "subscribe", subject: null, group: null });
+    // Без предмета — вопрос, а не просьба: это к модели.
+    expect(parseSlidesRequest("сюда слайды")).toBeNull();
+    expect(parseSlidesRequest("где слайды лежат?")).toBeNull();
     expect(parseSlidesRequest("не присылай сюда слайды по физике")).toEqual({ kind: "unsubscribe", subject: "физике" });
-    expect(parseSlidesRequest("хватит слайдов")).toEqual({ kind: "unsubscribe", subject: null });
+    expect(parseSlidesRequest("хватит присылать слайды")).toEqual({ kind: "unsubscribe", subject: null });
+    expect(parseSlidesRequest("больше не шли сюда слайды")).toEqual({ kind: "unsubscribe", subject: null });
+    // Голые «стоп», «убери», «хватит» рядом со словом «слайд» — не отписка.
+    for (const t of ["хватит слайдов", "стоп, на слайде ошибка", "убери этот слайд из презентации", "не надо слайды листать так быстро"]) {
+      expect(parseSlidesRequest(t)?.kind).not.toBe("unsubscribe");
+    }
     expect(parseSlidesRequest("какие слайды сюда приходят")).toEqual({ kind: "list" });
     expect(parseSlidesRequest("слайды классные")).toBeNull();
     expect(parseSlidesRequest("когда физика")).toBeNull();
@@ -140,6 +156,10 @@ describe("разбор реплик", () => {
     expect(sameSubject("Физика", "Физика (лекция)")).toBe(true);
     expect(sameSubject("ФИЗИКА ", "физика")).toBe(true);
     expect(sameSubject("Программирование", "Практикум по программированию")).toBe(false);
+    expect(sameSubject("Математика", "Дискретная математика")).toBe(false);
+    expect(sameSubject("Физика", "Физика лекция")).toBe(true);
+    expect(sameSubject("Физика (пр)", "физика")).toBe(true);
+    expect(sameSubject("", "(лекция)")).toBe(false);
     expect(sameSubject("Физика", "Химия")).toBe(false);
   });
 
@@ -376,9 +396,10 @@ describe("группа: слайды в тему", () => {
     expect(repo.slideSubs(CHAT)).toHaveLength(0);
   });
 
-  it("без предмета — подсказка; незнакомый предмет — честное «не нашёл»; названная группа без таких пар — не подписка на все", async () => {
-    const { deps, repo } = setup();
-    expect(texts(await send(deps, msg("сюда слайды")))[0]).toMatch(/По какому предмету/);
+  it("без предмета — к модели; незнакомый предмет — честное «не нашёл»; названная группа без таких пар — не подписка на все", async () => {
+    const { deps, repo, requests } = setup();
+    expect(texts(await send(deps, msg("сюда слайды")))[0]).toBe("ответ бота");
+    expect(requests).toHaveLength(1);
     expect(texts(await send(deps, msg("сюда слайды по алхимии")))[0]).toMatch(/Не нашёл онлайн-пар/);
     repo.replaceWebinars(addDays(today, 2), [webinar({ groups: ["ВИШ-12-23"] })]);
     const strict = await send(deps, msg("кидай сюда слайды по физике для 14-23"));
@@ -441,8 +462,9 @@ describe("группа: люди", () => {
 
     repo.touchUser(30, "shy", "S");
     repo.updateUser(30, { anon: true });
+    // Ответ тот же, что при записи: по нему не узнать, что человек анонимен.
     const anon = await send(deps, msg("@shy это Тихонов Пётр 12-23", { mention: false }));
-    expect(texts(anon)[0]).toMatch(/анонимность/);
+    expect(texts(anon)).toEqual(["Приятно познакомиться, запишу 🙂"]);
     expect(repo.introByUsername("shy")).toBeNull();
 
     // Анонимный человек, которого знает файл старост: имени модель не получает.
@@ -450,8 +472,9 @@ describe("группа: люди", () => {
     withFile.repo.touchUser(40, "masha", "M");
     await send(withFile.deps, msg("привет", { userId: 40, username: "masha" }), 40, "masha");
     expect(lastUserText(withFile.requests[0]!)).toContain("это Мария");
-    // Файл старост главнее знакомств.
-    expect(texts(await send(withFile.deps, msg("@masha это Кто-то Другой 12-23", { mention: false })))[0]).toMatch(/уже знаю/);
+    // Файл старост главнее знакомств, но ответ его не выдаёт.
+    expect(texts(await send(withFile.deps, msg("@masha это Кто-то Другой 12-23", { mention: false })))).toEqual(["Приятно познакомиться, запишу 🙂"]);
+    expect(withFile.repo.introByUsername("masha")).toBeNull();
     withFile.repo.updateUser(40, { anon: true });
     await send(withFile.deps, msg("привет ещё", { userId: 40, username: "masha" }), 40, "masha");
     expect(lastUserText(withFile.requests[1]!)).not.toContain("Мария");
@@ -666,5 +689,145 @@ describe("сценарий: ответ гифкой", () => {
     };
     const shown = await send(deps, replyToGif, 99, undefined, chatAdminHandlers);
     expect(texts(shown)[0]).toContain("gif:CgACAgIAAxkBAAI");
+  });
+});
+
+describe("знакомство в свободной форме, отписка от всего, гифка, file_id", () => {
+  beforeEach(() => {
+    resetGroupChatState();
+    resetSlideSubState();
+    chatClock.now = () => ({ ...wallClock(), minutes: 12 * 60 });
+  });
+  const introCall = (input: object) => fakeMessage([{ type: "tool_use", id: "tu1", name: "remember_person", input } as Anthropic.ToolUseBlock], "tool_use");
+
+  it("«Знакомься это Лаврентьев Николай - @Mr_Mist_Midge» — модель зовёт remember_person, знакомство записано", async () => {
+    const answer = "Приятно познакомиться, запишу 🙂 Группу не знаю — скажешь, запомню и её.";
+    const { deps, repo, requests } = setup({ answers: [introCall({ name: "Лаврентьев Николай", username: "Mr_Mist_Midge" }), textMsg(answer)] });
+    const sent = await send(deps, msg("Знакомься это Лаврентьев Николай - @Mr_Mist_Midge"));
+    expect(systemText(requests[0]!)).toContain("вызови remember_person");
+    expect(systemText(requests[0]!)).toContain("Никогда не говори, что запомнил");
+    expect(requests[0]!.tools!.map((t) => t.name)).toContain("remember_person");
+    expect(JSON.stringify(requests[1]!.messages.at(-1)!.content)).toContain(`Ответь ровно этим текстом, ничего не добавляя: «${answer}»`);
+    expect(repo.introByUsername("mr_mist_midge")).toMatchObject({ name: "Лаврентьев Николай", groupTitle: null, introducedBy: 7 });
+    expect(texts(sent)).toEqual([answer]);
+  });
+
+  it("чужой ник модель не подставит; «я …» — про автора; «это …» ответом на сообщение — про автора того сообщения", async () => {
+    const { deps, repo, requests } = setup({
+      answers: [
+        introCall({ name: "Петров Пётр", username: "someone" }),
+        textMsg("а кто это?"),
+        introCall({ name: "Петров Пётр" }),
+        textMsg("а кто это?"),
+        introCall({ name: "Сидорова Аня", self: true }),
+        textMsg("ок"),
+        introCall({ name: "Козлов Олег", group: "14-23" }),
+        textMsg("ок"),
+        introCall({ name: "Kozlov 123" }),
+        textMsg("ок"),
+      ],
+    });
+    // Ника «someone» в сообщении нет — никого не пишем.
+    await send(deps, msg("знакомься, это Петров Пётр @petya"));
+    expect(JSON.stringify(requests[1]!.messages.at(-1)!.content)).toContain("А кто это?");
+    // Двое упомянуты, ник не назван — непонятно, кто из них.
+    await send(deps, msg("знакомься, это Петров Пётр, а это @petya и @vasya"));
+    expect(JSON.stringify(requests[3]!.messages.at(-1)!.content)).toContain("А кто это?");
+    expect(repo.intros()).toEqual([]);
+
+    await send(deps, msg("кстати, меня Аня Сидорова зовут", { username: "anya" }), 7, "anya");
+    expect(repo.introByUserId(7)).toMatchObject({ name: "Сидорова Аня", username: "anya" });
+
+    const reply: Update = {
+      update_id: nextId++,
+      message: {
+        message_id: nextId++,
+        date: 0,
+        chat: { id: CHAT, type: "supergroup", title: "Чат 12-23" },
+        from: { id: 7, is_bot: false, first_name: "Аня" },
+        text: "@vish_bot знакомься, это Козлов Олег",
+        entities: [{ type: "mention", offset: 0, length: 9 }],
+        reply_to_message: { message_id: 3, date: 0, chat: { id: CHAT, type: "supergroup", title: "x" }, from: { id: 21, is_bot: false, first_name: "Олег", username: "Oleg" }, text: "всем привет" } as never,
+      },
+    };
+    await send(deps, reply);
+    expect(repo.introByUserId(21)).toMatchObject({ name: "Козлов Олег", username: "oleg", groupTitle: "ВИШ-14-23" });
+
+    // Не имя — ошибка инструмента, ничего не пишется.
+    await send(deps, msg("знакомься, это @petya"));
+    expect(JSON.stringify(requests[9]!.messages.at(-1)!.content)).toContain("фамилия и имя");
+    expect(repo.introByUsername("petya")).toBeNull();
+  });
+
+  it("«это не я» — только вся реплика целиком", () => {
+    for (const t of ["это не я", "не я!", "нет, не я", "не зови меня так", "не зови меня по имени", "забудь меня", "забудь моё имя."]) expect(NOT_ME.test(t)).toBe(true);
+    for (const t of ["не я ли вчера спрашивал про физику?", "забудь меня разбудить", "не зови меня на пары", "это не я сломал принтер, честно"]) expect(NOT_ME.test(t)).toBe(false);
+  });
+
+  it("«не присылай сюда слайды» без предмета снимает всё только по «Да» того, кто просил", async () => {
+    const { deps, repo } = setup();
+    repo.addSlideSub({ chatId: CHAT, threadId: null, subject: "Физика", subjectNorm: "физика", groupKey: null, groupTitle: null, createdBy: 7 });
+    repo.addSlideSub({ chatId: CHAT, threadId: null, subject: "Химия", subjectNorm: "химия", groupKey: null, groupTitle: null, createdBy: 7 });
+    const asked = await send(deps, msg("не присылай сюда слайды"));
+    const q = asked.find((s) => s.method === "sendMessage")!;
+    expect(String(q.payload.text)).toBe("Больше не присылать в этот чат все слайды («Физика», «Химия»)?");
+    expect(repo.slideSubs(CHAT)).toHaveLength(2);
+    const data = (q.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> }).inline_keyboard[0]![0]!.callback_data;
+    expect((await send(deps, press(data, 8), 8)).find((s) => s.method === "answerCallbackQuery")!.payload.text).toMatch(/не тебя/);
+    expect(repo.slideSubs(CHAT)).toHaveLength(2);
+    const ok = await send(deps, press(data, 7), 7);
+    expect(String(ok.find((s) => s.method === "editMessageText")!.payload.text)).toBe("Ок, слайды «Физика», «Химия» сюда больше не присылаю.");
+    expect(repo.slideSubs(CHAT)).toHaveLength(0);
+
+    // Новый вопрос того же человека заменяет прежний: старая кнопка уже не работает.
+    repo.addSlideSub({ chatId: CHAT, threadId: null, subject: "Физика", subjectNorm: "физика", groupKey: null, groupTitle: null, createdBy: 7 });
+    const first = await send(deps, msg("больше не шли сюда слайды"));
+    const oldData = (first.find((s) => s.method === "sendMessage")!.payload.reply_markup as { inline_keyboard: Array<Array<{ callback_data: string }>> }).inline_keyboard[0]![0]!.callback_data;
+    await send(deps, msg("хватит присылать слайды"));
+    expect((await send(deps, press(oldData, 7), 7)).find((s) => s.method === "answerCallbackQuery")!.payload.text).toMatch(/устарел/);
+    expect(repo.slideSubs(CHAT)).toHaveLength(1);
+  });
+
+  it("гифка — только при дословном совпадении; похожая реплика идёт к модели и получает текст", async () => {
+    const { deps, requests } = setup({ qa: "вопрос;ответ\nпривет;gif:FILE1\n" });
+    const exact = await send(deps, msg("привет"));
+    expect(exact.find((s) => s.method === "sendAnimation")!.payload.animation).toBe("FILE1");
+    expect(requests).toHaveLength(0);
+
+    const phrase = await send(deps, msg("привет, а где завтра физика?"));
+    expect(requests).toHaveLength(1);
+    expect(phrase.find((s) => s.method === "sendAnimation")).toBeUndefined();
+    expect(texts(phrase)).toEqual(["ответ бота"]);
+    expect(lastUserText(requests[0]!)).toContain("не дословно: картинки не будет");
+  });
+
+  it("гифка с подписью и кнопки слайдов в одном ответе: кнопки важнее, уходит текст с кнопками", async () => {
+    const { deps, repo } = setup({
+      qa: "вопрос;ответ\nслайды;gif:FILE2 держи\n",
+      answers: [fakeMessage([{ type: "tool_use", id: "tu1", name: "chat_slides", input: { action: "subscribe", subject: "физика" } } as Anthropic.ToolUseBlock], "tool_use"), textMsg("Ты хочешь получать слайды «Физика»?")],
+    });
+    repo.replaceWebinars(addDays(today, 2), [webinar()]);
+    const sent = await send(deps, msg("слайды"));
+    expect(sent.find((s) => s.method === "sendAnimation")).toBeUndefined();
+    expect((sent.find((s) => s.method === "sendMessage")!.payload.reply_markup as { inline_keyboard: unknown[][] }).inline_keyboard[0]).toHaveLength(2);
+  });
+
+  it("«скинь слайды» запоминает file_id, не трогая счётчик рассылки; имя файла одно на всех", async () => {
+    const { deps, repo } = setup();
+    const file = tmpFile("deck.pdf");
+    writeFileSync(file, Buffer.from("%PDF-1.4\n"));
+    const sentId = repo.addSlideDeck({ date: today, subject: "Физика", teacher: null, title: null, groups: ["ВИШ-12-23"], slides: 3, file, bytes: 9 });
+    repo.markDeckSent(sentId, "A", 5);
+    repo.setDeckFileId(sentId, "B");
+    expect(repo.recentSlideDecks().find((d) => d.id === sentId)).toMatchObject({ fileId: "A", sent: 5 });
+
+    const freshId = repo.addSlideDeck({ date: today, subject: "Химия", teacher: null, title: null, groups: ["ВИШ-12-23"], slides: 3, file, bytes: 9 });
+    const sent = await send(deps, msg("скинь слайды по химии"));
+    const doc = sent.find((s) => s.method === "sendDocument")!;
+    expect(doc).toBeDefined();
+    expect(repo.recentSlideDecks().find((d) => d.id === freshId)).toMatchObject({ sent: 0 });
+
+    expect(deckFileName({ date: "2026-09-29", subject: "БЖД / лекция" })).toBe("2026-09-29-БЖД лекция.pdf");
+    expect(deckFileName({ date: "2026-09-29", subject: "???" })).toBe("2026-09-29-slides.pdf");
   });
 });

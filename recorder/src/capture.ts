@@ -86,8 +86,15 @@ const NAME_INPUT = 'input[name="joinName"], input#joinName, input[placeholder*="
 /** Диалог поверх слайда: аудио, предупреждения, опросы — всё, что BBB рисует как модальное окно. */
 const DIALOG = '[role="dialog"], [aria-modal="true"]';
 
+/** Окно «конференция завершена» у BBB. */
+const ENDED_MODAL = '[data-test="meetingEndedModal"]';
 /** Признаки того, что комнату закрыли. */
-const ENDED = '[data-test="meetingEndedModal"], :text("Конференция завершена"), :text("Meeting ended")';
+const ENDED = `${ENDED_MODAL}, :text("Конференция завершена"), :text("Meeting ended")`;
+/**
+ * Стиль, который прячет упрямые диалоги. Окно «конференция завершена» — тоже
+ * диалог, но его прятать нельзя: по нему видно, что пора заканчивать.
+ */
+const HIDE_DIALOGS_CSS = `:is(${DIALOG}):not(${ENDED_MODAL}):not(:has(${ENDED_MODAL})) { visibility: hidden !important; }`;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -190,7 +197,7 @@ async function dismissDialog(page: Page, notes: string[], state: { hidden: boole
   if (state.hidden) return;
   state.hidden = true;
   notes.push("диалог не закрылся — прячу диалоги стилем");
-  await page.addStyleTag({ content: `${DIALOG} { visibility: hidden !important; }` }).catch(() => undefined);
+  await page.addStyleTag({ content: HIDE_DIALOGS_CSS }).catch(() => undefined);
 }
 
 export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResult> {
@@ -242,7 +249,9 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
       if (page.isClosed()) break;
       // Комнату закрыли — проверяем на каждом круге, а не только после нового
       // слайда: иначе бот сидел бы в пустой комнате до конца отведённого времени.
-      if (await visibleNow(page.locator(ENDED).first())) {
+      // Если диалоги спрятаны стилем, окно конца ищем и среди невидимых: вдруг
+      // BBB нарисовал его в другой обёртке, которую стиль тоже накрыл.
+      if ((await visibleNow(page.locator(ENDED).first())) || (dialogState.hidden && (await page.locator(ENDED_MODAL).count().catch(() => 0)) > 0)) {
         notes.push("вебинар завершён ведущим");
         result.ended = true;
         break;
