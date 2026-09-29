@@ -84,7 +84,7 @@
 4. Запустить Actions → «CI & Deploy» → Run workflow (или дождаться следующего мёржа). Шаг «Deploy recorder to the VPS» покажет последние строки лога записывалки; упавший контейнер делает шаг красным.
 5. Руками на VPS: `docker logs -f vish-recorder` — лог, `docker restart vish-recorder` — перезапуск (после правки `.env`), слайды и кадры — в `/opt/vish-recorder/data`.
 
-**Вариант Б — сервер в панели Pterodactyl.** Секрет `PTERO_RECORDER_SERVER_ID` — id сервера в панели; `.env` положить в его файлы; браузер — Docker-egg с образом из `recorder/Dockerfile` (или `npx playwright install chromium --with-deps` в Node-egg). Id обычного VPS сюда не подходит: выкладка идёт через API панели (с id VPS шаг падает с 404 и подсказкой). Если заданы секреты `RECORDER_SSH_*`, путь через панель не запускается.
+**Вариант Б — сервер в панели Pterodactyl.** Секрет `PTERO_RECORDER_SERVER_ID` — короткий id сервера из адреса панели: `panel…/server/cf0acdc5` → `cf0acdc5` (8 символов, только они, без адреса). Сервер должен быть виден аккаунту, чей `PTERO_API_KEY`: чужой сервер панель отдаёт как 404. Номер VPS из биллинга сюда не подходит: выкладка идёт через API панели. При 404 шаг печатает, какие id ключу видны. В файлы сервера положить `.env` (по `recorder/.env.example`); браузер — Docker-egg с образом из `recorder/Dockerfile` (или `npx playwright install chromium --with-deps` в Node-egg с Node ≥ 22.19, стартовая команда `npm install && node dist/main.js` — лаунчера `index.js` у записывалки нет). Если заданы секреты `RECORDER_SSH_*`, путь через панель не запускается.
 
 Общее для обоих:
 - В `.env` записывалки: учётка для входа в комнату, `BOT_SLIDES_URL=https://<домен бота>/slides`, тот же `SLIDES_TOKEN`, что у бота (у бота он тоже должен быть задан, ≥ 16 символов).
