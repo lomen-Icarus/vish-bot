@@ -101,6 +101,11 @@ docker run -d --name vish-recorder --restart unless-stopped --init \
 SSH (см. `docs/DEPLOY.md`, «Вариант А»). В `.env` для Docker значения пишутся
 без кавычек.
 
+Для сервера в панели Pterodactyl есть `Dockerfile.ptero` — образ Playwright с
+точкой входа под Wings (`deploy/ptero-entrypoint.sh`), без кода: код заливает
+workflow через API панели, стартовая команда сервера — `npm install && node
+dist/main.js` («Вариант Б» там же).
+
 Памяти на одну запись (`MAX_PARALLEL=1`) нужно ≥ 1,5 ГБ: пустой headless
 Chromium с нашими флагами занимает ≈ 0,4 ГБ, комната BBB добавляет своё, плюс
 сам Node. На две одновременные записи — от 2,5–3 ГБ. Диску — ≥ 5 ГБ свободных

@@ -126,3 +126,27 @@ describe("записывалка вебинаров: сертификаты по
     expect(RECORDER_CA.length).toBeGreaterThan(0);
   });
 });
+
+describe("записывалка: образы и playwright-core одной версии", () => {
+  const pkg = JSON.parse(readFileSync(path.resolve("recorder/package.json"), "utf8")) as { dependencies: Record<string, string> };
+  const version = pkg.dependencies["playwright-core"]!;
+
+  it("playwright-core закреплён точной версией", () => {
+    expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("Dockerfile для VPS берёт образ Playwright той же версии", () => {
+    expect(readFileSync(path.resolve("recorder/Dockerfile"), "utf8")).toContain(`FROM mcr.microsoft.com/playwright:v${version}-noble`);
+  });
+
+  it("Dockerfile для Pterodactyl: та же версия по умолчанию и точка входа под Wings", () => {
+    const df = readFileSync(path.resolve("recorder/Dockerfile.ptero"), "utf8");
+    expect(df).toContain(`ARG PW_VERSION=${version}`);
+    expect(df).toContain("FROM mcr.microsoft.com/playwright:v${PW_VERSION}-noble");
+    expect(df).toContain('CMD ["/bin/bash", "/entrypoint.sh"]');
+    const entry = readFileSync(path.resolve("recorder/deploy/ptero-entrypoint.sh"), "utf8");
+    expect(entry).toContain("cd /home/container");
+    expect(entry).toContain("${STARTUP}");
+    expect(entry).toContain("eval ${MODIFIED_STARTUP}");
+  });
+});
