@@ -238,7 +238,11 @@ export function createHttpServer(deps: HttpDeps): Server {
     };
     if (url.pathname === "/health") {
       const p = deps.repo.lastPollRun();
-      send(200, JSON.stringify({ ok: true, lastPoll: p?.finishedAt ?? null, groups: deps.service.groups().length }), "application/json; charset=utf-8", { "Cache-Control": "no-store" });
+      // Слайды: сколько записей принято и когда последняя — чтобы после
+      // вебинара было видно снаружи, дошёл ли PDF от записывалки.
+      const last = deps.repo.recentSlideDecks(1)[0];
+      const slides = deps.slidesToken ? { decks: deps.repo.slideDeckCount(), last: last ? { date: last.date, subject: last.subject, slides: last.slides, receivedAt: last.createdAt } : null } : null;
+      send(200, JSON.stringify({ ok: true, lastPoll: p?.finishedAt ?? null, groups: deps.service.groups().length, slides }), "application/json; charset=utf-8", { "Cache-Control": "no-store" });
       return;
     }
     const m = /^\/cal\/([A-Za-z0-9_-]{8,64})\.ics$/.exec(url.pathname);
