@@ -16,7 +16,15 @@ IMAGE=vish-recorder:latest
 # Docker ставится сам официальным скриптом: это единственное, что нужно на
 # чистом сервере, и забывать этот шаг руками — обычное дело.
 if ! command -v docker >/dev/null; then
-  echo "Docker не установлен — ставлю (curl -fsSL https://get.docker.com | sh)…"
+  echo "Docker не установлен — ставлю…"
+  export DEBIAN_FRONTEND=noninteractive
+  # Шаблоны хостингов приезжают с недоделанной установкой пакетов, и тогда
+  # любой apt падает с «dpkg returned an error code (1)». Сначала доделываем
+  # её, и всё — с видимым выводом: скрипт get.docker.com ошибки прячет.
+  dpkg --configure -a || echo "dpkg --configure -a не прошёл — см. выше, какой пакет" >&2
+  apt-get -f install -y || true
+  apt-get update -q || { echo "apt-get update не прошёл: проверь /etc/apt/sources.list и выход в интернет с VPS" >&2; exit 1; }
+  apt-get install -y ca-certificates curl || { echo "apt не может поставить пакеты — ошибка выше. Обычно помогает на VPS: dpkg --configure -a; apt-get -f install; потом деплой снова" >&2; exit 1; }
   curl -fsSL https://get.docker.com | sh || { echo "Docker не поставился: см. вывод выше, поставь руками и запусти деплой снова" >&2; exit 1; }
 fi
 systemctl is-active --quiet docker 2>/dev/null || systemctl start docker 2>/dev/null || true
