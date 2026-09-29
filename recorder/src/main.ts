@@ -62,6 +62,7 @@ async function recordOne(cfg: RecorderConfig, portal: Portal, date: string, row:
     headless: cfg.headless,
     chromiumPath: cfg.chromiumPath || undefined,
     displayName: cfg.displayName,
+    padPx: cfg.capturePad,
   });
   log.info({ slides: result.slides.length, selector: result.usedSelector, notes: result.notes }, "съёмка закончена");
   // Ни одного слайда: не зашли (лобби, ошибка комнаты) или страница закрылась.
