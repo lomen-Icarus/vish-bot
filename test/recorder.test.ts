@@ -5,6 +5,7 @@ import { looksLikeLoginPage, parseWebinarRows } from "../recorder/src/portal.js"
 import { deckBaseName, keyOf, mskNow, planRecording, wanted, type RecordState } from "../recorder/src/plan.js";
 import { envNumber } from "../recorder/src/config.js";
 import { PORTAL_CA_CERTS as RECORDER_CA } from "../recorder/src/certs.js";
+import { padClip } from "../recorder/src/frame.js";
 import { PORTAL_CA_CERTS as BOT_CA } from "../src/portal/certs.js";
 import type { WebinarRow } from "../recorder/src/portal.js";
 
@@ -151,8 +152,7 @@ describe("записывалка: образы и playwright-core одной в�
   });
 });
 
-describe("записывалка: кадр шире области презентации", async () => {
-  const { padClip } = await import("../recorder/src/capture.js");
+describe("записывалка: кадр шире области презентации", () => {
   const viewport = { width: 1600, height: 900 };
 
   it("расширяет вверх и вниз на pad, ширину не трогает", () => {

@@ -12,6 +12,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright-core";
 import { log } from "./log.js";
+import { padClip } from "./frame.js";
 
 export interface CaptureOptions {
   url: string;
@@ -190,17 +191,6 @@ async function dismissDialog(page: Page, notes: string[], state: { hidden: boole
   state.hidden = true;
   notes.push("диалог не закрылся — прячу диалоги стилем");
   await page.addStyleTag({ content: `${DIALOG} { visibility: hidden !important; }` }).catch(() => undefined);
-}
-
-/**
- * Кадр чуть шире области презентации: на pad вверх и вниз, в пределах окна.
- * Ширину не трогаем — по бокам у BBB чат и участники.
- */
-export function padClip(box: { x: number; y: number; width: number; height: number }, pad: number, viewport: { width: number; height: number }): { x: number; y: number; width: number; height: number } {
-  const p = Math.max(0, pad);
-  const y = Math.max(0, box.y - p);
-  const bottom = Math.min(viewport.height, box.y + box.height + p);
-  return { x: Math.max(0, box.x), y, width: Math.min(box.width, viewport.width - Math.max(0, box.x)), height: Math.max(1, bottom - y) };
 }
 
 export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResult> {
