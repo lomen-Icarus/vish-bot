@@ -13,6 +13,18 @@ IMAGE=vish-recorder:latest
 
 [ -f "$DIR/.env" ] || { echo "Нет $DIR/.env — положи его по образцу recorder/.env.example и запусти деплой снова" >&2; exit 1; }
 [ -f "$ARCHIVE" ] || { echo "Нет архива с кодом: $ARCHIVE" >&2; exit 1; }
+# Шаблон VPS склонирован с другой машины: grub-pc помнит диск, которого здесь
+# нет, его настройка падает, и с ней падает любой apt. Загрузчик уже стоит
+# (система грузится), поэтому пакету достаточно ответить «продолжать без
+# установки GRUB» — на диск ничего не пишется. Правильно поставить GRUB на
+# свой диск можно потом: dpkg-reconfigure grub-pc.
+fix_grub_pc() {
+  dpkg --audit 2>/dev/null | grep -q grub-pc || return 1
+  echo "grub-pc недонастроен (в debconf чужой диск) — отмечаю «без установки GRUB» и повторяю dpkg --configure -a"
+  printf 'grub-pc grub-pc/install_devices multiselect\ngrub-pc grub-pc/install_devices_empty boolean true\n' | debconf-set-selections
+  dpkg --configure -a
+}
+
 # Docker ставится сам официальным скриптом: это единственное, что нужно на
 # чистом сервере, и забывать этот шаг руками — обычное дело.
 if ! command -v docker >/dev/null; then
@@ -21,7 +33,7 @@ if ! command -v docker >/dev/null; then
   # Шаблоны хостингов приезжают с недоделанной установкой пакетов, и тогда
   # любой apt падает с «dpkg returned an error code (1)». Сначала доделываем
   # её, и всё — с видимым выводом: скрипт get.docker.com ошибки прячет.
-  dpkg --configure -a || echo "dpkg --configure -a не прошёл — см. выше, какой пакет" >&2
+  dpkg --configure -a || fix_grub_pc || echo "dpkg --configure -a не прошёл — см. выше, какой пакет" >&2
   apt-get -f install -y || true
   apt-get update -q || { echo "apt-get update не прошёл: проверь /etc/apt/sources.list и выход в интернет с VPS" >&2; exit 1; }
   apt-get install -y ca-certificates curl || { echo "apt не может поставить пакеты — ошибка выше. Обычно помогает на VPS: dpkg --configure -a; apt-get -f install; потом деплой снова" >&2; exit 1; }
