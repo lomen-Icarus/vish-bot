@@ -64,15 +64,20 @@ const WORD = "[А-ЯЁа-яё][А-ЯЁа-яё]*(?:-[А-ЯЁа-яё]+)?";
 const GROUP = "(?:виш[-\\s]?)?\\d{1,2}[-\\s]\\d{2}(?:[а-яё]{1,4})?(?:\\s*\\([^)]{1,20}\\))?";
 // «это Фамилия Имя [Отчество] [из|группа|гр.] 12-23».
 const INTRO_TAIL = new RegExp(`^\\s*[,:]?\\s*(?:это|—|–|-)\\s+(${WORD}(?:\\s+${WORD}){1,2}?)(?:\\s*,?\\s*(?:из\\s+|группа\\s+|гр\\.?\\s*)?(${GROUP}))?\\s*[.!)]*\\s*$`, "iu");
-const SELF_INTRO = new RegExp(`^(?:я|меня\\s+зовут)\\s*(?:—|–|-|:)?\\s*(${WORD}(?:\\s+${WORD}){1,2}?)(?:\\s*,?\\s*(?:из\\s+|группа\\s+|гр\\.?\\s*)?(${GROUP}))?\\s*[.!)]*\\s*$`, "iu");
+const SELF_INTRO = new RegExp(`^(?:я|меня\\s+зовут)(?![\\p{L}])\\s*(?:—|–|-|:)?\\s*(${WORD}(?:\\s+${WORD}){1,2}?)(?:\\s*,?\\s*(?:из\\s+|группа\\s+|гр\\.?\\s*)?(${GROUP}))?\\s*[.!)]*\\s*$`, "iu");
 
 /** Слова, которые не бывают частью ФИО: «это Петрова Кира из 12-23» не должно съесть «из». */
 const NOT_NAME = new Set(["из", "группа", "гр", "с", "со", "в", "наш", "наша", "мой", "моя", "староста", "препод", "преподаватель"]);
 
-function cleanName(raw: string): string | null {
+/**
+ * ФИО из 2–3 слов. requireCaps — каждое слово с заглавной, как пишут имена:
+ * без обращения к боту иначе «@kira это новый чел 12-23» стало бы «Новый Чел».
+ */
+export function cleanName(raw: string, requireCaps = false): string | null {
   const words = raw.trim().split(/\s+/);
   if (words.length < 2 || words.length > 3) return null;
   if (words.some((w) => NOT_NAME.has(w.toLowerCase()))) return null;
+  if (requireCaps && words.some((w) => !/^[А-ЯЁ]/.test(w))) return null;
   return capitalizeName(words.join(" "));
 }
 
@@ -98,7 +103,7 @@ export function parseIntro(text: string, entities: MessageEntity[], botUsername:
     }
     const m = INTRO_TAIL.exec(text.slice(e.offset + e.length));
     if (!m) return null;
-    const name = cleanName(m[1]!);
+    const name = cleanName(m[1]!, !addressed);
     if (!name) return null;
     if (e.type === "text_mention") return { username: null, userId: e.user.id, name, groupQuery: m[2]?.trim() ?? null, self: e.user.id === from.id };
     const username = piece.replace(/^@/, "").toLowerCase();
@@ -148,7 +153,12 @@ const ONGOING = new RegExp(`${W}(?:присылай|присылать|прис�
 /** «Скинь», «пришли», «покажи» — разовая просьба: это к модели, а не подписка. */
 const ONE_OFF = new RegExp(`${W}(?:скинь|скиньте|кинь|киньте|пришли|пришлите|отправь|отправьте|покажи|покажите|дай|дайте|найди|где|есть\\s+ли)`, "u");
 const HERE = new RegExp(`${W}(?:сюда|здесь|тут|в\\s+этот\\s+чат|в\\s+эту\\s+тему|в\\s+эту\\s+ветку)`, "u");
-const OFF = new RegExp(`${W}(?:не\\s+(?:присылай|присылайте|присылать|кидай|кидайте|скидывай|скидывайте|шли|шлите|отправляй|отправлять|надо|нужно|нужны)|отпиш|отключ|хватит|стоп|убери|уберите|больше\\s+не)`, "u");
+/**
+ * Отписка — только слова про саму рассылку: «не присылай», «отпиши», «больше
+ * не шли», «хватит присылать». Голые «стоп», «убери», «не надо» рядом со
+ * словом «слайд» бывают о чём угодно — по ним подписки не снимаем.
+ */
+const OFF = new RegExp(`${W}(?:не\\s+(?:присылай|присылайте|присылать|кидай|кидайте|скидывай|скидывайте|шли|шлите|слать|отправляй|отправляйте|отправлять)|отпиш|отпис(?:ать|ка)|больше\\s+не\\s+(?:присыл|кида|скидыв|шли|слать|отправ)|хватит\\s+(?:присыл|кида|скидыв|слать|отправ)|отключи\\s+(?:слайд|рассылк))`, "u");
 const LIST = new RegExp(`${W}(?:какие|список|куда)(?:[^\\p{L}]|$)`, "u");
 
 /** Предмет после «по …» и группа, если названа (в предмете или где угодно в тексте). */
@@ -180,9 +190,12 @@ export function parseSlidesRequest(text: string): SlidesRequest | null {
   }
   if (LIST.test(t) && !/(?:^|\s)по\s/.test(t)) return { kind: "list" };
   const ongoing = ONGOING.test(t);
-  if (ONE_OFF.test(t) && !ongoing) return { kind: "send", ...subjectAndGroup(text) };
-  if (!ongoing && !HERE.test(t)) return null;
-  return { kind: "subscribe", ...subjectAndGroup(text) };
+  const kind = ONE_OFF.test(t) && !ongoing ? "send" : ongoing || HERE.test(t) ? "subscribe" : null;
+  if (!kind) return null;
+  const sg = subjectAndGroup(text);
+  // Без предмета («где слайды лежат?», «тут в слайдах написано…») — это
+  // вопрос, а не просьба: пусть отвечает модель, у неё есть chat_slides.
+  return sg.subject ? { kind, ...sg } : null;
 }
 
 // ---------- подбор предмета ----------
@@ -215,16 +228,27 @@ function normSubject(s: string): string {
 /** Ключ предмета для сравнения: регистр, «ё», знаки и лишние пробелы не важны. */
 export const subjectKey = normSubject;
 
+/** Уточнения вида занятия, которые не делают предмет другим: «Физика (лекция)» — та же физика. */
+const SUBJECT_QUALIFIERS = new Set(["лекция", "лекции", "лк", "пр", "практика", "практики", "практическое", "практические", "занятие", "занятия", "семинар", "семинары", "лаб", "лабораторная", "лабораторные", "лб", "вебинар", "онлайн"]);
+
+/** Предмет без скобок и уточнений вида занятия — для сравнения. */
+function subjectCore(s: string): string {
+  return subjectKey(s.replace(/\([^)]*\)/g, " "))
+    .split(" ")
+    .filter((w) => w && !SUBJECT_QUALIFIERS.has(w))
+    .join(" ");
+}
+
 /**
- * Тот же ли это предмет: ключи равны или один — целые слова внутри другого
- * («физика» и «физика лекция»). По основам слов не сравниваем нарочно:
- * «программирование» и «практикум по программированию» — разные предметы.
+ * Тот же ли это предмет: равны после снятия скобок и уточнений вида занятия
+ * («Физика» и «Физика (лекция)»). Любые другие лишние слова — уже другой
+ * предмет: «Математика» и «Дискретная математика», «Программирование» и
+ * «Практикум по программированию».
  */
 export function sameSubject(a: string, b: string): boolean {
-  const x = subjectKey(a);
-  const y = subjectKey(b);
-  if (!x || !y) return false;
-  return x === y || ` ${x} `.includes(` ${y} `) || ` ${y} `.includes(` ${x} `);
+  const x = subjectCore(a);
+  const y = subjectCore(b);
+  return !!x && x === y;
 }
 
 /**

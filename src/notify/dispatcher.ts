@@ -17,6 +17,7 @@ import { webinarRowsToLessons } from "../people/profile.js";
 import { readFileSync } from "node:fs";
 import { isUnreachable } from "../bot/errors.js";
 import { sameSubject } from "../chat/social.js";
+import { deckFileName } from "./deckName.js";
 
 /** За сколько минут до первой пары преподавателя писать подписчикам. */
 const TEACHER_LEAD_MIN = 120;
@@ -106,7 +107,7 @@ export class Notifier {
       // Подпись к документу у Telegram ограничена 1024 символами, а предмет и
       // тема приезжают снаружи и бывают длинными.
       .slice(0, 1000);
-    const name = `${deck.date}-${deck.subject.replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 50) || "slides"}.pdf`;
+    const name = deckFileName(deck);
     let fileId: string | null = null;
     let sent = 0;
     for (const sub of chats) {
