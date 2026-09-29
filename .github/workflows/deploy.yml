@@ -105,7 +105,9 @@ jobs:
           status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $API_KEY" -H "Accept: application/json" "$PANEL_URL/api/client/servers/$SERVER_ID" || true)
           if [ "$status" = "404" ]; then
             # Какие сервера ключ видит вообще: если нужного нет — ключ от другого аккаунта панели.
-            visible=$(api "$PANEL_URL/api/client?per_page=100" | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print(", ".join(s["attributes"]["identifier"] for s in d) or "ни одного")' 2>/dev/null || echo "список не получен")
+            # Лог Actions читают все, у кого есть доступ к репозиторию: id серверов
+            # не печатаем целиком — только сколько их и первые два знака.
+            visible=$(api "$PANEL_URL/api/client?per_page=100" | python3 -c 'import json,sys; ids=[s["attributes"]["identifier"] for s in json.load(sys.stdin)["data"]]; print(str(len(ids)) + " шт. (" + ", ".join(i[:2] + "…" for i in ids) + ")" if ids else "ни одного")' 2>/dev/null || echo "список не получен")
             echo "::error::Сервера с id из PTERO_RECORDER_SERVER_ID нет среди серверов, доступных ключу PTERO_API_KEY (404). Ключу видны сервера: $visible. Нет нужного — ключ выдан другим аккаунтом панели: создай ключ в аккаунте-владельце сервера (панель → Account → API Credentials) или добавь этот аккаунт на страницу сервера (Users). Если записывалка на обычном VPS — удали секрет PTERO_RECORDER_SERVER_ID и задай RECORDER_SSH_HOST и RECORDER_SSH_KEY (docs/DEPLOY.md, «Вариант А»)."
             exit 1
           elif [ "$status" != "200" ]; then
