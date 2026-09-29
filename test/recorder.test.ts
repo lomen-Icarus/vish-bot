@@ -150,3 +150,18 @@ describe("записывалка: образы и playwright-core одной в�
     expect(entry).toContain("eval ${MODIFIED_STARTUP}");
   });
 });
+
+describe("записывалка: кадр шире области презентации", async () => {
+  const { padClip } = await import("../recorder/src/capture.js");
+  const viewport = { width: 1600, height: 900 };
+
+  it("расширяет вверх и вниз на pad, ширину не трогает", () => {
+    expect(padClip({ x: 300, y: 100, width: 1000, height: 600 }, 40, viewport)).toEqual({ x: 300, y: 60, width: 1000, height: 680 });
+  });
+
+  it("не вылезает за окно и не даёт отрицательных размеров", () => {
+    expect(padClip({ x: 300, y: 10, width: 1000, height: 880 }, 40, viewport)).toEqual({ x: 300, y: 0, width: 1000, height: 900 });
+    expect(padClip({ x: 1500, y: 0, width: 400, height: 10 }, 0, viewport)).toEqual({ x: 1500, y: 0, width: 100, height: 10 });
+    expect(padClip({ x: 0, y: 0, width: 100, height: 100 }, -5, viewport)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+  });
+});
