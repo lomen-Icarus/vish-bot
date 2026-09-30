@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { looksLikeLoginPage, parseWebinarRows } from "../recorder/src/portal.js";
-import { deckBaseName, keyOf, mskNow, planRecording, profilesFor, wanted, type RecordState } from "../recorder/src/plan.js";
+import { joinWithProfiles, looksLikeLoginPage, parseWebinarRows } from "../recorder/src/portal.js";
+import { deckBaseName, keyOf, matchesGroups, mskNow, planRecording, profileSummary, profilesFor, wanted, type RecordState } from "../recorder/src/plan.js";
 import { envNumber, loadConfig } from "../recorder/src/config.js";
 import { PORTAL_CA_CERTS as RECORDER_CA } from "../recorder/src/certs.js";
 import { padClip } from "../recorder/src/frame.js";
@@ -167,34 +167,81 @@ describe("записывалка: кадр шире области презен�
 });
 
 describe("записывалка: второй профиль для групп 11-25…15-25", () => {
-  const p1 = { name: "1", authMode: "1" as const, login: "a", password: "x", groups: [] };
-  const p2 = { name: "2", authMode: "1" as const, login: "b", password: "y", groups: ["11-25", "12-25", "13-25", "14-25", "15-25"] };
+  const p1 = { name: "1", authMode: "1" as const, login: "a-login", password: "a-secret", groups: [] };
+  const p2 = { name: "2", authMode: "1" as const, login: "b-login", password: "b-secret", groups: ["11-25", "12-25", "13-25", "14-25", "15-25"] };
 
-  it("для групп профиля 2 сначала он, для остальных — профиль 1; второй — запасной", () => {
-    expect(profilesFor({ groups: ["ВИШ-13-25", "ВИШ-14-25"] }, [p1, p2]).map((p) => p.name)).toEqual(["2", "1"]);
-    expect(profilesFor({ groups: ["ВИШ-12-23"] }, [p1, p2]).map((p) => p.name)).toEqual(["1", "2"]);
-    expect(profilesFor({ groups: ["ВИШ-12-23"] }, [p1]).map((p) => p.name)).toEqual(["1"]);
+  it("группа должна стоять целиком: «11-25» — это ВИШ-11-25 и ОЗВИШ-11-25, но не ВИШ-111-25; «1-25» — не ВИШ-11-25", () => {
+    expect(matchesGroups(["11-25"], ["ВИШ-11-25"])).toBe(true);
+    expect(matchesGroups(["12-25"], ["ОЗВИШ-12-25"])).toBe(true);
+    expect(matchesGroups(["ВИШ-11-25"], ["виш-11-25"])).toBe(true);
+    expect(matchesGroups(["11-25"], ["ВИШ-111-25"])).toBe(false);
+    expect(matchesGroups(["1-25"], ["ВИШ-11-25"])).toBe(false);
+    expect(matchesGroups(["11-2"], ["ВИШ-11-25"])).toBe(false);
+    expect(matchesGroups([""], ["ВИШ-11-25"])).toBe(false);
+    // Тот же разбор — у фильтра RECORD_GROUPS.
+    expect(wanted({ scheduled: true, joinId: "", joinType: "1", startMinutes: 0, endMinutes: 0, subject: "x", teacher: "", groups: ["ВИШ-11-25"], title: "", raw: "" }, { subjects: [], groups: ["1-25"] })).toBe(false);
   });
 
-  it("профили читаются из окружения; половина профиля — понятная ошибка; логин в список профилей не утекает", () => {
-    const keys = ["WEBINAR_LOGIN", "WEBINAR_PASSWORD", "WEBINAR_AUTH", "WEBINAR_LOGIN_2", "WEBINAR_PASSWORD_2", "WEBINAR_GROUPS_2", "WEBINAR_AUTH_2"];
-    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  it("для групп профиля 2 — сначала он, потом общий; для чужих групп профиль 2 не пробуется никогда", () => {
+    expect(profilesFor({ groups: ["ВИШ-13-25", "ВИШ-14-25"] }, [p1, p2]).map((p) => p.name)).toEqual(["2", "1"]);
+    expect(profilesFor({ groups: ["ВИШ-12-23"] }, [p1, p2]).map((p) => p.name)).toEqual(["1"]);
+    // Первый профиль с группами — для остальных групп профиля нет.
+    expect(profilesFor({ groups: ["ВИШ-12-23"] }, [{ ...p1, groups: ["11-24"] }, p2])).toEqual([]);
+  });
+
+  it("перебор профилей: сбой сети у одного — пробуется следующий; ошибки — без логинов", async () => {
+    const calls: string[] = [];
+    const portal = {
+      getJoinUrl: async (_row: unknown, auth: { name: string }) => {
+        calls.push(auth.name);
+        if (auth.name === "b-login") throw new Error("timeout");
+        return { url: "https://bbb/room" };
+      },
+    };
+    const row = { joinId: "1", joinType: "1", groups: ["ВИШ-11-25"] };
+    const ok = await joinWithProfiles(portal, row, [p1, p2]);
+    expect(calls).toEqual(["b-login", "a-login"]);
+    expect(ok).toEqual({ url: "https://bbb/room", profile: "1", errors: ["профиль 2: Error: timeout"] });
+
+    const denied = await joinWithProfiles({ getJoinUrl: async () => ({ error: "нет доступа" }) }, row, [p1, p2]);
+    expect(denied.url).toBeUndefined();
+    expect(denied.errors).toEqual(["профиль 2: нет доступа", "профиль 1: нет доступа"]);
+    expect(JSON.stringify(denied)).not.toMatch(/login|secret/);
+
+    expect((await joinWithProfiles(portal, { ...row, groups: ["ВИШ-12-23"] }, [{ ...p1, groups: ["11-24"] }])).errors[0]).toMatch(/ни один профиль/);
+  });
+
+  it("в лог уходят только номера и группы профилей", () => {
+    const summary = profileSummary([p1, p2]);
+    expect(summary).toEqual(["1", "2 (11-25, 12-25, 13-25, 14-25, 15-25)"]);
+    expect(JSON.stringify(summary)).not.toMatch(/login|secret/);
+  });
+
+  it("профили из окружения: режим профиля 2 по умолчанию — «обучающийся»; половина профиля — ошибка; группы без учётки — предупреждение", () => {
+    // Изолируем все WEBINAR_*: иначе тест зависел бы от окружения запуска.
+    const saved = Object.fromEntries(Object.keys(process.env).filter((k) => k.startsWith("WEBINAR_")).map((k) => [k, process.env[k]]));
+    for (const k of Object.keys(saved)) delete process.env[k];
     try {
-      Object.assign(process.env, { WEBINAR_LOGIN: "one", WEBINAR_PASSWORD: "p1", WEBINAR_AUTH: "1", WEBINAR_LOGIN_2: "two", WEBINAR_PASSWORD_2: "p2", WEBINAR_GROUPS_2: "11-25, 12-25;13-25", WEBINAR_AUTH_2: "" });
+      Object.assign(process.env, { WEBINAR_LOGIN: "one", WEBINAR_PASSWORD: "p1", WEBINAR_AUTH: "2", WEBINAR_LOGIN_2: "two", WEBINAR_PASSWORD_2: "p2", WEBINAR_GROUPS_2: "11-25, 12-25;13-25" });
       const cfg = loadConfig();
       expect(cfg.profiles).toEqual([
-        { name: "1", authMode: "1", login: "one", password: "p1", groups: [] },
+        { name: "1", authMode: "2", login: "one", password: "p1", groups: [] },
         { name: "2", authMode: "1", login: "two", password: "p2", groups: ["11-25", "12-25", "13-25"] },
       ]);
+      expect(cfg.warnings).toEqual([]);
+      process.env.WEBINAR_AUTH_2 = "4";
+      expect(loadConfig().profiles[1]!.authMode).toBe("4");
       process.env.WEBINAR_PASSWORD_2 = "";
       expect(() => loadConfig()).toThrow(/WEBINAR_PASSWORD_2/);
       process.env.WEBINAR_LOGIN_2 = "";
-      expect(loadConfig().profiles).toHaveLength(1);
+      const noSecond = loadConfig();
+      expect(noSecond.profiles).toHaveLength(1);
+      expect(noSecond.warnings[0]).toMatch(/WEBINAR_GROUPS_2 задан/);
+      process.env.WEBINAR_LOGIN = "";
+      expect(() => loadConfig()).toThrow(/WEBINAR_LOGIN и WEBINAR_PASSWORD/);
     } finally {
-      for (const k of keys) {
-        if (saved[k] === undefined) delete process.env[k];
-        else process.env[k] = saved[k];
-      }
+      for (const k of Object.keys(process.env).filter((k) => k.startsWith("WEBINAR_"))) delete process.env[k];
+      Object.assign(process.env, saved);
     }
   });
 });
