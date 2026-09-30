@@ -10,8 +10,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright-core";
 import { loadConfig, loadDotEnv } from "./config.js";
-import { Portal, parseWebinarRows } from "./portal.js";
-import { mskNow, wanted } from "./plan.js";
+import { joinWithProfiles, Portal, parseWebinarRows } from "./portal.js";
+import { mskNow, profileSummary, wanted } from "./plan.js";
 import { log } from "./log.js";
 
 async function main(): Promise<void> {
@@ -40,13 +40,17 @@ async function main(): Promise<void> {
     );
     return;
   }
-  const join = await portal.getJoinUrl(ready, { name: cfg.login, pass: cfg.password, mode: cfg.authMode });
+  // Те же профили и тот же порядок, что у записывалки.
+  console.log(`Профили: ${profileSummary(cfg.profiles).join("; ")}`);
+  for (const w of cfg.warnings) console.log(`Внимание: ${w}`);
+  const join = await joinWithProfiles(portal, ready, cfg.profiles);
   if (!join.url) {
-    console.log(`\nПортал не пустил: ${join.error}`);
-    console.log("Проверь WEBINAR_AUTH (0 слушатель, 1 обучающийся, 2 сотрудник, 4 преподаватель), логин и пароль.");
+    console.log(`\nПортал не пустил (${ready.groups.join(", ")}):\n  ${join.errors.join("\n  ")}`);
+    console.log("Проверь WEBINAR_AUTH/WEBINAR_AUTH_N (0 слушатель, 1 обучающийся, 2 сотрудник, 4 преподаватель), логины, пароли и WEBINAR_GROUPS_N.");
     return;
   }
-  console.log(`\nКомната получена: ${join.url.slice(0, 80)}…`);
+  if (join.errors.length) console.log(`\nНе пустили: ${join.errors.join("; ")}`);
+  console.log(`\nКомната получена профилем ${join.profile}: ${join.url.slice(0, 80)}…`);
   if (!wantJoin) {
     console.log("Чтобы зайти в неё и снять кадр, запусти: npm run probe -- join");
     return;
