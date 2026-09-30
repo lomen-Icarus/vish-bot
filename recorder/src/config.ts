@@ -49,12 +49,32 @@ const list = (key: string): string[] =>
     .map((x) => x.trim())
     .filter(Boolean);
 
+/** Учётка портала, которой бот заходит в комнату. */
+export interface WebinarProfile {
+  /** «1», «2», … — номер из имени переменных; в логах только он, без логина. */
+  name: string;
+  authMode: "0" | "1" | "2" | "4";
+  login: string;
+  password: string;
+  /** Для каких групп этот профиль (пусто — для всех остальных). */
+  groups: string[];
+}
+
+/** Сколько дополнительных профилей читаем: WEBINAR_LOGIN_2 … WEBINAR_LOGIN_9. */
+const EXTRA_PROFILES = 9;
+
 export interface RecorderConfig {
   /** Как заходить на вебинар: 0 — слушатель (имя + пароль вебинара), 1 — обучающийся, 2 — сотрудник, 4 — преподаватель. */
   authMode: "0" | "1" | "2" | "4";
   /** Логин/почта для выбранного режима, либо отображаемое имя для режима «слушатель». */
   login: string;
   password: string;
+  /**
+   * Все профили по порядку: первый — WEBINAR_LOGIN/WEBINAR_PASSWORD, дальше
+   * WEBINAR_LOGIN_2/WEBINAR_PASSWORD_2 и т. д. Вебинар одних групп бывает
+   * доступен только студенту этих групп — для них и заводят второй профиль.
+   */
+  profiles: WebinarProfile[];
   /** Имя, под которым бот виден в списке участников (режимы с учёткой берут имя из неё). */
   displayName: string;
   facultyId: number;
@@ -89,12 +109,25 @@ export interface RecorderConfig {
   logLevel: string;
 }
 
+const authOf = (raw: string, fallback: RecorderConfig["authMode"]): RecorderConfig["authMode"] => (["0", "1", "2", "4"].includes(raw) ? (raw as RecorderConfig["authMode"]) : fallback);
+
 export function loadConfig(): RecorderConfig {
-  const authMode = (["0", "1", "2", "4"].includes(str("WEBINAR_AUTH", "1")) ? str("WEBINAR_AUTH", "1") : "1") as RecorderConfig["authMode"];
+  const authMode = authOf(str("WEBINAR_AUTH", "1"), "1");
+  const login = str("WEBINAR_LOGIN");
+  const password = str("WEBINAR_PASSWORD");
+  const profiles: WebinarProfile[] = [{ name: "1", authMode, login, password, groups: list("WEBINAR_GROUPS") }];
+  for (let n = 2; n <= EXTRA_PROFILES; n++) {
+    const l = str(`WEBINAR_LOGIN_${n}`);
+    const p = str(`WEBINAR_PASSWORD_${n}`);
+    if (!l && !p) continue;
+    if (!l || !p) throw new Error(`Профиль ${n}: нужны оба — WEBINAR_LOGIN_${n} и WEBINAR_PASSWORD_${n}`);
+    profiles.push({ name: String(n), authMode: authOf(str(`WEBINAR_AUTH_${n}`), authMode), login: l, password: p, groups: list(`WEBINAR_GROUPS_${n}`) });
+  }
   const cfg: RecorderConfig = {
     authMode,
-    login: str("WEBINAR_LOGIN"),
-    password: str("WEBINAR_PASSWORD"),
+    login,
+    password,
+    profiles,
     displayName: str("WEBINAR_DISPLAY_NAME", "Бот ВИШ (слайды)"),
     facultyId: num("FACULTY_ID", 32),
     subjects: list("RECORD_SUBJECTS"),
