@@ -3,7 +3,7 @@
  * Отдельный модуль, чтобы разведка (probe) могла ими пользоваться, не запуская
  * при импорте боевой цикл записи.
  */
-import type { RecorderConfig } from "./config.js";
+import type { RecorderConfig, WebinarProfile } from "./config.js";
 import type { WebinarRow } from "./portal.js";
 
 /** Московская дата и минуты с полуночи: расписание живёт в этом часовом поясе. */
@@ -22,6 +22,22 @@ export function wanted(row: WebinarRow, cfg: Pick<RecorderConfig, "subjects" | "
   if (cfg.subjects.length && !cfg.subjects.some((s) => norm(row.subject).includes(norm(s)))) return false;
   if (cfg.groups.length && !cfg.groups.some((g) => row.groups.some((rg) => norm(rg).includes(norm(g))))) return false;
   return true;
+}
+
+/** Относится ли профиль к группам этой пары: «11-25» подходит к «ВИШ-11-25». */
+function profileFits(p: WebinarProfile, row: Pick<WebinarRow, "groups">): boolean {
+  return p.groups.some((g) => row.groups.some((rg) => norm(rg).includes(norm(g))));
+}
+
+/**
+ * В каком порядке пробовать профили для этой пары: сначала те, что заведены
+ * для её групп, потом общие (без групп), потом остальные. Пробуем все: если
+ * портал не пустил один профиль, следующий может подойти.
+ */
+export function profilesFor(row: Pick<WebinarRow, "groups">, profiles: WebinarProfile[]): WebinarProfile[] {
+  const own = profiles.filter((p) => profileFits(p, row));
+  const common = profiles.filter((p) => !p.groups.length && !own.includes(p));
+  return [...own, ...common, ...profiles.filter((p) => !own.includes(p) && !common.includes(p))];
 }
 
 /** Ключ, по которому понимаем, что эту пару мы уже записали сегодня. */
