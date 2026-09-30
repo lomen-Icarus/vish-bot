@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { looksLikeLoginPage, parseWebinarRows } from "../recorder/src/portal.js";
-import { deckBaseName, keyOf, mskNow, planRecording, wanted, type RecordState } from "../recorder/src/plan.js";
-import { envNumber } from "../recorder/src/config.js";
+import { deckBaseName, keyOf, mskNow, planRecording, profilesFor, wanted, type RecordState } from "../recorder/src/plan.js";
+import { envNumber, loadConfig } from "../recorder/src/config.js";
 import { PORTAL_CA_CERTS as RECORDER_CA } from "../recorder/src/certs.js";
 import { padClip } from "../recorder/src/frame.js";
 import { PORTAL_CA_CERTS as BOT_CA } from "../src/portal/certs.js";
@@ -163,5 +163,38 @@ describe("записывалка: кадр шире области презен�
     expect(padClip({ x: 300, y: 10, width: 1000, height: 880 }, 40, viewport)).toEqual({ x: 300, y: 0, width: 1000, height: 900 });
     expect(padClip({ x: 1500, y: 0, width: 400, height: 10 }, 0, viewport)).toEqual({ x: 1500, y: 0, width: 100, height: 10 });
     expect(padClip({ x: 0, y: 0, width: 100, height: 100 }, -5, viewport)).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+  });
+});
+
+describe("записывалка: второй профиль для групп 11-25…15-25", () => {
+  const p1 = { name: "1", authMode: "1" as const, login: "a", password: "x", groups: [] };
+  const p2 = { name: "2", authMode: "1" as const, login: "b", password: "y", groups: ["11-25", "12-25", "13-25", "14-25", "15-25"] };
+
+  it("для групп профиля 2 сначала он, для остальных — профиль 1; второй — запасной", () => {
+    expect(profilesFor({ groups: ["ВИШ-13-25", "ВИШ-14-25"] }, [p1, p2]).map((p) => p.name)).toEqual(["2", "1"]);
+    expect(profilesFor({ groups: ["ВИШ-12-23"] }, [p1, p2]).map((p) => p.name)).toEqual(["1", "2"]);
+    expect(profilesFor({ groups: ["ВИШ-12-23"] }, [p1]).map((p) => p.name)).toEqual(["1"]);
+  });
+
+  it("профили читаются из окружения; половина профиля — понятная ошибка; логин в список профилей не утекает", () => {
+    const keys = ["WEBINAR_LOGIN", "WEBINAR_PASSWORD", "WEBINAR_AUTH", "WEBINAR_LOGIN_2", "WEBINAR_PASSWORD_2", "WEBINAR_GROUPS_2", "WEBINAR_AUTH_2"];
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    try {
+      Object.assign(process.env, { WEBINAR_LOGIN: "one", WEBINAR_PASSWORD: "p1", WEBINAR_AUTH: "1", WEBINAR_LOGIN_2: "two", WEBINAR_PASSWORD_2: "p2", WEBINAR_GROUPS_2: "11-25, 12-25;13-25", WEBINAR_AUTH_2: "" });
+      const cfg = loadConfig();
+      expect(cfg.profiles).toEqual([
+        { name: "1", authMode: "1", login: "one", password: "p1", groups: [] },
+        { name: "2", authMode: "1", login: "two", password: "p2", groups: ["11-25", "12-25", "13-25"] },
+      ]);
+      process.env.WEBINAR_PASSWORD_2 = "";
+      expect(() => loadConfig()).toThrow(/WEBINAR_PASSWORD_2/);
+      process.env.WEBINAR_LOGIN_2 = "";
+      expect(loadConfig().profiles).toHaveLength(1);
+    } finally {
+      for (const k of keys) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    }
   });
 });
