@@ -12,6 +12,8 @@
 import { Agent, fetch as undiciFetch, ProxyAgent, type Dispatcher } from "undici";
 import { PORTAL_CA_CERTS } from "./certs.js";
 import { parseWebinars } from "chuvsu-js/parsers";
+import type { WebinarProfile } from "./config.js";
+import { profilesFor } from "./plan.js";
 
 export const PORTAL_BASE = "https://tt.chuvsu.ru";
 
@@ -58,7 +60,7 @@ export class Portal {
   }
 
   /** Все запросы идут по очереди с паузой: портал не любит частых обращений. */
-  private request(url: string, init: { method: string; body?: string; headers?: Record<string, string> }): Promise<{ status: number; body: string; location?: string }> {
+  private request(url: string, init: { method: string; body?: string; headers?: Record<string, string>; keepCookies?: boolean }): Promise<{ status: number; body: string; location?: string }> {
     const run = async (): Promise<{ status: number; body: string; location?: string }> => {
       const wait = this.lastAt + MIN_GAP_MS - Date.now();
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
@@ -76,7 +78,7 @@ export class Portal {
         dispatcher: this.dispatcher,
         signal: AbortSignal.timeout(this.opts.timeoutMs ?? 30_000),
       });
-      this.store(res.headers as unknown as Headers);
+      if (init.keepCookies !== false) this.store(res.headers as unknown as Headers);
       return { status: res.status, body: await res.text(), location: res.headers.get("location") ?? undefined };
     };
     const next = this.queue.then(run, run);
@@ -130,6 +132,10 @@ export class Portal {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest" },
       body: new URLSearchParams({ idw: row.joinId, idwt: row.joinType, name: auth.name, pass: auth.pass, auto: auth.mode }).toString(),
+      // Куки ответа getjoin не сохраняем: попытка одной учётки не должна
+      // менять сессию, с которой пойдёт следующая. Ссылка на комнату от куки
+      // не зависит, а протухшую гостевую сессию webinarPage обновит сама.
+      keepCookies: false,
     });
     try {
       const data = JSON.parse(res.body) as { mes?: string; url?: string };
@@ -139,6 +145,34 @@ export class Portal {
       return { error: `портал ответил не JSON (${res.status}): ${res.body.slice(0, 200).replace(/\s+/g, " ")}` };
     }
   }
+}
+
+/** Итог попытки войти в комнату: ссылка и каким профилем, либо ошибки по каждому профилю. */
+export interface JoinResult {
+  url?: string;
+  profile?: string;
+  errors: string[];
+}
+
+/**
+ * Ссылка на комнату: профили по очереди (сначала заведённые для групп пары,
+ * потом общие). Ошибка сети у одного профиля не мешает попробовать следующий.
+ * В ошибках — только номер профиля, без логина.
+ */
+export async function joinWithProfiles(portal: Pick<Portal, "getJoinUrl">, row: Pick<WebinarRow, "joinId" | "joinType" | "groups">, profiles: WebinarProfile[]): Promise<JoinResult> {
+  const order = profilesFor(row, profiles);
+  if (!order.length) return { errors: [`ни один профиль не заведён для групп ${row.groups.join(", ")}`] };
+  const errors: string[] = [];
+  for (const p of order) {
+    try {
+      const join = await portal.getJoinUrl(row, { name: p.login, pass: p.password, mode: p.authMode });
+      if (join.url) return { url: join.url, profile: p.name, errors };
+      errors.push(`профиль ${p.name}: ${join.error ?? "нет ссылки"}`);
+    } catch (err) {
+      errors.push(`профиль ${p.name}: ${String(err).slice(0, 200)}`);
+    }
+  }
+  return { errors };
 }
 
 /**

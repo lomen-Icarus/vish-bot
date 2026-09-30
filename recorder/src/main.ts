@@ -10,10 +10,10 @@
 import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { loadConfig, loadDotEnv, type RecorderConfig } from "./config.js";
-import { Portal, parseWebinarRows, type WebinarRow } from "./portal.js";
+import { joinWithProfiles, Portal, parseWebinarRows, type WebinarRow } from "./portal.js";
 import { captureWebinar } from "./capture.js";
 import { buildPdf, deckFileName, deliver, retryPending, savePending, type DeckMeta } from "./deliver.js";
-import { deckBaseName, keyOf, mskNow, planRecording, profilesFor, type RecordState } from "./plan.js";
+import { deckBaseName, keyOf, mskNow, planRecording, profileSummary, type RecordState } from "./plan.js";
 import { log } from "./log.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -39,24 +39,14 @@ async function recordOne(cfg: RecorderConfig, portal: Portal, date: string, row:
     startMinutes: row.startMinutes,
     endMinutes: row.endMinutes,
   };
-  // Профиль для групп этой пары — первым; не пустили — пробуем остальные.
-  let join: { url?: string; error?: string } = {};
-  let profile = "";
-  const errors: string[] = [];
-  for (const p of profilesFor(row, cfg.profiles)) {
-    join = await portal.getJoinUrl(row, { name: p.login, pass: p.password, mode: p.authMode });
-    if (join.url) {
-      profile = p.name;
-      break;
-    }
-    errors.push(`профиль ${p.name}: ${join.error ?? "нет ссылки"}`);
-  }
+  // Профиль для групп этой пары — первым; не пустили — общий.
+  const join = await joinWithProfiles(portal, row, cfg.profiles);
   if (!join.url) {
     // Часто это «ведущий ещё не открыл комнату»: пара идёт — пробуем снова.
-    log.warn({ subject: row.subject, groups: row.groups, err: errors }, "портал не дал ссылку на комнату, попробую ещё");
+    log.warn({ subject: row.subject, groups: row.groups, err: join.errors }, "портал не дал ссылку на комнату, попробую ещё");
     return "retry";
   }
-  log.info({ subject: row.subject, teacher: row.teacher, groups: row.groups, profile }, "захожу на вебинар");
+  log.info({ subject: row.subject, teacher: row.teacher, groups: row.groups, profile: join.profile }, "захожу на вебинар");
   // Папка кадров своя у каждой пары (дата + время + предмет) и чистая перед
   // съёмкой: иначе вторая пара дня или повтор дописывали бы кадры в чужую пачку.
   const dir = path.join(cfg.outDir, deckBaseName(date, row.startMinutes, row.subject));
@@ -95,8 +85,8 @@ async function main(): Promise<void> {
   const portal = new Portal({ proxyUrl: process.env.HTTPS_PROXY });
   await portal.loginAsGuest();
   // Профили — только номер и группы: логины и пароли в лог не попадают.
-  const profiles = cfg.profiles.map((p) => `${p.name}${p.groups.length ? ` (${p.groups.join(", ")})` : ""}`);
-  log.info({ faculty: cfg.facultyId, subjects: cfg.subjects, groups: cfg.groups, lead: cfg.leadMinutes, profiles }, "записывалка вебинаров запущена");
+  log.info({ faculty: cfg.facultyId, subjects: cfg.subjects, groups: cfg.groups, lead: cfg.leadMinutes, profiles: profileSummary(cfg.profiles) }, "записывалка вебинаров запущена");
+  for (const w of cfg.warnings) log.warn(w);
 
   const state: RecordState = { done: new Set(), active: new Set(), retryAt: new Map() };
   const skippedLogged = new Set<string>();

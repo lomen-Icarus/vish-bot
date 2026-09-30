@@ -20,24 +20,46 @@ export function wanted(row: WebinarRow, cfg: Pick<RecorderConfig, "subjects" | "
   if (!row.scheduled) return false;
   if (!row.groups.length) return false;
   if (cfg.subjects.length && !cfg.subjects.some((s) => norm(row.subject).includes(norm(s)))) return false;
-  if (cfg.groups.length && !cfg.groups.some((g) => row.groups.some((rg) => norm(rg).includes(norm(g))))) return false;
+  if (cfg.groups.length && !matchesGroups(cfg.groups, row.groups)) return false;
   return true;
 }
 
-/** Относится ли профиль к группам этой пары: «11-25» подходит к «ВИШ-11-25». */
-function profileFits(p: WebinarProfile, row: Pick<WebinarRow, "groups">): boolean {
-  return p.groups.some((g) => row.groups.some((rg) => norm(rg).includes(norm(g))));
+/**
+ * Есть ли среди групп пары хоть одна из списка: «11-25» подходит к
+ * «ВИШ-11-25» и «ОЗВИШ-11-25», но не к «ВИШ-111-25»; «1-25» не подходит к
+ * «ВИШ-11-25». Код группы должен стоять целиком, не внутри другого числа.
+ */
+export function matchesGroups(codes: string[], rowGroups: string[]): boolean {
+  return codes.some((code) => {
+    const c = norm(code);
+    if (!c) return false;
+    return rowGroups.some((rg) => {
+      const r = norm(rg);
+      let at = r.indexOf(c);
+      while (at >= 0) {
+        const before = at === 0 ? "" : r[at - 1]!;
+        const after = r[at + c.length] ?? "";
+        if (!/\d/.test(before) && !/\d/.test(after)) return true;
+        at = r.indexOf(c, at + 1);
+      }
+      return false;
+    });
+  });
 }
 
 /**
- * В каком порядке пробовать профили для этой пары: сначала те, что заведены
- * для её групп, потом общие (без групп), потом остальные. Пробуем все: если
- * портал не пустил один профиль, следующий может подойти.
+ * Какими профилями заходить на эту пару и в каком порядке: сначала заведённые
+ * для её групп, потом общие (без групп). Профиль чужих групп не пробуем
+ * никогда: иначе студент одного набора заходил бы под своим именем на пары
+ * другого, стоило первому профилю споткнуться.
  */
 export function profilesFor(row: Pick<WebinarRow, "groups">, profiles: WebinarProfile[]): WebinarProfile[] {
-  const own = profiles.filter((p) => profileFits(p, row));
-  const common = profiles.filter((p) => !p.groups.length && !own.includes(p));
-  return [...own, ...common, ...profiles.filter((p) => !own.includes(p) && !common.includes(p))];
+  return [...profiles.filter((p) => p.groups.length && matchesGroups(p.groups, row.groups)), ...profiles.filter((p) => !p.groups.length)];
+}
+
+/** Профили для лога: только номер и группы — ни логина, ни пароля. */
+export function profileSummary(profiles: WebinarProfile[]): string[] {
+  return profiles.map((p) => `${p.name}${p.groups.length ? ` (${p.groups.join(", ")})` : ""}`);
 }
 
 /** Ключ, по которому понимаем, что эту пару мы уже записали сегодня. */

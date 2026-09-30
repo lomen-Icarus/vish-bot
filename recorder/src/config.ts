@@ -53,28 +53,29 @@ const list = (key: string): string[] =>
 export interface WebinarProfile {
   /** «1», «2», … — номер из имени переменных; в логах только он, без логина. */
   name: string;
-  authMode: "0" | "1" | "2" | "4";
-  login: string;
-  password: string;
-  /** Для каких групп этот профиль (пусто — для всех остальных). */
-  groups: string[];
-}
-
-/** Сколько дополнительных профилей читаем: WEBINAR_LOGIN_2 … WEBINAR_LOGIN_9. */
-const EXTRA_PROFILES = 9;
-
-export interface RecorderConfig {
-  /** Как заходить на вебинар: 0 — слушатель (имя + пароль вебинара), 1 — обучающийся, 2 — сотрудник, 4 — преподаватель. */
-  authMode: "0" | "1" | "2" | "4";
+  authMode: AuthMode;
   /** Логин/почта для выбранного режима, либо отображаемое имя для режима «слушатель». */
   login: string;
   password: string;
+  /** Для каких групп этот профиль (пусто — общий, для любых групп). */
+  groups: string[];
+}
+
+/** Номер последнего профиля: читаем WEBINAR_LOGIN_2 … WEBINAR_LOGIN_9. */
+const MAX_PROFILE = 9;
+
+/** Как заходить на вебинар: 0 — слушатель (имя + пароль вебинара), 1 — обучающийся, 2 — сотрудник, 4 — преподаватель. */
+export type AuthMode = "0" | "1" | "2" | "4";
+
+export interface RecorderConfig {
   /**
    * Все профили по порядку: первый — WEBINAR_LOGIN/WEBINAR_PASSWORD, дальше
    * WEBINAR_LOGIN_2/WEBINAR_PASSWORD_2 и т. д. Вебинар одних групп бывает
    * доступен только студенту этих групп — для них и заводят второй профиль.
    */
   profiles: WebinarProfile[];
+  /** Настройки, которые выглядят как ошибка, но запуску не мешают: их пишем в лог. */
+  warnings: string[];
   /** Имя, под которым бот виден в списке участников (режимы с учёткой берут имя из неё). */
   displayName: string;
   facultyId: number;
@@ -109,25 +110,29 @@ export interface RecorderConfig {
   logLevel: string;
 }
 
-const authOf = (raw: string, fallback: RecorderConfig["authMode"]): RecorderConfig["authMode"] => (["0", "1", "2", "4"].includes(raw) ? (raw as RecorderConfig["authMode"]) : fallback);
+const authOf = (raw: string): AuthMode => (["0", "1", "2", "4"].includes(raw) ? (raw as AuthMode) : "1");
 
 export function loadConfig(): RecorderConfig {
-  const authMode = authOf(str("WEBINAR_AUTH", "1"), "1");
   const login = str("WEBINAR_LOGIN");
   const password = str("WEBINAR_PASSWORD");
-  const profiles: WebinarProfile[] = [{ name: "1", authMode, login, password, groups: list("WEBINAR_GROUPS") }];
-  for (let n = 2; n <= EXTRA_PROFILES; n++) {
+  if (!login || !password) throw new Error("WEBINAR_LOGIN и WEBINAR_PASSWORD обязательны: без них портал не отдаст ссылку на комнату");
+  const profiles: WebinarProfile[] = [{ name: "1", authMode: authOf(str("WEBINAR_AUTH", "1")), login, password, groups: list("WEBINAR_GROUPS") }];
+  const warnings: string[] = [];
+  for (let n = 2; n <= MAX_PROFILE; n++) {
     const l = str(`WEBINAR_LOGIN_${n}`);
     const p = str(`WEBINAR_PASSWORD_${n}`);
-    if (!l && !p) continue;
+    if (!l && !p) {
+      if (list(`WEBINAR_GROUPS_${n}`).length) warnings.push(`WEBINAR_GROUPS_${n} задан, а WEBINAR_LOGIN_${n}/WEBINAR_PASSWORD_${n} — нет: профиль ${n} не используется`);
+      continue;
+    }
     if (!l || !p) throw new Error(`Профиль ${n}: нужны оба — WEBINAR_LOGIN_${n} и WEBINAR_PASSWORD_${n}`);
-    profiles.push({ name: String(n), authMode: authOf(str(`WEBINAR_AUTH_${n}`), authMode), login: l, password: p, groups: list(`WEBINAR_GROUPS_${n}`) });
+    // Дополнительный профиль — это студент нужных групп: по умолчанию режим
+    // «обучающийся», а не режим первого профиля (тот бывает сотрудником).
+    profiles.push({ name: String(n), authMode: authOf(str(`WEBINAR_AUTH_${n}`, "1")), login: l, password: p, groups: list(`WEBINAR_GROUPS_${n}`) });
   }
   const cfg: RecorderConfig = {
-    authMode,
-    login,
-    password,
     profiles,
+    warnings,
     displayName: str("WEBINAR_DISPLAY_NAME", "Бот ВИШ (слайды)"),
     facultyId: num("FACULTY_ID", 32),
     subjects: list("RECORD_SUBJECTS"),
@@ -145,6 +150,5 @@ export function loadConfig(): RecorderConfig {
     chromiumPath: str("CHROMIUM_PATH"),
     logLevel: str("LOG_LEVEL", "info"),
   };
-  if (!cfg.login || !cfg.password) throw new Error("WEBINAR_LOGIN и WEBINAR_PASSWORD обязательны: без них портал не отдаст ссылку на комнату");
   return cfg;
 }
