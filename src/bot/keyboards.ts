@@ -135,7 +135,8 @@ export function groupPicker(groups: LogicalGroup[], opts: { prefix?: string; sel
   const cb = opts.prefix ?? "g";
   const byCourse = new Map<string, LogicalGroup[]>();
   for (const g of groups) {
-    const section = g.prefix === "ВИШ" ? `${g.course} курс` : `${g.prefix} (${g.course} курс)`;
+    // Курс не понятен из названия — общий раздел, а не «(0 курс)».
+    const section = !g.course ? "Другие группы" : g.prefix === "ВИШ" ? `${g.course} курс` : `${g.prefix} (${g.course} курс)`;
     const list = byCourse.get(section) ?? [];
     list.push(g);
     byCourse.set(section, list);

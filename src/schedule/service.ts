@@ -138,9 +138,12 @@ export class ScheduleService {
     return byPrefix.length === 1 ? byPrefix[0]! : null;
   }
 
+  /** Группы, чей состав страниц портала поменялся: пересобрать без уведомлений (см. upsertPortalGroups). */
+  private readonly recomposed = new Set<string>();
+
   async refreshGroups(): Promise<LogicalGroup[]> {
     const portal = await this.portal.getFacultyGroups(this.opts.facultyId);
-    this.repo.upsertPortalGroups(portal.map((g) => ({ id: g.id, name: g.name, groupKey: logicalKeyFor(g.name) })));
+    for (const key of this.repo.upsertPortalGroups(portal.map((g) => ({ id: g.id, name: g.name, groupKey: logicalKeyFor(g.name) })))) this.recomposed.add(key);
     this.groupsCache = this.visible(buildLogicalGroups(portal, this.academicYear));
     return this.groupsCache;
   }
@@ -211,6 +214,11 @@ export class ScheduleService {
       const changedGroups = new Set<string>();
       /** Группы, чью базу пар перестраиваем без сравнения (первая калибровка недели семестра). */
       const rebaseline = new Set<string>();
+      // Новая страница в группе (новый трек) или смена ключа — не изменение
+      // расписания: пары этой страницы были и раньше, бот их просто не видел.
+      // Забываем эти ключи только после удачной пересборки.
+      const recomposed = [...this.recomposed];
+      for (const key of recomposed) rebaseline.add(key);
       let banner: string | null | undefined;
       let calibrated = false;
 
@@ -300,6 +308,7 @@ export class ScheduleService {
         this.repo.replaceOccurrences(group.key, from, to, next);
       }
 
+      for (const key of recomposed) this.recomposed.delete(key);
       result.durationMs = Date.now() - started;
       this.repo.finishPollRun(runId, {
         ok: result.pagesFailed === 0,
