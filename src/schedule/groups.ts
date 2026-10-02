@@ -6,6 +6,8 @@
  *
  * Rule (agreed with the faculty): strip the "иот" marker together with any
  * parenthetical that follows it; keep parentheticals of non-иот groups.
+ * A second track of the same direction gets a "-2" tail on the portal
+ * ("ВИШ-13-24иот (09.03.01)-2") — it is still the same logical group.
  */
 export interface LogicalGroup {
   key: string;
@@ -25,7 +27,9 @@ export interface LogicalGroup {
   portalNames: string[];
 }
 
-const NAME_RE = /^([A-ZА-ЯЁ]+)-(\d{1,2})-(\d{2})\s*(иот)?\s*(\(.*?\))?\s*$/iu;
+const NAME_RE = /^([A-ZА-ЯЁ]+)-(\d{1,2})-(\d{2})\s*(иот)?\s*(\(.*?\))?\s*(?:-\s*(\d{1,2}))?\s*$/iu;
+/** Начало любого названия группы: префикс, номер, год набора — для имён, которые NAME_RE не понял. */
+const HEAD_RE = /^([A-ZА-ЯЁ]+)-(\d{1,2})-(\d{2})/iu;
 
 export interface ParsedGroupName {
   prefix: string;
@@ -38,12 +42,15 @@ export interface ParsedGroupName {
 export function parseGroupName(name: string): ParsedGroupName | null {
   const m = NAME_RE.exec(name.trim());
   if (!m) return null;
+  const paren = m[5]?.replace(/^\(|\)$/g, "").trim() || null;
+  // Хвост «-2» у группы трека — тот же трек, у прочих групп — другая группа.
+  const tail = m[6] ?? null;
   return {
     prefix: m[1]!.toUpperCase(),
     number: Number(m[2]),
     intake: Number(m[3]),
     individualTrack: !!m[4],
-    qualifier: m[4] ? null : (m[5]?.replace(/^\(|\)$/g, "").trim() ?? null),
+    qualifier: m[4] ? null : [paren, tail].filter(Boolean).join("-") || null,
   };
 }
 
@@ -72,13 +79,19 @@ export function buildLogicalGroups(portal: Array<{ id: number; name: string }>, 
     let lg = map.get(key);
     if (!lg) {
       const title = parsed ? (parsed.qualifier ? `${parsed.prefix}-${parsed.number}-${parsed.intake} (${parsed.qualifier})` : `${parsed.prefix}-${parsed.number}-${parsed.intake}`) : g.name.trim();
+      // Название незнакомого вида: группа остаётся отдельной и под своим
+      // именем, но курс и префикс берём из начала — иначе она попадала в
+      // список отдельным разделом «(0 курс)».
+      const head = parsed ? null : HEAD_RE.exec(g.name.trim());
+      const prefix = parsed?.prefix ?? head?.[1]?.toUpperCase() ?? "";
+      const intake = parsed?.intake ?? (head ? Number(head[3]) : 0);
       lg = {
         key,
         title,
-        prefix: parsed?.prefix ?? "",
-        number: parsed?.number ?? 0,
-        intake: parsed?.intake ?? 0,
-        course: parsed ? courseFor(parsed.intake, academicYearStart) : 0,
+        prefix,
+        number: parsed?.number ?? (head ? Number(head[2]) : 0),
+        intake,
+        course: parsed || head ? courseFor(intake, academicYearStart) : 0,
         portalIds: [],
         portalNames: [],
       };

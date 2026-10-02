@@ -588,19 +588,56 @@ export class Repo {
   }
 
   // ---------- portal groups ----------
-  upsertPortalGroups(groups: Array<{ id: number; name: string; groupKey: string }>): void {
+  /**
+   * Список групп факультета с портала. Возвращает ключи логических групп, чей
+   * состав поменялся: в группу пришла новая страница портала (новый трек) или
+   * страница сменила ключ. Их расписание надо пересобрать без сравнения —
+   * пары новой страницы не изменение, о них не уведомляют.
+   */
+  upsertPortalGroups(groups: Array<{ id: number; name: string; groupKey: string }>): string[] {
     const ts = nowIso();
     const upsert = this.db.prepare(
       `INSERT INTO portal_groups (id, name, group_key, active, first_seen_at, last_seen_at) VALUES (?, ?, ?, 1, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, group_key = excluded.group_key, active = 1, last_seen_at = excluded.last_seen_at`,
     );
     const seen = new Set(groups.map((g) => g.id));
+    const recomposed = new Set<string>();
     this.db.transaction(() => {
+      // Ключ группы мог смениться (правило разбора названий поправили):
+      // запомним старые, чтобы перенести на новый ключ выбор людей.
+      const before = new Map((this.db.prepare("SELECT id, group_key FROM portal_groups").all() as Array<{ id: number; group_key: string }>).map((r) => [r.id, r.group_key]));
       for (const g of groups) upsert.run(g.id, g.name, g.groupKey, ts, ts);
       const all = this.db.prepare("SELECT id FROM portal_groups").all() as Array<{ id: number }>;
       const deactivate = this.db.prepare("UPDATE portal_groups SET active = 0 WHERE id = ?");
       for (const { id } of all) if (!seen.has(id)) deactivate.run(id);
+      const stillUsed = this.db.prepare("SELECT 1 FROM portal_groups WHERE group_key = ? AND active = 1 LIMIT 1");
+      const moves = new Map<string, string>();
+      for (const g of groups) {
+        const old = before.get(g.id);
+        if (old && old !== g.groupKey && !stillUsed.get(old)) moves.set(old, g.groupKey);
+      }
+      for (const [from, to] of moves) this.moveGroupKey(from, to);
+      for (const g of groups) {
+        const old = before.get(g.id);
+        if (old === g.groupKey) continue;
+        recomposed.add(g.groupKey);
+        if (old) recomposed.add(old);
+      }
     })();
+    return [...recomposed];
+  }
+
+  /**
+   * Перенести выбор людей со старого ключа группы на новый: своя группа,
+   * отслеживаемые группы, подписки чатов на слайды. Расписание (occurrences,
+   * change_events) не трогаем — оно пересоберётся под новым ключом само.
+   */
+  private moveGroupKey(from: string, to: string): void {
+    this.db.prepare("UPDATE users SET group_key = ? WHERE group_key = ?").run(to, from);
+    this.db.prepare("UPDATE OR IGNORE watch_groups SET group_key = ? WHERE group_key = ?").run(to, from);
+    this.db.prepare("DELETE FROM watch_groups WHERE group_key = ?").run(from);
+    this.db.prepare("UPDATE OR IGNORE chat_slide_subs SET group_key = ? WHERE group_key = ?").run(to, from);
+    this.db.prepare("DELETE FROM chat_slide_subs WHERE group_key = ?").run(from);
   }
 
   listPortalGroups(onlyActive = true): PortalGroupRow[] {
