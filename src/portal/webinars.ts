@@ -68,7 +68,8 @@ export function sameGroup(a: string, b: string): boolean {
   const split = (x: string) => {
     const s = norm(x).replace(/\s*\((?:иот|ин)\)\s*/g, " ").trim();
     const qualifier = /\(([^)]*)\)/.exec(s)?.[1]?.trim() ?? "";
-    const base = s.replace(/\s*\(.*?\)\s*/g, "").replace(/иот$/, "").replace(/\s*ин$/, "").trim();
+    // «ВИШ-13-24иот (09.03.01)-2» — второй трек той же группы: «иот-2» тоже срезаем.
+    const base = s.replace(/\s*\(.*?\)\s*/g, "").replace(/иот(?:-\d{1,2})?$/, "").replace(/\s*ин$/, "").trim();
     return { base, qualifier };
   };
   const x = split(a);
