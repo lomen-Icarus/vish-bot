@@ -754,6 +754,14 @@ export class Repo {
     return rows.map((r) => ({ id: r.id, groupKey: r.group_key, date: r.date, period: r.period as Period, kind: r.kind, payload: JSON.parse(r.payload_json), createdAt: r.created_at, notified: Number((r as { notified?: number }).notified ?? 0) === 1 }));
   }
 
+  /**
+   * Стереть неразосланные изменения пар (не объявления портала): админ решил
+   * не рассылать подозрительно большую пачку. Сколько стёрто.
+   */
+  dropUnnotifiedEvents(): number {
+    return Number(this.db.prepare("DELETE FROM change_events WHERE notified = 0 AND group_key <> '*'").run().changes);
+  }
+
   markEventsNotified(ids: number[]): void {
     if (ids.length === 0) return;
     const stmt = this.db.prepare("UPDATE change_events SET notified = 1 WHERE id = ?");

@@ -1,7 +1,7 @@
 import { Cron } from "croner";
 import { rmSync } from "node:fs";
 import type { ScheduleService } from "../schedule/service.js";
-import type { Notifier } from "../notify/dispatcher.js";
+import { CHANGES_RELEASE_KEY, type Notifier } from "../notify/dispatcher.js";
 import type { Repo } from "../db/repo.js";
 import type { NewsScanner } from "../news/scanner.js";
 import type { TeacherService } from "../portal/teachers.js";
@@ -45,6 +45,11 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       try {
         const sent = await opts.notifier.tickReminders();
         if (sent) logger.info({ sent }, "reminders sent");
+        // Админ разрешил разослать придержанную пачку изменений — не ждём опроса.
+        if (opts.repo.getMeta(CHANGES_RELEASE_KEY) === "1" && !pollInFlight) {
+          const released = await opts.notifier.dispatchChangeEvents();
+          logger.info({ released }, "held schedule changes released");
+        }
         const backlog = await opts.notifier.flushQuietBacklog();
         if (backlog) logger.info({ backlog }, "quiet-hours change backlog delivered");
         const watched = await opts.notifier.tickTeacherWatches();
