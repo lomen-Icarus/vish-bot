@@ -7,9 +7,9 @@
 import type { LogicalGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
-import { filterSubgroup, posterTeacher, type TeacherView } from "../../schedule/format.js";
+import { filterSubgroup, isActiveLesson, posterTeacher, type MarkedLesson, type TeacherView } from "../../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate } from "../../time.js";
-import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El } from "../core.js";
+import { FONT, MARK_STYLE, PAD, W, changeBanner, h, loadFonts, markBadge, pluralPairs, text, toPng as corePng, type El } from "../core.js";
 import type { DayRenderInput, Renderer, StreamRenderInput, StreamRenderRow, WeekRenderInput } from "../image.js";
 
 const INK = "#111111";
@@ -192,8 +192,9 @@ function nowStrip(accent: string, end: number | null): El {
   );
 }
 
-function lessonRow(o: Occurrence, ongoing: boolean, accent: string, view: TeacherView | undefined): El {
-  const moved = o.status === "moved";
+function lessonRow(o: MarkedLesson, ongoing: boolean, accent: string, view: TeacherView | undefined): El {
+  const cancelled = o.mark?.kind === "cancelled";
+  const moved = o.status === "moved" || cancelled;
   const inv = ongoing;
   const fg = inv ? CARD : INK;
   const sub = inv ? INV_SUB : MUTED;
@@ -202,12 +203,12 @@ function lessonRow(o: Occurrence, ongoing: boolean, accent: string, view: Teache
   else if (o.room) meta.push(`ауд. ${o.room}`);
   if (o.subgroup) meta.push(`${o.subgroup} подгруппа`);
   const badges: Array<{ label: string; bg: string }> = [];
-  if (moved && o.movedTo) badges.push({ label: `перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, bg: "#ff9a8b" });
+  if (o.status === "moved" && !cancelled && o.movedTo) badges.push({ label: `перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, bg: "#ff9a8b" });
   if (o.movedFrom) badges.push({ label: `перенос с ${o.movedFrom.date.slice(8, 10)}.${o.movedFrom.date.slice(5, 7)}`, bg: "#ffc247" });
   if (o.substituted) badges.push({ label: "замена", bg: "#ff9a8b" });
 
   return block(
-    { flexDirection: "column", backgroundColor: inv ? INK : CARD, opacity: moved ? 0.6 : 1 },
+    { flexDirection: "column", backgroundColor: inv ? INK : CARD, opacity: cancelled ? 0.85 : moved ? 0.6 : 1, ...(o.mark ? { borderColor: MARK_STYLE[o.mark.kind].color } : {}) },
     ongoing ? nowStrip(accent, o.end) : null,
     h(
       "div",
@@ -217,6 +218,7 @@ function lessonRow(o: Occurrence, ongoing: boolean, accent: string, view: Teache
       h(
         "div",
         { display: "flex", flexDirection: "column", flex: 1, minWidth: 0, padding: "18px 22px 18px 22px" },
+        o.mark ? markBadge(o.mark) : null,
         text(o.subject, { fontSize: 34, fontWeight: 700, color: fg, lineHeight: 1.15, textDecoration: moved ? "line-through" : "none" }),
         h(
           "div",
@@ -267,16 +269,17 @@ export async function createRenderer(): Promise<Renderer | null> {
       let prevEnd: number | null = null;
       for (const o of list) {
         if (prevEnd != null && o.start != null && o.start - prevEnd >= 20) rows.push(gapRow(o.start - prevEnd));
-        const ongoing = !!now && now.date === date && o.start != null && o.end != null && now.minutes >= o.start && now.minutes < o.end && o.status === "scheduled";
+        const ongoing = !!now && now.date === date && o.start != null && o.end != null && now.minutes >= o.start && now.minutes < o.end && isActiveLesson(o);
         rows.push(h("div", { display: "flex", width: "100%", marginTop: 14 }, lessonRow(o, ongoing, p.color, input.teacherView)));
-        if (o.status === "scheduled" && o.end != null) prevEnd = o.end;
+        if (isActiveLesson(o) && o.end != null) prevEnd = o.end;
       }
-      const active = list.filter((o) => o.status === "scheduled");
+      const active = list.filter(isActiveLesson);
       const withTime = active.filter((o) => o.start != null && o.end != null);
       const span = withTime.length ? `${fmtHHMM(Math.min(...withTime.map((o) => o.start!)))} – ${fmtHHMM(Math.max(...withTime.map((o) => o.end!)))}` : "";
       const body = list.length ? rows : [h("div", { display: "flex", width: "100%", marginTop: 14 }, emptyBlock("Пар нет", "можно выспаться", p.color))];
       const rel = relDate(date, today);
       const tree = page([
+        input.banner ? changeBanner(input.banner) : null,
         header({ title: weekdayName(date), dateLine: fmtDayMonth(date), rel: rel || undefined, groupTitle: group.title, info: weekInfo }),
         h("div", { display: "flex", flexDirection: "column", width: "100%", marginTop: 20 }, ...body),
         footer(active.length ? `${active.length} ${pluralPairs(active.length)}${span ? `  /  ${span}` : ""}` : "", `tt.chuvsu.ru  ·  ${now ? fmtHHMM(now.minutes) : ""}`),

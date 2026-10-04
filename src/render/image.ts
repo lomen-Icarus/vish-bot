@@ -5,9 +5,9 @@
 import type { LogicalGroup } from "../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import type { WeekInfo } from "../schedule/service.js";
-import { filterSubgroup, posterTeacher, type TeacherView } from "../schedule/format.js";
+import { filterSubgroup, isActiveLesson, posterTeacher, type MarkedLesson, type TeacherView } from "../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallClock } from "../time.js";
-import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El } from "./core.js";
+import { FONT, MARK_STYLE, PAD, W, changeBanner, h, loadFonts, markBadge, pluralPairs, text, toPng as corePng, type El } from "./core.js";
 
 export interface DayRenderInput {
   /** Poster look for this one render; the bot default when absent. */
@@ -21,10 +21,13 @@ export interface DayRenderInput {
   teacherView?: TeacherView;
   group: LogicalGroup;
   date: LocalDate;
-  lessons: Occurrence[];
+  /** Пары дня; у пар из уведомления об изменениях — пометка mark (что с парой случилось). */
+  lessons: MarkedLesson[];
   weekInfo: WeekInfo;
   today: LocalDate;
   now?: WallClock;
+  /** Полоса сверху постера: «ИЗМЕНЕНИЯ НА СЕГОДНЯ» и т. п. */
+  banner?: { text: string; tone: "urgent" | "info" };
 }
 
 export interface WeekRenderInput {
@@ -135,9 +138,11 @@ function header(title: string, subtitle: string, group: LogicalGroup, accent: st
   );
 }
 
-function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number; teacherView?: TeacherView }): El {
+function lessonRow(o: MarkedLesson, opts: { ongoing: boolean; variantCount: number; teacherView?: TeacherView }): El {
   const color = typeColor(o.type);
-  const moved = o.status === "moved";
+  const cancelled = o.mark?.kind === "cancelled";
+  const moved = o.status === "moved" || cancelled;
+  const markColor = o.mark ? MARK_STYLE[o.mark.kind].color : null;
   const time = o.start != null && o.end != null ? [fmtHHMM(o.start), fmtHHMM(o.end)] : ["—", ""];
   const meta: string[] = [lessonTypeLabel(o.type)];
   if (o.isDistance) meta.push("дистанционно");
@@ -146,7 +151,7 @@ function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number
 
   if (o.subgroup) meta.push(`${o.subgroup} подгруппа`);
   const badges: Array<{ label: string; color: string }> = [];
-  if (moved && o.movedTo) badges.push({ label: `перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, color: "#fb7185" });
+  if (o.status === "moved" && !cancelled && o.movedTo) badges.push({ label: `перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, color: "#fb7185" });
   if (o.movedFrom) badges.push({ label: `перенос с ${o.movedFrom.date.slice(8, 10)}.${o.movedFrom.date.slice(5, 7)}`, color: "#fbbf24" });
   if (o.substituted) badges.push({ label: "замена", color: "#f472b6" });
   if (o.isDistance) badges.push({ label: "ДОТ", color: "#38bdf8" });
@@ -154,7 +159,7 @@ function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number
 
   return h(
     "div",
-    { display: "flex", flexDirection: "row", width: "100%", backgroundColor: opts.ongoing ? THEME.card2 : THEME.card, borderRadius: 24, padding: "22px 26px", opacity: moved ? 0.55 : 1, border: opts.ongoing ? `2px solid #4ade8066` : `2px solid ${THEME.card}` },
+    { display: "flex", flexDirection: "row", width: "100%", backgroundColor: opts.ongoing ? THEME.card2 : THEME.card, borderRadius: 24, padding: "22px 26px", opacity: cancelled ? 0.85 : moved ? 0.55 : 1, border: markColor ? `3px solid ${markColor}` : opts.ongoing ? `2px solid #4ade8066` : `2px solid ${THEME.card}` },
     h(
       "div",
       { display: "flex", flexDirection: "column", width: 150, alignItems: "flex-start" },
@@ -167,6 +172,7 @@ function lessonRow(o: Occurrence, opts: { ongoing: boolean; variantCount: number
     h(
       "div",
       { display: "flex", flexDirection: "column", flex: 1 },
+      o.mark ? markBadge(o.mark) : null,
       text(o.subject, { fontSize: 34, fontWeight: 700, color: THEME.fg, lineHeight: 1.2, textDecoration: moved ? "line-through" : "none" }),
       // Преподаватель — в той же строке, что тип и аудитория: с короткими
       // «ЛК/ПР/ЛБ» он туда помещается. Не поместился — уходит на следующую
@@ -238,17 +244,18 @@ export async function createRenderer(): Promise<Renderer | null> {
       let prevEnd: number | null = null;
       for (const o of list) {
         if (prevEnd != null && o.start != null && o.start - prevEnd >= 20) rows.push(gapRow(o.start - prevEnd));
-        const ongoing = !!now && now.date === date && o.start != null && o.end != null && now.minutes >= o.start && now.minutes < o.end && o.status === "scheduled";
+        const ongoing = !!now && now.date === date && o.start != null && o.end != null && now.minutes >= o.start && now.minutes < o.end && isActiveLesson(o);
         rows.push(h("div", { display: "flex", width: "100%", marginTop: 14 }, lessonRow(o, { ongoing, variantCount: group.portalIds.length, teacherView: input.teacherView })));
-        if (o.status === "scheduled" && o.end != null) prevEnd = o.end;
+        if (isActiveLesson(o) && o.end != null) prevEnd = o.end;
       }
-      const active = list.filter((o) => o.status === "scheduled");
+      const active = list.filter(isActiveLesson);
       const withTime = active.filter((o) => o.start != null && o.end != null);
       const span = withTime.length ? `${fmtHHMM(Math.min(...withTime.map((o) => o.start!)))} – ${fmtHHMM(Math.max(...withTime.map((o) => o.end!)))}` : "";
       const body = list.length
         ? rows
         : [h("div", { display: "flex", flexDirection: "column", alignItems: "center", width: "100%", padding: "80px 0" }, text("Пар нет", { fontSize: 56, fontWeight: 800, color: THEME.fg }), text("можно выспаться", { fontSize: 28, color: THEME.muted, marginTop: 12 }))];
       const tree = page([
+        input.banner ? changeBanner(input.banner) : null,
         header(weekdayName(date), subtitleFor(date, weekInfo, today), group, accent, weekInfo),
         h("div", { display: "flex", flexDirection: "column", width: "100%", marginTop: 34 }, ...body),
         footer(active.length ? `${active.length} ${pluralPairs(active.length)}${span ? `  ·  ${span}` : ""}` : "", `tt.chuvsu.ru  ·  ${now ? fmtHHMM(now.minutes) : ""}`),

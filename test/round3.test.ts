@@ -117,17 +117,26 @@ describe("quiet hours", () => {
     const n = new Notifier(api, repo, makeService({}), null);
     // First call only records the watermark, so nothing older is ever re-sent.
     expect(await n.flushQuietBacklog(clock("2026-09-15", 9, 0))).toBe(0);
-    repo.insertChangeEvents([{ groupKey: group.key, date: "2026-09-17", period: 1, kind: "removed", payload: { before: lesson("2026-09-17", 2, 9 * 60 + 50, "Физика") } }]);
+    repo.insertChangeEvents([
+      { groupKey: group.key, date: "2026-09-17", period: 1, kind: "removed", payload: { before: lesson("2026-09-17", 2, 9 * 60 + 50, "Физика") } },
+      { groupKey: group.key, date: "2026-09-16", period: 1, kind: "added", payload: { after: lesson("2026-09-16", 5, 15 * 60 + 10, "Матан") } },
+    ]);
 
     // 23:00 is inside the quiet window: the push is skipped but not lost.
     const atNight = new Notifier(api, repo, makeService({}), null);
     expect(await atNight.dispatchChangeEvents(clock("2026-09-15", 23, 0))).toBe(0);
     expect(sent).toHaveLength(0);
 
-    // Morning: the backlog arrives once, and only once.
+    // Morning: the backlog arrives once, and only once — срочное на сегодня
+    // отдельно от изменений на будущие дни, пояснение про тихие часы — у первого.
     expect(await n.flushQuietBacklog(clock("2026-09-16", 9, 0))).toBe(1);
+    expect(sent).toHaveLength(2);
     expect(sent[0]!.text).toMatch(/тихие часы/);
-    expect(sent[0]!.text).toMatch(/Физика/);
+    expect(sent[0]!.text).toMatch(/ИЗМЕНЕНИЯ НА СЕГОДНЯ/);
+    expect(sent[0]!.text).toMatch(/➕ 5️⃣ <code>15:10–16:30<\/code> <b>Матан<\/b>/);
+    expect(sent[1]!.text).not.toMatch(/тихие часы/);
+    expect(sent[1]!.text).toMatch(/Изменения на будущее/);
+    expect(sent[1]!.text).toMatch(/Физика/);
     expect(await n.flushQuietBacklog(clock("2026-09-16", 9, 1))).toBe(0);
   });
 
