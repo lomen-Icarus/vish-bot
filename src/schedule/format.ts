@@ -18,6 +18,24 @@ export function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * Пометка пары в уведомлении об изменениях: что с ней случилось и в чём дело
+ * («ауд. Т-310 → Т-204»). Живёт только на время показа — в базу не пишется,
+ * поэтому на сравнение расписаний не влияет.
+ */
+export interface LessonMark {
+  kind: "changed" | "added" | "cancelled";
+  /** Простым текстом, без разметки. */
+  note: string;
+}
+export type MarkedLesson = Occurrence & { mark?: LessonMark };
+
+/** Значок пометки в тексте: карандаш — изменилась, плюс — новая, крест — отменена. */
+export const MARK_ICON: Record<LessonMark["kind"], string> = { changed: "✏️", added: "➕", cancelled: "❌" };
+
+/** Отменённая пара в счёт пар дня не идёт. */
+export const isActiveLesson = (o: MarkedLesson): boolean => o.status === "scheduled" && o.mark?.kind !== "cancelled";
+
 const SLOT_EMOJI = ["0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"];
 
 export interface FormatOptions {
@@ -34,7 +52,7 @@ export interface FormatOptions {
   hideTitle?: boolean;
 }
 
-export function filterSubgroup(list: Occurrence[], subgroup: number | null | undefined): Occurrence[] {
+export function filterSubgroup<T extends Occurrence>(list: T[], subgroup: number | null | undefined): T[] {
   if (!subgroup) return list;
   return list.filter((o) => o.subgroup == null || o.subgroup === subgroup);
 }
@@ -156,12 +174,21 @@ export function teacherLabel(name: string | null | undefined, view: TeacherView 
   return view === "bold" ? `<b>${short}</b>` : short;
 }
 
-export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
+export function formatLesson(o: MarkedLesson, opts: FormatOptions = {}): string {
   const lines: string[] = [];
-  const ongoing = opts.now && opts.now.date === o.date && o.start != null && o.end != null && opts.now.minutes >= o.start && opts.now.minutes < o.end;
-  const moved = o.status === "moved";
+  const mark = o.mark;
+  const cancelled = mark?.kind === "cancelled";
+  const ongoing = !cancelled && opts.now && opts.now.date === o.date && o.start != null && o.end != null && opts.now.minutes >= o.start && opts.now.minutes < o.end;
+  const moved = o.status === "moved" || cancelled;
   const subject = moved ? `<s>${esc(o.subject)}</s>` : `<b>${esc(o.subject)}</b>`;
-  lines.push(`${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subject}${ongoing ? " ▶️" : ""}`);
+  // Значок изменения — только у затронутых пар; остальные идут как обычно.
+  lines.push(`${mark ? `${MARK_ICON[mark.kind]} ` : ""}${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subject}${ongoing ? " ▶️" : ""}`);
+  if (mark) {
+    const note = mark.note ? esc(mark.note) : "";
+    if (mark.kind === "changed") lines.push(`     ✏️ <b>Изменено:</b> ${note || "детали на портале"}`);
+    else if (mark.kind === "added") lines.push(`     ➕ <b>Новая пара</b>${note ? ` — ${note}` : ""}`);
+    else lines.push(`     ❌ <b>ОТМЕНЕНА</b>${note ? ` — ${note}` : ""}`);
+  }
   const meta: string[] = [];
   meta.push(esc(lessonTypeLabel(o.type)));
   if (o.isDistance) meta.push("💻 дистанционно");
@@ -172,7 +199,7 @@ export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   if (o.groups?.length) meta.push(o.groups.map(esc).join(", "));
   lines.push(`     ${meta.join(" · ")}`);
   if (o.topic && o.isDistance) lines.push(`     📝 ${esc(o.topic.length > 90 ? o.topic.slice(0, 87).trimEnd() + "…" : o.topic)}`);
-  if (moved && o.movedTo) lines.push(`     ↪️ перенесена на ${fmtDDMM(o.movedTo.date)}${o.movedTo.slot ? ` (${o.movedTo.slot} пара)` : ""}`);
+  if (o.status === "moved" && !cancelled && o.movedTo) lines.push(`     ↪️ перенесена на ${fmtDDMM(o.movedTo.date)}${o.movedTo.slot ? ` (${o.movedTo.slot} пара)` : ""}`);
   if (o.movedFrom) lines.push(`     ↩️ перенос с ${fmtDDMM(o.movedFrom.date)} (${o.movedFrom.slot} пара)`);
   if (o.substituted) {
     const bits: string[] = [];
@@ -184,11 +211,11 @@ export function formatLesson(o: Occurrence, opts: FormatOptions = {}): string {
   return lines.join("\n");
 }
 
-export function formatDay(group: LogicalGroup, date: LocalDate, lessons: Occurrence[], info: WeekInfo, today: LocalDate, opts: FormatOptions = {}): string {
+export function formatDay(group: LogicalGroup, date: LocalDate, lessons: MarkedLesson[], info: WeekInfo, today: LocalDate, opts: FormatOptions = {}): string {
   const list = filterSubgroup(lessons, opts.subgroup);
   const head = opts.hideTitle ? dayHeader(date, info, today) : `${dayHeader(date, info, today)}\n${esc(group.title)}`;
   if (list.length === 0) return `${head}\n\n😴 Пар нет`;
-  const active = list.filter((o) => o.status === "scheduled");
+  const active = list.filter(isActiveLesson);
   const body = list.map((o) => formatLesson(o, opts)).join("\n\n");
   const summary = active.length ? `\n\n${countLessons(active.length)}${firstLast(active)}` : "";
   return `${head}\n\n${body}${summary}`;
@@ -275,7 +302,7 @@ export function formatChangeEvent(e: ChangeEvent): string {
     case "added":
       return `➕ ${when(e.after!)}: ${describe(e.after!)}${e.after!.movedFrom ? ` — перенос с ${fmtDDMM(e.after!.movedFrom.date)} (${e.after!.movedFrom.slot} пара)` : ""}`;
     case "removed":
-      return `➖ ${when(e.before!)}: ${describe(e.before!)} — убрана из расписания`;
+      return `❌ ${when(e.before!)}: ${describe(e.before!)} — <b>отменена</b>`;
     case "moved":
       return `🔁 ${describe(e.after!)}: ${when(e.before!)} → ${when(e.after!)}`;
     case "changed": {

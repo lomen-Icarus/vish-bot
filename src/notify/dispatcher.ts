@@ -1,11 +1,11 @@
 import type { Api, RawApi } from "grammy";
-import { GrammyError, InlineKeyboard, InputFile } from "grammy";
+import { GrammyError, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { ChangeEventRow, Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
-import { clampHtml, esc as escapeHtml, formatChanges, formatDay, formatNotice, filterSubgroup, plural } from "../schedule/format.js";
-import { isSessionPeriod, lessonTypeLabel, type Occurrence } from "../schedule/model.js";
-import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
+import { captionFits, clampHtml, esc as escapeHtml, formatDay, formatNotice, filterSubgroup, plural, type MarkedLesson } from "../schedule/format.js";
+import { isSessionPeriod, lessonTypeLabel, positionKey, type Occurrence } from "../schedule/model.js";
+import { fmtDDMM, fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, weekdayShort, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
 import { WEBINAR_URL } from "../bot/keyboards.js";
@@ -18,6 +18,38 @@ import { readFileSync } from "node:fs";
 import { isUnreachable } from "../bot/errors.js";
 import { sameSubject } from "../chat/social.js";
 import { deckFileName } from "./deckName.js";
+import { laterDates, laterText, markDay, splitByToday, todayCaption, todayText, touchesDate } from "./changes.js";
+
+/**
+ * Тормоз массовой рассылки. Столько изменений за раз в живом расписании не
+ * бывает — это сбой портала или смена разбора: такую пачку не рассылаем, а
+ * спрашиваем админов (кнопки «Разослать» / «Не рассылать»).
+ */
+export const MASS_CHANGES_TOTAL = 40;
+export const MASS_CHANGES_PER_GROUP = 25;
+/** Мета-ключи тормоза: «придержано с …» и «админ разрешил разослать». */
+export const CHANGES_HELD_KEY = "changes:held";
+export const CHANGES_RELEASE_KEY = "changes:release";
+/** Больше картинок дней в одном уведомлении о будущих изменениях не шлём. */
+const MAX_CHANGE_POSTERS = 4;
+
+/** Пачка изменений подозрительно большая (см. MASS_CHANGES_*). */
+export function isMassChange(rows: Array<{ groupKey: string }>): boolean {
+  if (rows.length >= MASS_CHANGES_TOTAL) return true;
+  const per = new Map<string, number>();
+  for (const r of rows) per.set(r.groupKey, (per.get(r.groupKey) ?? 0) + 1);
+  return Math.max(0, ...per.values()) >= MASS_CHANGES_PER_GROUP;
+}
+
+interface ChangeDelivery {
+  now: WallClock;
+  /** Своя группа человека (по ней — фильтр подгруппы), а не отслеживаемая. */
+  own: boolean;
+  kind: string;
+  /** Строка перед уведомлением (например, «пока были тихие часы…»). */
+  head: string;
+  kb: InlineKeyboard;
+}
 
 /** За сколько минут до первой пары преподавателя писать подписчикам. */
 const TEACHER_LEAD_MIN = 120;
@@ -269,10 +301,32 @@ export class Notifier {
     }
   }
 
+  /** Идёт ли рассылка изменений прямо сейчас (два прохода разом разослали бы дважды). */
+  private dispatching = false;
+
   /** Deliver every stored, not-yet-notified change event. */
   async dispatchChangeEvents(now: WallClock = wallClock()): Promise<number> {
-    const rows = this.repo.unnotifiedEvents();
+    if (this.dispatching) return 0;
+    this.dispatching = true;
+    try {
+      return await this.dispatchChangeEventsOnce(now);
+    } finally {
+      this.dispatching = false;
+    }
+  }
+
+  private async dispatchChangeEventsOnce(now: WallClock): Promise<number> {
+    this.posterCache.clear();
+    let rows = this.repo.unnotifiedEvents();
     if (rows.length === 0) return 0;
+    // Подозрительно большая пачка — не рассылаем, пока админ не решит.
+    const released = this.repo.getMeta(CHANGES_RELEASE_KEY) === "1";
+    const lessonRows = rows.filter((r) => r.groupKey !== "*");
+    if (lessonRows.length && !released && isMassChange(lessonRows)) {
+      await this.holdMassChange(lessonRows);
+      rows = rows.filter((r) => r.groupKey === "*");
+      if (!rows.length) return 0;
+    }
     let delivered = 0;
     const byGroup = new Map<string, typeof rows>();
     for (const r of rows) {
@@ -333,7 +387,6 @@ export class Notifier {
         if (!fresh.length) continue;
         // Quiet hours only postpone: the backlog below delivers them when the quiet window ends.
         if (this.inQuietHours(user, now)) continue;
-        const text = formatChanges(group, fresh);
         // Файл с изменениями предлагаем сразу в уведомлении — и по своей группе,
         // и по той, за которой человек просто следит: одно нажатие, и в календаре
         // телефона обновлены ровно изменившиеся пары.
@@ -341,9 +394,10 @@ export class Notifier {
         if (!own) kb.row().text("👁 Не следить за группой", `unwatch:${groupKey}`);
         // Пометку ставим только после успешной отправки: иначе одна сетевая
         // осечка навсегда прячет изменение и от основного прохода, и от добора.
-        if (await this.send(user, clampHtml(text), { kind: "changes", replyMarkup: kb })) {
+        const done = await this.deliverChanges(user, group, fresh, { now, own, kind: "changes", head: "", kb });
+        if (done.length) {
           delivered++;
-          for (const e of fresh) {
+          for (const e of done) {
             const id = idByEvent.get(e);
             if (id != null) this.repo.markReminderSent(user.id, "event", String(id));
           }
@@ -351,7 +405,116 @@ export class Notifier {
       }
       this.repo.markEventsNotified(list.map((r) => r.id));
     }
+    if (released) {
+      this.repo.setMeta(CHANGES_RELEASE_KEY, "");
+      this.repo.setMeta(CHANGES_HELD_KEY, "");
+    }
     return delivered;
+  }
+
+  /**
+   * Придержать подозрительно большую пачку: админам — один раз вопрос с
+   * кнопками, событиям — оставаться неразосланными (добор после тихих часов
+   * берёт только разосланные, так что и он их не тронет).
+   */
+  private async holdMassChange(rows: ChangeEventRow[]): Promise<void> {
+    if (this.repo.getMeta(CHANGES_HELD_KEY)) return;
+    this.repo.setMeta(CHANGES_HELD_KEY, new Date().toISOString());
+    const per = new Map<string, number>();
+    for (const r of rows) per.set(r.groupKey, (per.get(r.groupKey) ?? 0) + 1);
+    const top = [...per.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const title = (key: string): string => this.service.group(key)?.title ?? key;
+    logger.warn({ events: rows.length, groups: per.size }, "mass schedule change held for admin decision");
+    const text = [
+      "⚠️ <b>Подозрительно много изменений расписания</b>",
+      "",
+      `За раз набралось ${rows.length} ${plural(rows.length, "изменение", "изменения", "изменений")} в ${per.size} ${plural(per.size, "группе", "группах", "группах")}. Так бывает при сбое портала, поэтому рассылку я придержал.`,
+      "",
+      ...top.map(([key, n]) => `• ${escapeHtml(title(key))}: ${n}`),
+      "",
+      "Проверь расписание на портале и реши:",
+    ].join("\n");
+    const kb = new InlineKeyboard().text("✅ Разослать", "chg:release").text("🗑 Не рассылать", "chg:drop");
+    for (const id of this.adminIds) {
+      await this.api.sendMessage(id, text, { parse_mode: "HTML", reply_markup: kb }).catch((err: unknown) => logger.warn({ err: String(err), adminId: id }, "mass change notice failed"));
+    }
+  }
+
+  /**
+   * Изменения одному человеку. Касающиеся сегодняшнего дня — отдельным
+   * срочным сообщением со всем днём и пометками, остальные — списком «на
+   * будущее». Каждое — текстом или картинкой, как человек выбрал. Возвращает
+   * изменения, которые дошли (их и помечаем как доставленные).
+   */
+  private async deliverChanges(user: User, group: LogicalGroup, events: ChangeEvent[], opts: ChangeDelivery): Promise<ChangeEvent[]> {
+    const { today, later } = splitByToday(events, opts.now.date);
+    const done: ChangeEvent[] = [];
+    if (today.length && (await this.sendTodayChanges(user, group, today, opts))) done.push(...today);
+    // Пояснение сверху («пока были тихие часы…») — только у первого сообщения.
+    if (later.length && (await this.sendLaterChanges(user, group, later, today.length ? { ...opts, head: "" } : opts))) done.push(...later);
+    return done;
+  }
+
+  private dayLessons(user: User, group: LogicalGroup, date: LocalDate, own: boolean): Occurrence[] {
+    const all = this.service.lessonsOn(group, date);
+    return own ? filterSubgroup(all, user.subgroup) : all;
+  }
+
+  /** «ИЗМЕНЕНИЯ НА СЕГОДНЯ»: весь день, затронутые пары помечены. */
+  private async sendTodayChanges(user: User, group: LogicalGroup, events: ChangeEvent[], opts: ChangeDelivery): Promise<boolean> {
+    const date = opts.now.date;
+    const marked = markDay(this.dayLessons(user, group, date, opts.own), events, date);
+    const photo = await this.renderChanges(user, group, date, marked, opts.now, { text: "ИЗМЕНЕНИЯ НА СЕГОДНЯ", tone: "urgent" });
+    const full = todayText(group, date, marked, this.service.weekInfo(date), opts.now, user.teacherView);
+    // С картинкой день уже на ней: в подписи — весь текст, если влезает и выбрано
+    // «и так, и так», иначе — только что изменилось. Одно сообщение, а не два.
+    const body = !photo ? full : user.format === "both" && captionFits(`${opts.head}${full}`) ? full : todayCaption(group, marked);
+    return this.send(user, clampHtml(`${opts.head}${body}`), { kind: opts.kind, replyMarkup: opts.kb, photo });
+  }
+
+  /** Изменения на другие дни: список по дням; картинкой — день с пометками на каждый затронутый день. */
+  private async sendLaterChanges(user: User, group: LogicalGroup, events: ChangeEvent[], opts: ChangeDelivery): Promise<boolean> {
+    const text = clampHtml(`${opts.head}${laterText(group, events, opts.now.date)}`);
+    const photos: Buffer[] = [];
+    if (this.renderer && user.format !== "text") {
+      const tomorrow = addDays(opts.now.date, 1);
+      for (const d of laterDates(events, opts.now.date).slice(0, MAX_CHANGE_POSTERS)) {
+        const marked = markDay(this.dayLessons(user, group, d, opts.own), events.filter((e) => touchesDate(e, d)), d);
+        const banner = d === tomorrow ? `ИЗМЕНЕНИЯ НА ЗАВТРА · ${fmtDDMM(d)}` : `ИЗМЕНЕНИЯ НА ${weekdayShort(d).toUpperCase()} ${fmtDDMM(d)}`;
+        const png = await this.renderChanges(user, group, d, marked, opts.now, { text: banner, tone: "info" });
+        if (png) photos.push(png);
+      }
+    }
+    if (photos.length <= 1) return this.send(user, text, { kind: opts.kind, replyMarkup: opts.kb, photo: photos[0] });
+    // Несколько дней — альбомом, а следом текст с кнопками (у альбома кнопок не бывает).
+    try {
+      await this.api.sendMediaGroup(user.id, photos.map((p, i) => InputMediaBuilder.photo(new InputFile(p, `changes-${i + 1}.png`))), { disable_notification: true });
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 200), userId: user.id }, "changes album failed, sending text only");
+    }
+    return this.send(user, text, { kind: opts.kind, replyMarkup: opts.kb });
+  }
+
+  /**
+   * Одинаковые постеры за одну рассылку рисуем один раз: у подписчиков одной
+   * группы картинка различается только темой, подгруппой и видом преподавателя.
+   */
+  private posterCache = new Map<string, Promise<Buffer | undefined>>();
+
+  /** Картинка дня с пометками изменений — если человек выбрал картинку и отрисовка есть. */
+  private renderChanges(user: User, group: LogicalGroup, date: LocalDate, lessons: MarkedLesson[], now: WallClock, banner: { text: string; tone: "urgent" | "info" }): Promise<Buffer | undefined> {
+    const renderer = this.renderer;
+    if (!renderer || user.format === "text") return Promise.resolve(undefined);
+    const key = JSON.stringify([group.key, date, user.posterTheme ?? "", user.teacherView ?? "", banner.text, now.date === date ? now.minutes : 0, lessons.map((o) => [positionKey(o), o.room, o.start, o.end, o.status, o.mark?.kind ?? "", o.mark?.note ?? ""])]);
+    let png = this.posterCache.get(key);
+    if (!png) {
+      png = renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: now.date, now, theme: user.posterTheme ?? undefined, teacherView: user.teacherView, banner }).catch((err: unknown) => {
+        logger.warn({ err: String(err).slice(0, 200) }, "changes image render failed");
+        return undefined;
+      });
+      this.posterCache.set(key, png);
+    }
+    return png;
   }
 
   /**
@@ -379,6 +542,7 @@ export class Notifier {
       return rows;
     };
     let sent = 0;
+    this.posterCache.clear();
     for (const user of this.repo.listUsers({ onlyActive: true })) {
       if (this.inQuietHours(user, now)) continue;
       const quiet = !!user.quietFrom && !!user.quietTo;
@@ -404,9 +568,12 @@ export class Notifier {
         const recent = quiet ? rowsFor(key) : rowsFor(key).filter((r) => Date.now() - Date.parse(r.createdAt) < 2 * 60 * 60 * 1000);
         const fresh = recent.filter((r) => !this.repo.reminderSent(user.id, "event", String(r.id)));
         if (!fresh.length) continue;
+        const idByEvent = new Map<ChangeEvent, number>();
         const events: ChangeEvent[] = fresh.map((r) => {
           const p = r.payload as { before?: Occurrence; after?: Occurrence; fields?: string[] };
-          return { kind: r.kind as ChangeEvent["kind"], groupKey: r.groupKey, date: r.date, period: r.period, before: p.before, after: p.after, fields: p.fields };
+          const e: ChangeEvent = { kind: r.kind as ChangeEvent["kind"], groupKey: r.groupKey, date: r.date, period: r.period, before: p.before, after: p.after, fields: p.fields };
+          idByEvent.set(e, r.id);
+          return e;
         });
         const mine = events.filter((e) => {
           if (isSessionPeriod(e.period) && !user.notifySession) return false;
@@ -422,10 +589,12 @@ export class Notifier {
         const kb = new InlineKeyboard().text("📆 Файл изменений в календарь", `cics:${key}`);
         if (!own) kb.row().text("👁 Не следить за группой", `unwatch:${key}`);
         const head = quiet ? "🌙 <i>Пока у тебя были тихие часы, расписание изменилось.</i>\n\n" : "";
-        if (await this.send(user, clampHtml(`${head}${formatChanges(group, mine)}`), { kind: "changes-backlog", replyMarkup: kb })) {
-          sent++;
-          for (const r of fresh) this.repo.markReminderSent(user.id, "event", String(r.id));
-        }
+        const done = await this.deliverChanges(user, group, mine, { now, own, kind: "changes-backlog", head, kb });
+        if (done.length) sent++;
+        // Чужая подгруппа и сессия без подписки — не «не доставлено»: помечаем
+        // их вместе с дошедшими; не дошедшее попробуем на следующем круге.
+        const delivered = new Set(done);
+        for (const e of events) if (delivered.has(e) || !mine.includes(e)) this.repo.markReminderSent(user.id, "event", String(idByEvent.get(e)));
       }
     }
     return sent;

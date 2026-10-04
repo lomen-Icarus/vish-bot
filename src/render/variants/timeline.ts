@@ -8,9 +8,9 @@
  */
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
-import { filterSubgroup, posterTeacher, type TeacherView } from "../../schedule/format.js";
+import { filterSubgroup, isActiveLesson, posterTeacher, type MarkedLesson, type TeacherView } from "../../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallClock } from "../../time.js";
-import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El, type Style } from "../core.js";
+import { FONT, MARK_STYLE, PAD, W, changeBanner, h, loadFonts, markBadge, pluralPairs, text, toPng as corePng, type El, type Style } from "../core.js";
 import type { DayRenderInput, Renderer, StreamRenderInput, StreamRenderRow, WeekRenderInput } from "../image.js";
 
 // ---------- palette ----------
@@ -183,8 +183,11 @@ function metaSpans(parts: string[], color: string): El[] {
   return parts.map((m, i) => text(i ? `·  ${m}` : m, { fontSize: 23, fontWeight: 500, color, marginTop: 6, paddingRight: 14, lineHeight: 1.3 }));
 }
 
-function dayLesson(o: Occurrence, accent: string, ongoing: boolean, view: TeacherView | undefined): El {
-  const moved = o.status === "moved";
+function dayLesson(o: MarkedLesson, accent: string, ongoing: boolean, view: TeacherView | undefined): El {
+  const cancelled = o.mark?.kind === "cancelled";
+  const moved = o.status === "moved" || cancelled;
+  // Точка на ленте у изменённой пары — цвета пометки.
+  const dotColor = o.mark ? MARK_STYLE[o.mark.kind].color : accent;
   const meta: string[] = [];
   if (o.slot != null) meta.push(`${o.slot} пара`);
   if (o.isDistance) meta.push("дистанционно");
@@ -192,17 +195,18 @@ function dayLesson(o: Occurrence, accent: string, ongoing: boolean, view: Teache
 
   if (o.subgroup) meta.push(`${o.subgroup} подгруппа`);
   const badges: El[] = [];
-  if (moved && o.movedTo) badges.push(badge(`перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, "#e0a3ad"));
+  if (o.status === "moved" && !cancelled && o.movedTo) badges.push(badge(`перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, "#e0a3ad"));
   if (o.movedFrom) badges.push(badge(`перенос с ${o.movedFrom.date.slice(8, 10)}.${o.movedFrom.date.slice(5, 7)}`, "#d6c19a"));
   if (o.substituted) badges.push(badge("замена", "#e4b0bd"));
   if (ongoing) badges.push(badge("сейчас", accent));
 
   return row(
-    { width: "100%", padding: "26px 0", borderBottom: `1px solid ${RULE}`, opacity: moved ? 0.5 : 1 },
+    { width: "100%", padding: "26px 0", borderBottom: `1px solid ${RULE}`, opacity: cancelled ? 0.85 : moved ? 0.5 : 1 },
     timeStack(o.start, o.end, DAY_TIME_W, 56, ongoing ? accent : null),
-    row({ width: DAY_RAIL_W, justifyContent: "center", alignItems: "flex-start", paddingTop: ongoing ? 11 : 18 }, dot(accent, ongoing)),
+    row({ width: DAY_RAIL_W, justifyContent: "center", alignItems: "flex-start", paddingTop: ongoing || o.mark ? 11 : 18 }, dot(dotColor, ongoing || !!o.mark)),
     col(
       { flex: 1, minWidth: 0, paddingLeft: 16, paddingRight: 12 },
+      o.mark ? markBadge(o.mark, { marginBottom: 4 }) : null,
       text(o.subject, { fontSize: 34, fontWeight: 700, color: FG, lineHeight: 1.18, letterSpacing: -0.5, textDecoration: moved ? "line-through" : "none", marginTop: 6 }),
       // Преподаватель в той же строке, что тип и аудитория; не влез — переносится целиком.
       row(
@@ -357,7 +361,7 @@ export async function createRenderer(): Promise<Renderer | null> {
       let markerPlaced = false;
       const marker = (): El => nowMarker(accent.color, DAY_TIME_W, DAY_RAIL_W, (now as WallClock).minutes);
       for (const o of lessons) {
-        const ongoing = isToday && o.start != null && o.end != null && now!.minutes >= o.start && now!.minutes < o.end && o.status === "scheduled";
+        const ongoing = isToday && o.start != null && o.end != null && now!.minutes >= o.start && now!.minutes < o.end && isActiveLesson(o);
         const gap = prevEnd != null && o.start != null && o.start - prevEnd >= 20 ? o.start - prevEnd : 0;
         const markerHere = isToday && !markerPlaced && o.start != null && now!.minutes < o.start;
         // The rail must stay monotonic: if "now" falls inside a break, the break
@@ -374,11 +378,11 @@ export async function createRenderer(): Promise<Renderer | null> {
         }
         if (ongoing) markerPlaced = true;
         items.push(dayLesson(o, accent.color, ongoing, input.teacherView));
-        if (o.status === "scheduled" && o.end != null) prevEnd = o.end;
+        if (isActiveLesson(o) && o.end != null) prevEnd = o.end;
       }
       if (isToday && !markerPlaced && lessons.length) items.push(marker());
 
-      const active = lessons.filter((o) => o.status === "scheduled");
+      const active = lessons.filter(isActiveLesson);
       const withTime = active.filter((o) => o.start != null && o.end != null);
       const span = withTime.length ? `${fmtHHMM(Math.min(...withTime.map((o) => o.start!)))} – ${fmtHHMM(Math.max(...withTime.map((o) => o.end!)))}` : "";
       const subtitle = [group.title, fmtDayMonth(date), relDay(date, today)].filter(Boolean).join("  ·  ");
@@ -386,6 +390,7 @@ export async function createRenderer(): Promise<Renderer | null> {
         ? h("div", { display: "flex", flexDirection: "column", width: "100%", position: "relative", marginTop: 40, borderTop: `1px solid ${RULE}` }, railLine(DAY_RAIL_X, 30, 24), ...items)
         : emptyRail(DAY_TIME_W, DAY_RAIL_W, DAY_RAIL_X, "Пар нет", "свободный день, можно выспаться");
       const tree = page(accent.color, [
+        input.banner ? changeBanner(input.banner) : null,
         header(weekdayName(date), subtitle, weekInfo, accent),
         body,
         footer(active.length ? `${active.length} ${pluralPairs(active.length)}${span ? `  ·  ${span}` : ""}` : "", `tt.chuvsu.ru  ·  ${now ? fmtHHMM(now.minutes) : ""}`),
