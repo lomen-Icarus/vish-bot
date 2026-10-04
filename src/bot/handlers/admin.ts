@@ -11,6 +11,7 @@ import type { User } from "../../db/repo.js";
 import { logger } from "../../logger.js";
 import { sleep } from "../../time.js";
 import { isUnreachable } from "../errors.js";
+import { CHANGES_HELD_KEY, CHANGES_RELEASE_KEY } from "../../notify/dispatcher.js";
 
 export const adminHandlers = new Composer<BotContext>();
 
@@ -357,6 +358,29 @@ adminOnly.callbackQuery(/^ann:(del|rm):(\d+)$/, async (ctx) => {
   } catch {
     /* the message may be gone or unchanged */
   }
+});
+
+// Тормоз массовой рассылки изменений (src/notify/dispatcher.ts, holdMassChange).
+adminOnly.callbackQuery(/^chg:(release|drop)$/, async (ctx) => {
+  const repo = ctx.deps.repo;
+  if (!repo.getMeta(CHANGES_HELD_KEY)) {
+    await ctx.answerCallbackQuery({ text: "Уже решено" });
+    await ctx.editMessageReplyMarkup().catch(() => undefined);
+    return;
+  }
+  const by = ctx.from?.username ? `@${ctx.from.username}` : (ctx.from?.first_name ?? "админ");
+  if (ctx.match[1] === "release") {
+    repo.setMeta(CHANGES_RELEASE_KEY, "1");
+    logger.info({ admin: ctx.from?.id }, "mass schedule change released");
+    await ctx.answerCallbackQuery({ text: "Разошлю в течение минуты" });
+    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text(`✅ Рассылаю (${by})`, "noop") }).catch(() => undefined);
+    return;
+  }
+  const n = repo.dropUnnotifiedEvents();
+  repo.setMeta(CHANGES_HELD_KEY, "");
+  logger.info({ admin: ctx.from?.id, dropped: n }, "mass schedule change dropped");
+  await ctx.answerCallbackQuery({ text: `Не рассылаю: убрано ${n}` });
+  await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text(`🗑 Не разослано (${by})`, "noop") }).catch(() => undefined);
 });
 
 adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx, next) => {

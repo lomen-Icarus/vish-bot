@@ -8,9 +8,9 @@
 import type { LogicalGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
-import { filterSubgroup, posterTeacher, type TeacherView } from "../../schedule/format.js";
+import { filterSubgroup, isActiveLesson, posterTeacher, type MarkedLesson, type TeacherView } from "../../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, weekdayOf, type LocalDate, type WallClock } from "../../time.js";
-import { FONT, PAD, W, h, loadFonts, pluralPairs, text, toPng as corePng, type El, type Style } from "../core.js";
+import { FONT, MARK_STYLE, PAD, W, changeBanner, h, loadFonts, markBadge, pluralPairs, text, toPng as corePng, type El, type Style } from "../core.js";
 import type { DayRenderInput, Renderer, StreamRenderInput, StreamRenderRow, WeekRenderInput } from "../image.js";
 
 // ---------- palette ----------
@@ -155,10 +155,11 @@ function timeColumn(start: number | null, end: number | null, slot: number | nul
   );
 }
 
-function lessonRow(o: Occurrence, accent: string, ongoing: boolean, view: TeacherView | undefined): El {
-  const moved = o.status === "moved";
+function lessonRow(o: MarkedLesson, accent: string, ongoing: boolean, view: TeacherView | undefined): El {
+  const cancelled = o.mark?.kind === "cancelled";
+  const moved = o.status === "moved" || cancelled;
   const badges: El[] = [];
-  if (moved && o.movedTo) badges.push(tag(`перенесена на ${ddmm(o.movedTo.date)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, MUTED));
+  if (o.status === "moved" && !cancelled && o.movedTo) badges.push(tag(`перенесена на ${ddmm(o.movedTo.date)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, MUTED));
   if (o.movedFrom) badges.push(tag(`перенос с ${ddmm(o.movedFrom.date)}`, accent));
   if (o.substituted) badges.push(tag("замена", "#d1495b"));
 
@@ -170,11 +171,12 @@ function lessonRow(o: Occurrence, accent: string, ongoing: boolean, view: Teache
   if (who) meta.push(text(who, { fontSize: 24, fontWeight: view === "plain" ? 400 : 700, color: view === "plain" ? MUTED : INK, marginRight: 22 }));
 
   return row(
-    { width: "100%", position: "relative", padding: "24px 0 26px 0", borderTop: `1px solid ${RULE}`, opacity: moved ? 0.55 : 1 },
-    ongoing ? marginBar(accent) : null,
+    { width: "100%", position: "relative", padding: "24px 0 26px 0", borderTop: `1px solid ${RULE}`, opacity: cancelled ? 0.85 : moved ? 0.55 : 1 },
+    o.mark ? marginBar(MARK_STYLE[o.mark.kind].color) : ongoing ? marginBar(accent) : null,
     timeColumn(o.start, o.end, o.slot, { faded: moved, nowAccent: ongoing ? accent : undefined }),
     col(
       { flex: 1, minWidth: 0 },
+      o.mark ? markBadge(o.mark) : null,
       text(o.subject, { fontSize: 36, fontWeight: 700, color: INK, lineHeight: 1.15, letterSpacing: -0.8, textDecoration: moved ? "line-through" : "none" }),
       row({ flexWrap: "wrap", alignItems: "center", marginTop: 12 }, ...meta),
       badges.length ? row({ flexWrap: "wrap", marginTop: 4 }, ...badges) : null,
@@ -214,15 +216,16 @@ export async function createRenderer(): Promise<Renderer | null> {
       let prevEnd: number | null = null;
       for (const o of list) {
         if (prevEnd != null && o.start != null && o.start - prevEnd >= 20) rows.push(gapRow(o.start - prevEnd));
-        const ongoing = !!now && now.date === date && o.start != null && o.end != null && now.minutes >= o.start && now.minutes < o.end && o.status === "scheduled";
+        const ongoing = !!now && now.date === date && o.start != null && o.end != null && now.minutes >= o.start && now.minutes < o.end && isActiveLesson(o);
         rows.push(lessonRow(o, accent, ongoing, input.teacherView));
-        if (o.status === "scheduled" && o.end != null) prevEnd = o.end;
+        if (isActiveLesson(o) && o.end != null) prevEnd = o.end;
       }
-      const active = list.filter((o) => o.status === "scheduled");
+      const active = list.filter(isActiveLesson);
       const withTime = active.filter((o) => o.start != null && o.end != null);
       const span = withTime.length ? `${fmtHHMM(Math.min(...withTime.map((o) => o.start!)))} – ${fmtHHMM(Math.max(...withTime.map((o) => o.end!)))}` : "";
       const body = list.length ? rows : [emptyBlock("Пар нет", "свободный день — можно выспаться")];
       const tree = page([
+        input.banner ? changeBanner(input.banner) : null,
         masthead(group.title),
         hero(weekdayName(date), dateSubline(date, today, accent)),
         parityBand(weekInfo),
