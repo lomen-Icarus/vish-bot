@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
 import { CHANGES_HELD_KEY, CHANGES_RELEASE_KEY, isMassChange, Notifier } from "../src/notify/dispatcher.js";
-import { changesCaption, changesMessageFit, laterText, markDay, markLine, splitByToday, todayCaption, weekPhrase } from "../src/notify/changes.js";
+import { changesCaption, changesMessageFit, forSubgroup, laterText, markDay, markLine, splitByToday, todayCaption, weekPhrase, type ChangesInput } from "../src/notify/changes.js";
 import { formatChangeEvent, formatDay } from "../src/schedule/format.js";
-import { parseStartPayload, startLink, startPayload } from "../src/bot/deeplink.js";
+import { groupRef, parseStartPayload, resolveGroupRef, startLink, startPayload } from "../src/bot/deeplink.js";
+import { GrammyError, HttpError } from "grammy";
+import { ChangePosters } from "../src/notify/changePosters.js";
 import type { ChangeEvent } from "../src/schedule/diff.js";
 import type { DayRenderInput, Renderer } from "../src/render/image.js";
 import type { ScheduleService } from "../src/schedule/service.js";
@@ -21,6 +23,7 @@ function lesson(date: string, slot: number, start: number, subject: string, over
   return { groupKey: group.key, period: 1, date, slot, start, end: start + 80, subject, type: "лк", room: "Т-310", teacher: null, subgroup: null, isDistance: false, status: "scheduled", sources: ["ВИШ-12-23"], ...over };
 }
 const ev = (e: Omit<ChangeEvent, "groupKey" | "period">): ChangeEvent => ({ groupKey: group.key, period: 1, ...e });
+const input = (over: Partial<ChangesInput> = {}): ChangesInput => ({ group, todayMarked: null, later: [], now: clock(TODAY, 7), info, own: true, head: "", ...over });
 
 describe("пометки на расписании дня", () => {
   const physics = lesson(TODAY, 1, 8 * 60 + 20, "Физика");
@@ -71,6 +74,24 @@ describe("пометки на расписании дня", () => {
     const later = { ...chem, slot: 5, start: 15 * 60 + 10, end: 16 * 60 + 30 };
     const inside = markDay([later], [ev({ kind: "moved", date: TODAY, before: chem, after: later })], TODAY);
     expect(inside[0]!.mark).toEqual({ kind: "changed", note: "была 3 пара (11:40–13:00)" });
+  });
+
+  it("главное — последнее изменение: отменили, потом вернули — пара на месте, не «ОТМЕНЕНА»", () => {
+    const restored = markDay([chem], [ev({ kind: "removed", date: TODAY, before: chem }), ev({ kind: "added", date: TODAY, after: chem })], TODAY);
+    expect(restored.map((o) => o.mark?.kind)).toEqual(["added"]);
+    const backAgain = markDay([chem], [ev({ kind: "changed", date: TODAY, before: chem, after: { ...chem, status: "moved", movedTo: { date: "2026-10-09", slot: 2 } }, fields: ["status", "movedTo"] }), ev({ kind: "changed", date: TODAY, before: { ...chem, status: "moved" }, after: chem, fields: ["status"] })], TODAY);
+    expect(backAgain[0]!.mark).toEqual({ kind: "changed", note: "перенос отменён, пара снова на месте" });
+    // Правки одного рода — одна пометка с обоими пояснениями.
+    const twice = markDay([{ ...chem, room: "Т-204", teacher: "Андреев И. И." }], [ev({ kind: "changed", date: TODAY, before: chem, after: { ...chem, room: "Т-204" }, fields: ["room"] }), ev({ kind: "changed", date: TODAY, before: { ...chem, room: "Т-204", teacher: "Петров К. А." }, after: { ...chem, room: "Т-204", teacher: "Андреев И. И." }, fields: ["teacher"] })], TODAY);
+    expect(twice[0]!.mark).toEqual({ kind: "changed", note: "ауд. Т-310 → Т-204; преп. Петров К. А. → Андреев И. И." });
+  });
+
+  it("чужая подгруппа: её изменения человеку не показываем", () => {
+    const sg1 = ev({ kind: "added", date: TODAY, after: { ...prog, subgroup: 1 } });
+    const sg2 = ev({ kind: "added", date: TODAY, after: { ...prog, subgroup: 2 } });
+    const all = ev({ kind: "removed", date: TODAY, before: chem });
+    expect(forSubgroup([sg1, sg2, all], 1)).toEqual([sg1, all]);
+    expect(forSubgroup([sg1, sg2, all], null)).toEqual([sg1, sg2, all]);
   });
 
   it("срочное на сегодня отдельно от будущего; будущее — со строкой, какая неделя", () => {
@@ -206,7 +227,9 @@ describe("уведомления: на сегодня и на будущее —
     expect(own).not.toContain("Не следить");
     const watched = albums.find((a) => a.chatId === 2)!.caption!;
     expect(watched).toContain("👁 Не следить за группой");
-    expect(parseStartPayload(new URL(ics).searchParams.get("start")!)).toEqual({ action: "ics", groupKey: group.key });
+    const link = parseStartPayload(new URL(ics).searchParams.get("start")!)!;
+    expect(link.action).toBe("ics");
+    expect(resolveGroupRef(link.ref, ["виш-14-24", group.key])).toBe(group.key);
   });
 
   it("«и так, и так»: в подписи к альбому — полный день, если влезает", async () => {
@@ -258,6 +281,33 @@ describe("уведомления: на сегодня и на будущее —
     expect(albums[0]!.caption).not.toContain("Изменения на будущее");
   });
 
+  it("постер «на сегодня» не нарисовался — шлём текстом, где день целиком, а не чужой день с огрызком", async () => {
+    const repo = setup();
+    subscriber(repo, 1, "image");
+    const { api, sent, photos, albums } = makeApi();
+    const renderer: Renderer = { ...fakeRenderer([]), renderDay: async (inp) => (inp.date === TODAY ? Promise.reject(new Error("boom")) : Buffer.from("png")) };
+    const n = new Notifier(api, repo, makeService({ [TODAY]: [physics, mathAfter] }), renderer);
+    expect(await n.dispatchChangeEvents(clock(TODAY, 7))).toBe(1);
+    expect(photos).toHaveLength(0);
+    expect(albums).toHaveLength(0);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("1️⃣ <code>08:20–09:40</code> <b>Физика</b>");
+  });
+
+  it("альбом: отверг Telegram — то же текстом; оборвалась сеть — второго сообщения нет, повторит добор", async () => {
+    for (const [err, texts] of [[new GrammyError("Bad Request", { ok: false, error_code: 400, description: "Bad Request: wrong file" }, "sendMediaGroup", {}), 1], [new HttpError("Network request failed", new Error("timeout")), 0]] as const) {
+      const repo = setup();
+      subscriber(repo, 1, "image");
+      const { api, sent } = makeApi();
+      (api as { sendMediaGroup: unknown }).sendMediaGroup = async () => {
+        throw err;
+      };
+      const n = new Notifier(api, repo, makeService({ [TODAY]: [physics, mathAfter] }), fakeRenderer([]));
+      expect(await n.dispatchChangeEvents(clock(TODAY, 7))).toBe(texts);
+      expect(sent).toHaveLength(texts);
+    }
+  });
+
   it("одинаковые постеры за одну рассылку рисуются один раз", async () => {
     const repo = setup();
     for (const id of [1, 2, 3]) subscriber(repo, id, "image");
@@ -274,9 +324,11 @@ describe("уведомления: на сегодня и на будущее —
 describe("подпись влезает в лимит Telegram, ссылки и строка изменения", () => {
   it("много изменений на будущее — в подписи сколько влезет и «…и ещё N»", () => {
     const later: ChangeEvent[] = Array.from({ length: 30 }, (_, i) => ev({ kind: "removed", date: `2026-10-${String(6 + (i % 10)).padStart(2, "0")}`, before: lesson(`2026-10-${String(6 + (i % 10)).padStart(2, "0")}`, 1 + (i % 5), 8 * 60 + 20, `Очень длинное название предмета номер ${i}`) }));
-    const caption = changesCaption(group, { todayMarked: null, later, today: TODAY, full: null, head: "", tail: "" });
+    const caption = changesCaption({ ...input({ later }), full: null, tail: "" });
     expect(caption.replace(/<[^>]+>/g, "").length).toBeLessThanOrEqual(1000);
-    expect(caption).toMatch(/…и ещё \d+ изменени[йяе] — все в «🔔 Изменения»/);
+    expect(caption).toMatch(/…и ещё \d+ изменени[йяе] — остальные в «🔔 Изменения»/);
+    // У группы, за которой только следят, в «🔔 Изменения» их нет — туда и не отправляем.
+    expect(changesCaption({ ...input({ later, own: false }), full: null, tail: "" })).toMatch(/— смотри расписание группы<\/i>$/);
   });
 
   it("текстом: сегодня целиком, а будущее, если не влезает в сообщение, — «…и ещё N»", () => {
@@ -286,10 +338,10 @@ describe("подпись влезает в лимит Telegram, ссылки и 
       const d = `2026-10-${String(6 + (i % 20)).padStart(2, "0")}`;
       return ev({ kind: "removed", date: d, before: lesson(d, 1 + (i % 5), 8 * 60 + 20, `Очень длинное название предмета номер ${i}`) });
     });
-    const text = changesMessageFit(group, todayMarked, later, info, clock(TODAY, 7), undefined, "");
-    expect(text.length).toBeLessThanOrEqual(3900);
+    const text = changesMessageFit(input({ todayMarked, later }));
+    expect(text.replace(/<[^>]+>/g, "").length).toBeLessThanOrEqual(3900);
     expect(text).toContain("<s>Химия</s>");
-    expect(text).toMatch(/…и ещё \d+ изменени[йяе] — все в «🔔 Изменения»<\/i>$/);
+    expect(text).toMatch(/…и ещё \d+ изменени[йяе] — остальные в «🔔 Изменения»<\/i>$/);
   });
 
   it("сменилась аудитория — она в строке один раз", () => {
@@ -299,15 +351,32 @@ describe("подпись влезает в лимит Telegram, ссылки и 
     // Другие изменения аудиторию по-прежнему называют.
     const teacher = formatChangeEvent(ev({ kind: "changed", date: "2026-10-06", before: { ...before, teacher: "Петров К. А." }, after: { ...before, teacher: "Андреев И. И." }, fields: ["teacher"] }));
     expect(teacher).toContain("· ауд. Т-310 — преп.");
+    // Снова очно — где именно, сказать надо; ушла в дистант — «дистанционно» один раз.
+    const inPerson = formatChangeEvent(ev({ kind: "changed", date: "2026-10-06", before: { ...before, isDistance: true }, after: before, fields: ["distance"] }));
+    expect(inPerson).toBe("✏️ 06.10 (вт), 2 пара 09:50–11:10: <b>Матан</b> (ЛК) · ауд. Т-310 — теперь очно");
+    const online = formatChangeEvent(ev({ kind: "changed", date: "2026-10-06", before, after: { ...before, isDistance: true }, fields: ["distance"] }));
+    expect(online).toBe("✏️ 06.10 (вт), 2 пара 09:50–11:10: <b>Матан</b> (ЛК) — теперь дистанционно 💻");
   });
 
-  it("ссылка /start: кириллица ключа — в base64url, длинный ключ — без ссылки", () => {
-    const p = startPayload("ics", group.key)!;
-    expect(p).toMatch(/^ics_[A-Za-z0-9_-]+$/);
-    expect(parseStartPayload(p)).toEqual({ action: "ics", groupKey: group.key });
+  it("ссылка /start: короткая метка группы вместо кириллического ключа — любой длины", () => {
+    const p = startPayload("ics", group.key);
+    expect(p).toMatch(/^ics_[A-Za-z0-9_-]{12}$/);
+    expect(parseStartPayload(p)).toEqual({ action: "ics", ref: groupRef(group.key) });
+    const long = "виш-13-24иот (09.03.01)-2 очень длинное название группы";
+    expect(startPayload("unwatch", long).length).toBeLessThanOrEqual(64);
+    expect(resolveGroupRef(parseStartPayload(startPayload("unwatch", long))!.ref, [group.key, long])).toBe(long);
+    expect(resolveGroupRef(groupRef("нет-такой"), [group.key])).toBeNull();
     expect(parseStartPayload("inline")).toBeNull();
-    expect(startPayload("ics", "я".repeat(40))).toBeNull();
     expect(startLink(null, "ics", group.key)).toBeNull();
+  });
+
+  it("сегодня всё не влезает даже одно — будущее не пропадает молча, остаётся строка «…и ещё N»", () => {
+    const many = Array.from({ length: 12 }, (_, i) => lesson(TODAY, 1 + (i % 6), 8 * 60 + i * 50, `Предмет с очень-очень длинным названием для проверки обрезки номер ${i}`));
+    const todayMarked = markDay([], many.map((o) => ev({ kind: "removed", date: TODAY, before: o })), TODAY);
+    const later = [ev({ kind: "removed", date: "2026-10-06", before: lesson("2026-10-06", 1, 500, "Химия") })];
+    const caption = changesCaption({ ...input({ todayMarked, later }), full: null, tail: "" });
+    expect(caption.replace(/<[^>]+>/g, "").length).toBeLessThanOrEqual(1000);
+    expect(caption).toMatch(/…и ещё 1 изменение — остальные в «🔔 Изменения»<\/i>$/);
   });
 });
 
@@ -366,5 +435,20 @@ describe("тормоз массовой рассылки", () => {
     const n = new Notifier(api, repo, makeService({}), null, [99]);
     expect(await n.dispatchChangeEvents(clock(TODAY, 12))).toBe(1);
     expect(sent.filter((s) => s.chatId === 99)).toHaveLength(0);
+  });
+});
+
+describe("кеш постеров изменений (общий для рассылки и кнопки)", () => {
+  it("одинаковый постер рисуется один раз, пока запись свежая; устарела — заново", async () => {
+    const calls: DayRenderInput[] = [];
+    const day = { date: TODAY, lessons: [lesson(TODAY, 1, 500, "Физика")], banner: { text: "ИЗМЕНЕНИЯ НА СЕГОДНЯ", tone: "urgent" as const } };
+    const fresh = new ChangePosters(60_000);
+    await fresh.render(fakeRenderer(calls), makeService({}), { group, day, now: clock(TODAY, 7) });
+    await fresh.render(fakeRenderer(calls), makeService({}), { group, day, now: clock(TODAY, 7) });
+    expect(calls).toHaveLength(1);
+    const stale = new ChangePosters(0);
+    await stale.render(fakeRenderer(calls), makeService({}), { group, day, now: clock(TODAY, 7) });
+    await stale.render(fakeRenderer(calls), makeService({}), { group, day, now: clock(TODAY, 7) });
+    expect(calls).toHaveLength(3);
   });
 });

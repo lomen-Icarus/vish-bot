@@ -242,9 +242,9 @@ describe("«🔔 Изменения» картинкой и ссылки /start 
     deps.repo.updateUser(7, { groupKey: group.key, format: "image" });
     withEvents(deps);
     const { calls } = await run(textUpdate(BTN.changes), deps);
-    expect(calls.map((c) => c.method)).toEqual(["sendMediaGroup", "sendMessage"]);
-    expect((calls[0]!.payload.media as unknown[]).length).toBe(2);
-    expect(JSON.stringify(calls[1]!.payload.reply_markup)).toContain(`cics:${group.key}`);
+    expect(calls.map((c) => c.method)).toEqual(["sendChatAction", "sendMediaGroup", "sendMessage"]);
+    expect((calls[1]!.payload.media as unknown[]).length).toBe(2);
+    expect(JSON.stringify(calls[2]!.payload.reply_markup)).toContain(`cics:${group.key}`);
   });
 
   it("один день и короткий текст — один постер с подписью и кнопкой; «только текст» — как раньше", async () => {
@@ -252,22 +252,59 @@ describe("«🔔 Изменения» картинкой и ссылки /start 
     deps.repo.updateUser(7, { groupKey: group.key, format: "image" });
     withEvents(deps, false);
     const one = await run(textUpdate(BTN.changes), deps);
-    expect(one.calls.map((c) => c.method)).toEqual(["sendPhoto"]);
-    expect(String(one.calls[0]!.payload.caption)).toMatch(/Изменения в расписании ВИШ-12-23/);
+    expect(one.calls.map((c) => c.method)).toEqual(["sendChatAction", "sendPhoto"]);
+    expect(String(one.calls[1]!.payload.caption)).toMatch(/Изменения в расписании ВИШ-12-23/);
     deps.repo.updateUser(7, { format: "text" });
     const plain = await run(textUpdate(BTN.changes), deps);
     expect(plain.calls.map((c) => c.method)).toEqual(["sendMessage"]);
   });
 
-  it("/start ics_… присылает файл изменений, /start unwatch_… снимает слежение", async () => {
+  it("/start ics_… присылает файл изменений; /start unwatch_… только спрашивает — снимает кнопка", async () => {
     const deps = makeDeps();
     deps.repo.updateUser(7, { groupKey: group.key });
     withEvents(deps);
     const ics = await run(textUpdate(`/start ${startPayload("ics", group.key)}`), deps);
     expect(ics.calls.map((c) => c.method)).toEqual(["sendDocument"]);
     deps.repo.toggleWatchGroup(7, other.key);
-    const off = await run(textUpdate(`/start ${startPayload("unwatch", other.key)}`), deps);
-    expect(texts(off.calls)[0]).toBe("Больше не слежу за ВИШ-14-24.");
+    // Ссылку мог подкинуть кто угодно: по ней одной слежение не снимается.
+    const ask = await run(textUpdate(`/start ${startPayload("unwatch", other.key)}`), deps);
+    expect(texts(ask.calls)[0]).toBe("Перестать следить за изменениями ВИШ-14-24?");
+    expect(JSON.stringify(ask.calls[0]!.payload.reply_markup)).toContain(`unwatch:${other.key}`);
+    expect(deps.repo.watchGroups(7)).toContain(other.key);
+    await run(callbackUpdate(`unwatch:${other.key}`), deps);
     expect(deps.repo.watchGroups(7)).not.toContain(other.key);
+    const stale = await run(textUpdate("/start ics_AAAAAAAAAAAA"), deps);
+    expect(texts(stale.calls)[0]).toMatch(/ссылка, похоже, устарела/);
+  });
+
+  it("«🔔 Изменения»: изменения чужой подгруппы не показываются ни в тексте, ни на картинке", async () => {
+    const calls: unknown[] = [];
+    const deps = { ...makeDeps(), renderer: { ...fakeRenderer, renderDay: async (inp: unknown) => (calls.push(inp), Buffer.from("png")) } } as Deps;
+    deps.repo.updateUser(7, { groupKey: group.key, subgroup: 1, format: "image" });
+    const l = { ...lesson("Физика"), date: later, subgroup: 2 };
+    deps.repo.insertChangeEvents([{ groupKey: group.key, date: later, period: 1, kind: "added", payload: { after: l } }]);
+    const { calls: out } = await run(textUpdate(BTN.changes), deps);
+    expect(calls).toHaveLength(0);
+    expect(texts(out).join("\n")).toMatch(/Актуальных изменений нет/);
+  });
+
+  it("«🔔 Изменения»: постер не ушёл — текст с кнопкой всё равно приходит", async () => {
+    const deps = { ...makeDeps(), renderer: fakeRenderer } as Deps;
+    deps.repo.updateUser(7, { groupKey: group.key, format: "image" });
+    withEvents(deps, false);
+    const calls: Call[] = [];
+    const api = new Api("123:FAKE");
+    api.config.use(async (_prev, method, payload) => {
+      calls.push({ method, payload: payload as Record<string, unknown> });
+      if (method === "sendPhoto") throw new Error("photo rejected");
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never };
+    });
+    const ctx = new Context(textUpdate(BTN.changes), api, ME) as BotContext;
+    ctx.deps = deps;
+    ctx.user = deps.repo.touchUser(7, "u", "U");
+    ctx.isAdmin = false;
+    await scheduleHandlers.middleware()(ctx, async () => undefined);
+    expect(calls.map((c) => c.method)).toEqual(["sendChatAction", "sendPhoto", "sendMessage"]);
+    expect(JSON.stringify(calls[2]!.payload.reply_markup)).toContain("cics:");
   });
 });

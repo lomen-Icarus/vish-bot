@@ -4,8 +4,9 @@ import { BTN, formatPicker, groupPicker, menuFor, onboardingKeyboard } from "../
 import { groupRequiredText, needGroup, sendDay, sendWeek } from "../views.js";
 import { addDays, fmtDDMM, isLocalDate, mondayOf, parseDayWord, parseRuDate, todayMsk, wallClock, type LocalDate } from "../../time.js";
 import { showOwnTeacher } from "../teacherMode.js";
-import { captionFits, clampHtml, esc, filterSubgroup, formatChangeEvent } from "../../schedule/format.js";
-import { changeDays } from "../../notify/changes.js";
+import { captionFits, clampHtml, esc, formatChangeEvent, MESSAGE_MAX, plural, visibleLength } from "../../schedule/format.js";
+import { changeDays, forSubgroup, largestFit } from "../../notify/changes.js";
+import { ChangePosters, dayLessonsFor } from "../../notify/changePosters.js";
 import type { ChangeEvent } from "../../schedule/diff.js";
 import { findGroup } from "../../schedule/groups.js";
 import { logger } from "../../logger.js";
@@ -291,23 +292,38 @@ export function changesText(ctx: BotContext): { text: string; hasEvents: boolean
     return { text: parts.join("\n\n"), hasEvents: false, events: [] };
   }
   const today = todayMsk();
-  const events = ctx.deps.repo.activeEvents(group.key, today, 30);
+  // По порядку появления (у одной пары последнее изменение главнее), и только
+  // своей подгруппы — как в уведомлениях.
+  const rows = ctx.deps.repo.activeEvents(group.key, today, 200).slice().sort((a, b) => a.id - b.id);
+  const events = forSubgroup(
+    rows.map((e): ChangeEvent => {
+      const p = e.payload as { before?: ChangeEvent["before"]; after?: ChangeEvent["after"]; fields?: string[] };
+      return { kind: e.kind as ChangeEvent["kind"], groupKey: e.groupKey, date: e.date, period: e.period, before: p.before, after: p.after, fields: p.fields };
+    }),
+    ctx.user.subgroup,
+  );
+  const head = `🔔 <b>Изменения в расписании ${esc(group.title)}</b>`;
   if (!events.length) {
-    parts.push(`🔔 <b>Изменения в расписании ${esc(group.title)}</b>\n\nАктуальных изменений нет: бот проверяет портал каждые несколько минут и пришлёт, как только что-то поменяется.`);
+    parts.push(`${head}\n\nАктуальных изменений нет: бот проверяет портал каждые несколько минут и пришлёт, как только что-то поменяется.`);
     return { text: parts.join("\n\n"), hasEvents: false, events: [] };
   }
-  const byDate = new Map<string, string[]>();
-  const list: ChangeEvent[] = [];
-  for (const e of events) {
-    const p = e.payload as { before?: ChangeEvent["before"]; after?: ChangeEvent["after"]; fields?: string[] };
-    const ev: ChangeEvent = { kind: e.kind as ChangeEvent["kind"], groupKey: e.groupKey, date: e.date, period: e.period, before: p.before, after: p.after, fields: p.fields };
-    list.push(ev);
-    byDate.set(e.date, [...(byDate.get(e.date) ?? []), formatChangeEvent(ev)]);
-  }
-  const blocks = [...byDate.entries()].map(([date, lines]) => `<b>${fmtDDMM(date)}</b>\n${lines.join("\n")}`);
-  parts.push(`🔔 <b>Изменения в расписании ${esc(group.title)}</b>\n\n${blocks.join("\n\n")}`);
-  return { text: parts.join("\n\n"), hasEvents: true, events: list };
+  // Ближайшие — сколько влезет в сообщение; все — в файле календаря под ним.
+  const byDay = [...events].sort((a, b) => a.date.localeCompare(b.date));
+  const build = (n: number): string => {
+    const byDate = new Map<string, string[]>();
+    for (const e of byDay.slice(0, n)) byDate.set(e.date, [...(byDate.get(e.date) ?? []), formatChangeEvent(e)]);
+    const blocks = [...byDate.entries()].map(([date, lines]) => `<b>${fmtDDMM(date)}</b>\n${lines.join("\n")}`);
+    const rest = byDay.length - n;
+    if (rest > 0) blocks.push(`<i>…и ещё ${rest} ${plural(rest, "изменение", "изменения", "изменений")} — все в «📆 Файл изменений в календарь» ниже</i>`);
+    return [...parts, `${head}\n\n${blocks.join("\n\n")}`].join("\n\n");
+  };
+  const fits = (n: number): boolean => visibleLength(build(n)) <= MESSAGE_MAX;
+  const shown = fits(byDay.length) ? byDay.length : (largestFit(byDay.length - 1, fits) ?? 0);
+  return { text: build(shown), hasEvents: true, events };
 }
+
+/** Постеры кнопки живут несколько минут: её жмут подряд, а рисовать заново — секунда на день. */
+const buttonPosters = new ChangePosters(10 * 60_000, 100);
 
 /**
  * Картинки дней с изменениями — как в уведомлении: сегодня (красная полоса)
@@ -317,13 +333,11 @@ async function changePosters(ctx: BotContext, events: ChangeEvent[]): Promise<Bu
   const renderer = ctx.deps.renderer;
   const group = needGroup(ctx);
   if (!renderer || !group || ctx.user.format === "text" || !events.length) return [];
+  await ctx.replyWithChatAction("upload_photo").catch(() => undefined);
   const now = wallClock();
-  const days = changeDays(events, now.date, (d) => filterSubgroup(ctx.deps.service.lessonsOn(group, d), ctx.user.subgroup));
-  const rendered = await Promise.allSettled(
-    days.map((d) => renderer.renderDay({ group, date: d.date, lessons: d.lessons, weekInfo: ctx.deps.service.weekInfo(d.date), today: now.date, now, theme: ctx.user.posterTheme ?? undefined, teacherView: ctx.user.teacherView, banner: d.banner })),
-  );
-  for (const r of rendered) if (r.status === "rejected") logger.warn({ err: String(r.reason).slice(0, 200) }, "changes poster render failed");
-  return rendered.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+  const days = changeDays(events, now.date, dayLessonsFor(ctx.deps.service, group, ctx.user.subgroup));
+  const drawn = await Promise.all(days.map((day) => buttonPosters.render(renderer, ctx.deps.service, { group, day, now, theme: ctx.user.posterTheme, teacherView: ctx.user.teacherView })));
+  return drawn.flatMap((png) => (png ? [png] : []));
 }
 
 async function showChanges(ctx: BotContext): Promise<void> {
@@ -332,19 +346,18 @@ async function showChanges(ctx: BotContext): Promise<void> {
   if (hasEvents && ctx.user.groupKey) kb.text("📆 Файл изменений в календарь", `cics:${ctx.user.groupKey}`);
   const replyMarkup = hasEvents ? kb : undefined;
   const photos = await changePosters(ctx, events);
-  // Один день и короткий текст — одним сообщением: постер с подписью и кнопкой.
-  if (photos.length === 1 && captionFits(text)) {
-    await ctx.replyWithPhoto(new InputFile(photos[0]!, "changes.png"), { caption: text, parse_mode: "HTML", reply_markup: replyMarkup });
-    return;
-  }
-  // Несколько дней — альбомом, следом текст с кнопкой (у альбома кнопок не бывает).
-  if (photos.length) {
-    try {
-      if (photos.length === 1) await ctx.replyWithPhoto(new InputFile(photos[0]!, "changes.png"));
-      else await ctx.replyWithMediaGroup(photos.map((p, i) => InputMediaBuilder.photo(new InputFile(p, `changes-${i + 1}.png`))));
-    } catch (err) {
-      logger.warn({ err: String(err).slice(0, 200) }, "changes posters failed, text only");
+  try {
+    // Один день и короткий текст — одним сообщением: постер с подписью и кнопкой.
+    if (photos.length === 1 && captionFits(text)) {
+      await ctx.replyWithPhoto(new InputFile(photos[0]!, "changes.png"), { caption: text, parse_mode: "HTML", reply_markup: replyMarkup });
+      return;
     }
+    // Несколько дней — альбомом, следом текст с кнопкой (у альбома кнопок не бывает).
+    if (photos.length === 1) await ctx.replyWithPhoto(new InputFile(photos[0]!, "changes.png"));
+    else if (photos.length) await ctx.replyWithMediaGroup(photos.map((p, i) => InputMediaBuilder.photo(new InputFile(p, `changes-${i + 1}.png`))));
+  } catch (err) {
+    // Картинки не ушли — текст с кнопкой всё равно нужен.
+    logger.warn({ err: String(err).slice(0, 200) }, "changes posters failed, text only");
   }
   await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: replyMarkup });
 }
