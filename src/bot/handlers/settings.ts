@@ -1,12 +1,12 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, btnRef, groupPicker, menuFor, MENU_MODE_LABELS, MENU_MODES, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL } from "../keyboards.js";
+import { BTN, btnRef, groupPicker, menuFor, MENU_MODE_LABELS, MENU_MODES, REMINDER_KINDS, reminderOff, REMINDERS, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL, type ReminderKind } from "../keyboards.js";
 import { THEMES, THEME_LABELS } from "../../render/themes.js";
 import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
 import type { MenuMode, User } from "../../db/repo.js";
 import { esc } from "../../schedule/format.js";
-import { todayMsk } from "../../time.js";
+import { parseHHMM, todayMsk } from "../../time.js";
 
 export const settingsHandlers = new Composer<BotContext>();
 
@@ -302,6 +302,89 @@ settingsHandlers.callbackQuery(/^unwatch:(.+)$/, async (ctx) => {
   } catch {
     /* ignore */
   }
+});
+
+// ---- «🔕 Отключить эти уведомления» под напоминанием о парах ----
+type ReminderValue = number | string | null;
+
+/** Значение настройки в callback_data: «-» — было выключено. */
+const encReminder = (v: ReminderValue): string => (v == null ? "-" : String(v));
+
+/** Обратно из callback_data; непонятное — undefined. */
+function decReminder(kind: ReminderKind, raw: string | undefined): ReminderValue | undefined {
+  if (raw === "-") return null;
+  if (!raw) return undefined;
+  if (kind === "evening") return parseHHMM(raw) != null ? raw : undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 24 * 60 ? n : undefined;
+}
+
+const reminderOf = (user: User, kind: ReminderKind): ReminderValue => user[REMINDERS[kind].field];
+const reminderPatch = (kind: ReminderKind, v: ReminderValue): Partial<User> => ({ [REMINDERS[kind].field]: v });
+
+/** Новые кнопки под напоминанием: ссылки (вебинар) остаются, наши заменяются. */
+async function setReminderButtons(ctx: BotContext, kb: InlineKeyboard): Promise<void> {
+  const msg = ctx.callbackQuery?.message;
+  const old = msg && "reply_markup" in msg ? (msg.reply_markup?.inline_keyboard ?? []) : [];
+  const links = old.map((row) => row.filter((b) => "url" in b)).filter((row) => row.length);
+  const rows = [...links, ...kb.inline_keyboard.filter((row) => row.length)];
+  await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: rows } }).catch(() => undefined);
+}
+
+/**
+ * Одно нажатие — и это напоминание выключено; тут же «↩️ Вернуть» (промахнулся)
+ * и «отключить все» (надоело всё). Прежнее значение едет в кнопке «Вернуть»:
+ * так возвращается ровно то, что было, а не значение по умолчанию.
+ */
+settingsHandlers.callbackQuery(/^rm:(off|on|all|back):(first|each|distance|evening)(?::(.+))?$/, async (ctx) => {
+  const action = ctx.match[1]!;
+  const kind = ctx.match[2] as ReminderKind;
+  const arg = ctx.match[3];
+  const repo = ctx.deps.repo;
+  const user = repo.getUser(ctx.user.id) ?? ctx.user;
+  const label = REMINDERS[kind].label;
+  const viaSettings = { text: "Не получилось — включи в ⚙️ Настройках" };
+
+  if (action === "off") {
+    const prev = reminderOf(user, kind);
+    if (prev != null) repo.updateUser(user.id, reminderPatch(kind, null));
+    const others = REMINDER_KINDS.some((k) => k !== kind && reminderOf(user, k) != null);
+    const kb = new InlineKeyboard();
+    if (prev != null) kb.text("↩️ Вернуть", `rm:on:${kind}:${encReminder(prev)}`).row();
+    else kb.text("✅ Уже отключено", "noop").row();
+    if (others) kb.text("🔕 Отключить все напоминания о парах", `rm:all:${kind}:${encReminder(prev)}`);
+    await ctx.answerCallbackQuery({ text: prev != null ? `Отключено: напоминание ${label}. Передумаешь — «↩️ Вернуть» или ⚙️ Настройки` : `Напоминание ${label} уже отключено` });
+    await setReminderButtons(ctx, kb);
+    return;
+  }
+  if (action === "all") {
+    const before = Object.fromEntries(REMINDER_KINDS.map((k) => [k, reminderOf(user, k)])) as Record<ReminderKind, ReminderValue>;
+    // Это напоминание выключили кнопкой шагом раньше — «вернуть все» вернёт и его.
+    before[kind] ??= decReminder(kind, arg) ?? null;
+    repo.updateUser(user.id, Object.assign({}, ...REMINDER_KINDS.map((k) => reminderPatch(k, null))) as Partial<User>);
+    await ctx.answerCallbackQuery({ text: "Все напоминания о парах отключены. Включить снова — «↩️ Вернуть все» или ⚙️ Настройки" });
+    await setReminderButtons(ctx, new InlineKeyboard().text("↩️ Вернуть все", `rm:back:${kind}:${REMINDER_KINDS.map((k) => encReminder(before[k])).join("|")}`));
+    return;
+  }
+  if (action === "on") {
+    const v = decReminder(kind, arg);
+    if (v == null) return void (await ctx.answerCallbackQuery(viaSettings));
+    repo.updateUser(user.id, reminderPatch(kind, v));
+    await ctx.answerCallbackQuery({ text: `Включено снова: напоминание ${label}` });
+    await setReminderButtons(ctx, reminderOff(kind));
+    return;
+  }
+  // back: вернуть всё, что было включено до «отключить все». Выключенное
+  // тогда не трогаем: его могли с тех пор включить в настройках.
+  const vals = (arg ?? "").split("|");
+  if (vals.length !== REMINDER_KINDS.length) return void (await ctx.answerCallbackQuery(viaSettings));
+  const patch = Object.assign({}, ...REMINDER_KINDS.map((k, i) => {
+    const v = decReminder(k, vals[i]);
+    return v != null ? reminderPatch(k, v) : {};
+  })) as Partial<User>;
+  if (Object.keys(patch).length) repo.updateUser(user.id, patch);
+  await ctx.answerCallbackQuery({ text: "Вернул напоминания, как было" });
+  await setReminderButtons(ctx, reminderOff(kind));
 });
 
 export function closeKeyboard(): InlineKeyboard {

@@ -8,7 +8,7 @@ import { isSessionPeriod, lessonTypeLabel, type Occurrence } from "../schedule/m
 import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
-import { WEBINAR_URL } from "../bot/keyboards.js";
+import { reminderOff, WEBINAR_URL } from "../bot/keyboards.js";
 import type { WebinarService } from "../portal/webinars.js";
 import type { TeacherService } from "../portal/teachers.js";
 import { logicalKeyFor, personGroup, type LogicalGroup } from "../schedule/groups.js";
@@ -70,6 +70,11 @@ function withinWindow(nowMinutes: number, dueMinutes: number, width = 5): boolea
 /** Расписание преподавателя печатается тем же форматтером, что и группа. */
 function teacherPseudoGroup(name: string): LogicalGroup {
   return { key: `teacher:${name}`, title: name, prefix: "", number: 0, intake: 0, course: 0, portalIds: [], portalNames: [] };
+}
+
+/** Под напоминанием о чужом преподавателе — отписка той же кнопкой, что в его карточке (twf: — переключатель, нажал ещё раз — снова следишь). */
+function unwatchTeacherKb(teacherId: number): InlineKeyboard {
+  return new InlineKeyboard().text("🔕 Не следить за преподом", `twf:${teacherId}`);
 }
 
 export interface SendOptions {
@@ -260,17 +265,22 @@ export class Notifier {
         const name = dayLessons?.fullName ?? evening?.fullName ?? w.name;
         if (morningDue && !this.repo.reminderSent(user.id, "teacher-first", `${w.teacherId}:${now.date}`)) {
           this.repo.markReminderSent(user.id, "teacher-first", `${w.teacherId}:${now.date}`);
-          const body = formatDay(teacherPseudoGroup(name), now.date, today, this.service.weekInfo(now.date), now.date, { now });
+          const group = teacherPseudoGroup(name);
+          const body = formatDay(group, now.date, today, this.service.weekInfo(now.date), now.date, { now });
           const left = first! - now.minutes;
-          if (await this.send(user, `👨‍🏫 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} первая пара у <b>${escapeHtml(name)}</b>\n\n${body}`, { kind: "teacher-first" })) sent++;
+          const head = `👨‍🏫 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} первая пара у <b>${escapeHtml(name)}</b>`;
+          const poster = () => this.maybeRenderDay(user, group, now.date, today, now, "groups");
+          if (await this.sendDayReminder(user, head, body, poster, { kind: "teacher-first", replyMarkup: unwatchTeacherKb(w.teacherId) })) sent++;
         }
         const userEvening = withinWindow(now.minutes, parseHHMM(user.eveningAt ?? TEACHER_EVENING_AT) ?? 20 * 60);
         // Пустой день не шлём вовсе: у преподавателя он может быть и просто свободным,
         // а ещё так «пар нет» не запишется в дедуп вместо неполученного расписания.
         if (userEvening && evening?.lessons.length && !this.repo.reminderSent(user.id, "teacher-evening", `${w.teacherId}:${tomorrow}`)) {
           this.repo.markReminderSent(user.id, "teacher-evening", `${w.teacherId}:${tomorrow}`);
-          const body = formatDay(teacherPseudoGroup(name), tomorrow, evening.lessons, this.service.weekInfo(tomorrow), now.date, {});
-          if (await this.send(user, `👨‍🏫 <b>${escapeHtml(name)}</b> завтра:\n\n${body}`, { kind: "teacher-evening", silent: true })) sent++;
+          const group = teacherPseudoGroup(name);
+          const body = formatDay(group, tomorrow, evening.lessons, this.service.weekInfo(tomorrow), now.date, {});
+          const poster = () => this.maybeRenderDay(user, group, tomorrow, evening.lessons, now, "groups");
+          if (await this.sendDayReminder(user, `👨‍🏫 <b>${escapeHtml(name)}</b> завтра:`, body, poster, { kind: "teacher-evening", silent: true, replyMarkup: unwatchTeacherKb(w.teacherId) })) sent++;
         }
       }
     }
@@ -664,8 +674,8 @@ export class Notifier {
           const head = `⏰ ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} первая пара`;
           const body = formatDay(group, now.date, own.all, this.service.weekInfo(now.date), now.date, { subgroup: own.subgroup, now, teacherView: view });
           this.repo.markReminderSent(user.id, "first", now.date);
-          const photo = await this.maybeRenderDay(user, group, now.date, today, now);
-          if (await this.send(user, `${head}\n\n${body}`, { kind: "remind-first", photo })) sent++;
+          const poster = () => this.maybeRenderDay(user, group, now.date, today, now);
+          if (await this.sendDayReminder(user, head, body, poster, { kind: "remind-first", replyMarkup: reminderOff("first") })) sent++;
         }
       }
 
@@ -679,8 +689,8 @@ export class Notifier {
             const where = o.isDistance ? "💻 дистанционно" : o.room ? `ауд. ${o.room}` : "";
             const groups = own.teacher && o.groups?.length ? ` · ${o.groups.join(", ")}` : "";
             const text = `⏱ Через ${humanMinutes(left)} — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(lessonTypeLabel(o.type))})${where ? `, ${escapeHtml(where)}` : ""} · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${escapeHtml(groups)}`;
-            const kb = o.isDistance ? new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL) : undefined;
-            if (await this.send(user, text, { kind: "remind-each", replyMarkup: kb })) sent++;
+            const kb = o.isDistance ? new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL).row() : new InlineKeyboard();
+            if (await this.send(user, text, { kind: "remind-each", replyMarkup: reminderOff("each", kb) })) sent++;
           }
         }
       }
@@ -698,7 +708,7 @@ export class Notifier {
             const w = own.teacher ? null : (this.webinars?.forLesson(o, [group.title, ...group.portalNames]) ?? null);
             const extra = [w?.teacher ? escapeHtml(w.teacher) : "", w?.title ? `📝 ${escapeHtml(w.title.length > 120 ? w.title.slice(0, 117).trimEnd() + "…" : w.title)}` : "", own.teacher && o.groups?.length ? escapeHtml(o.groups.join(", ")) : "", own.teacher && o.topic ? `📝 ${escapeHtml(o.topic.slice(0, 120))}` : ""].filter(Boolean);
             const text = `💻 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} дистант — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(lessonTypeLabel(o.type))}) · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\nВебинар: ${WEBINAR_URL}`;
-            if (await this.send(user, text, { kind: "remind-distance", replyMarkup: new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL) })) sent++;
+            if (await this.send(user, text, { kind: "remind-distance", replyMarkup: reminderOff("distance", new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL).row()) })) sent++;
           }
         }
       }
@@ -713,8 +723,8 @@ export class Notifier {
           this.repo.markReminderSent(user.id, "evening", now.date);
           if (next.lessons.length) {
             const body = formatDay(next.group, tomorrow, next.all, this.service.weekInfo(tomorrow), now.date, { subgroup: next.subgroup, teacherView: view });
-            const photo = await this.maybeRenderDay(user, next.group, tomorrow, next.lessons, now);
-            if (await this.send(user, `🌙 Завтра:\n\n${body}`, { kind: "remind-evening", photo })) sent++;
+            const poster = () => this.maybeRenderDay(user, next.group, tomorrow, next.lessons, now);
+            if (await this.sendDayReminder(user, "🌙 Завтра:", body, poster, { kind: "remind-evening", replyMarkup: reminderOff("evening") })) sent++;
           }
         }
       }
@@ -722,11 +732,25 @@ export class Notifier {
     return sent;
   }
 
-  private async maybeRenderDay(user: User, group: ReturnType<ScheduleService["group"]>, date: LocalDate, lessons: Occurrence[], now: WallClock): Promise<Buffer | undefined> {
+  /**
+   * Напоминание с расписанием дня — в том виде, какой человек выбрал в
+   * настройке «формат», как и сам день по кнопке: «текст» — только текст;
+   * «картинка» — постер, а в подписи одна строка, что это за напоминание (без
+   * неё на экране блокировки было бы просто «Фото»); «оба» — постер с
+   * расписанием в подписи. Постер не нарисовался — приходит текст.
+   */
+  private async sendDayReminder(user: User, head: string, body: string, poster: () => Promise<Buffer | undefined>, opts: Omit<SendOptions, "photo">): Promise<boolean> {
+    const photo = user.format === "text" ? undefined : await poster();
+    const html = photo && user.format === "image" ? head.replace(/:$/, "") : `${head}\n\n${body}`;
+    return this.send(user, html, { ...opts, photo });
+  }
+
+  /** labels: "groups" — день преподавателя: в строке пары группы, а не его же фамилия. */
+  private async maybeRenderDay(user: User, group: ReturnType<ScheduleService["group"]>, date: LocalDate, lessons: Occurrence[], now: WallClock, labels?: "groups"): Promise<Buffer | undefined> {
     if (!this.renderer || !group || user.format === "text") return undefined;
     try {
       // В режиме преподавателя в строке пары — группы: фамилия там его же.
-      return await this.renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: todayMsk(), now, theme: user.posterTheme ?? undefined, teacherView: user.teacherView, ...(user.teacherMode ? { labels: "groups" as const } : {}) });
+      return await this.renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: todayMsk(), now, theme: user.posterTheme ?? undefined, teacherView: user.teacherView, ...(labels || user.teacherMode ? { labels: "groups" as const } : {}) });
     } catch (err) {
       logger.warn({ err }, "reminder image render failed");
       return undefined;
