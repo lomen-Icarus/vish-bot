@@ -192,14 +192,15 @@ describe("/start — одно сообщение", () => {
   };
   const buttonTexts = (c: Call): string[] => ((c.payload.reply_markup as { inline_keyboard?: Array<Array<{ text: string }>> }).inline_keyboard ?? []).flat().map((b) => b.text);
 
-  it("вернувшийся: приветствие и одна кнопка «Спросить?»", async () => {
+  it("вернувшийся: одно сообщение и с ним нижнее меню (после очистки чата оно пропадает)", async () => {
     const deps = startDeps(true);
     deps.repo.updateUser(7, { groupKey: group.key });
     const calls = await runStart(deps);
     const sent = calls.filter((c) => c.method === "sendMessage");
     expect(sent).toHaveLength(1);
     expect(String(sent[0]!.payload.text)).toContain("С возвращением");
-    expect(buttonTexts(sent[0]!)).toEqual(["💬 Спросить?"]);
+    expect(String(sent[0]!.payload.text)).toContain("Можно просто спросить словами");
+    expect(JSON.stringify(sent[0]!.payload.reply_markup)).toContain("📅 Сегодня");
   });
 
   it("новый: одно сообщение — приветствие, выбор группы и «Спросить?»", async () => {

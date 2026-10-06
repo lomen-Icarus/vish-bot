@@ -85,7 +85,7 @@ function rowToItem(r: NewsItemRow): NewsItem {
 }
 
 /** Как показывать нижнее меню бота (см. keyboards.ts, menuFor). */
-export type MenuMode = "always" | "collapsible" | "hidden";
+export type MenuMode = "collapsible" | "once" | "hidden";
 
 export interface User {
   id: number;
@@ -125,7 +125,7 @@ export interface User {
   calAlarmMin: number | null;
   /** Poster look; null = the bot's default (POSTER_THEME). */
   posterTheme: string | null;
-  /** Нижнее меню: всегда на экране, сворачивается (по умолчанию) или скрыто. */
+  /** Нижнее меню: сворачивается (по умолчанию), сворачивается само после нажатия или скрыто. */
   menuMode: MenuMode;
   /** Отпечаток меню, которое сейчас стоит в чате; null — неизвестно. */
   menuSent: string | null;
@@ -202,7 +202,8 @@ function rowToUser(r: UserRow): User {
     calToken: r.cal_token ?? null,
     calAlarmMin: r.cal_alarm_min ?? null,
     posterTheme: r.poster_theme ?? null,
-    menuMode: r.menu_mode === "always" || r.menu_mode === "hidden" ? r.menu_mode : "collapsible",
+    // «always» (всегда на экране) был недолго и убран: такие — снова «сворачивается».
+    menuMode: r.menu_mode === "once" || r.menu_mode === "hidden" ? r.menu_mode : "collapsible",
     menuSent: r.menu_sent ?? null,
     blocked: r.blocked === 1,
     createdAt: r.created_at,
@@ -501,7 +502,9 @@ export class Repo {
         `INSERT INTO users (id, username, first_name, notify_notices, want_slides, topics, created_at, updated_at, last_seen_at)
          VALUES (?, ?, ?, 0, 0, '["announcements"]', ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET username = excluded.username, first_name = excluded.first_name,
-           last_seen_at = excluded.last_seen_at, blocked = 0`,
+           last_seen_at = excluded.last_seen_at,
+           -- Вернулся после блокировки — чат он, скорее всего, удалял: меню у него нет.
+           menu_sent = CASE WHEN blocked = 1 THEN NULL ELSE menu_sent END, blocked = 0`,
       )
       .run(id, username, firstName, ts, ts, ts);
     return this.getUser(id)!;
@@ -535,6 +538,8 @@ export class Repo {
     if (patch.menuMode !== undefined) map.menu_mode = patch.menuMode === "collapsible" ? null : patch.menuMode;
     if (patch.menuSent !== undefined) map.menu_sent = patch.menuSent;
     if (patch.blocked !== undefined) map.blocked = patch.blocked ? 1 : 0;
+    // Заблокировал бота — меню в чате больше не считаем стоящим (чат могли и удалить).
+    if (patch.blocked === true) map.menu_sent = null;
     const keys = Object.keys(map);
     if (keys.length === 0) return;
     map.updated_at = nowIso();
