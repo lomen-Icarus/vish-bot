@@ -1,10 +1,10 @@
 /**
- * Кнопка «👨‍🏫 Преподаватели». Сам поиск, карточка и кнопки у преподавателя
+ * Кнопка «👨‍🏫 Преподы» (раньше «👨‍🏫 Преподаватели»). Сам поиск, карточка и кнопки у преподавателя
  * и студента общие — они живут в src/bot/people.ts; здесь только вход.
  */
 import { Composer } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN } from "../keyboards.js";
+import { BTN, LEGACY_BTN } from "../keyboards.js";
 import { teacherMapByName } from "../../portal/teachers.js";
 import { promptPeople } from "../people.js";
 import { webinarNameKey } from "../../people/ref.js";
@@ -12,7 +12,7 @@ import { webinarNameKey } from "../../people/ref.js";
 export const teacherHandlers = new Composer<BotContext>();
 
 teacherHandlers.command("teachers", (ctx) => promptPeople(ctx, "teacher"));
-teacherHandlers.hears(BTN.teachers, (ctx) => promptPeople(ctx, "teacher"));
+teacherHandlers.hears([BTN.teachers, LEGACY_BTN.teachers], (ctx) => promptPeople(ctx, "teacher"));
 
 /**
  * Callback key for a teacher known only from the webinar page (no portal id).

@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, groupPicker, menuFor, MENU_MODE_LABELS, MENU_MODES, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL } from "../keyboards.js";
+import { BTN, btnRef, groupPicker, menuFor, MENU_MODE_LABELS, MENU_MODES, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL } from "../keyboards.js";
 import { THEMES, THEME_LABELS } from "../../render/themes.js";
 import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
@@ -38,7 +38,7 @@ function settingsText(ctx: BotContext): string {
     "🔔 Изменения — переносы, замены аудиторий, отмены и новые пары твоей группы.",
     ...(ctx.deps.renderer ? ["🎨 Оформление — как выглядят постеры: тёмная, журнальная, плакатная или лента."] : []),
     "🎓 Сессия — то же самое для расписания зачётов и экзаменов.",
-    "⌨️ Нижнее меню — сворачивается значком ▦ в поле ввода; можно закрепить его или скрыть совсем (вернуть — /menu).",
+    "⌨️ Нижнее меню — сворачивается значком ▦ в поле ввода; может сворачиваться само после каждого нажатия или быть скрыто совсем (вернуть — /menu).",
     `💻 Дистант — отдельное напоминание перед онлайн-парой со ссылкой на вебинар (${WEBINAR_URL.replace(/^https?:\/\//, "")}).`,
     ...(ctx.deps.config.SLIDES_TOKEN ? ["📎 Слайды — PDF со слайдами записанных онлайн-пар твоей группы в личку. По умолчанию выключено."] : []),
     ...TOPICS.map((t) => `🏷 ${TOPIC_LABELS[t]} — ${TOPIC_HINTS[t]}.`),
@@ -200,14 +200,15 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
       return;
     }
     case "menu": {
+      // Выбор — в том же сообщении настроек: после него оно вернётся с новой подписью.
       await ctx.answerCallbackQuery();
-      await ctx.reply(menuChoiceText(user.menuMode), { parse_mode: "HTML", reply_markup: menuChoiceKeyboard(user.menuMode) });
+      await ctx.editMessageText(menuChoiceText(user.menuMode), { parse_mode: "HTML", reply_markup: menuChoiceKeyboard(user.menuMode) }).catch(() => undefined);
       return;
     }
     case "teachers": {
       await ctx.answerCallbackQuery();
       const list = ctx.deps.repo.watchedTeachers(ctx.user.id);
-      if (!list.length) return void (await ctx.reply("Ты пока ни за кем не следишь. Открой «👨‍🏫 Преподаватели», найди человека и нажми «Следить за преподом»."));
+      if (!list.length) return void (await ctx.reply(`Ты пока ни за кем не следишь. Открой ${btnRef(user, BTN.teachers, "/teachers")}, найди человека и нажми «Следить за преподом».`));
       const kb = new InlineKeyboard();
       for (const t of list) kb.text(`🔕 ${t.name}`, `twx:${t.teacherId}`).row();
       await ctx.reply(
@@ -307,11 +308,17 @@ export function closeKeyboard(): InlineKeyboard {
   return new InlineKeyboard().text("✖️ Закрыть", "s:close");
 }
 
-// ---- нижнее меню: всегда на экране / сворачивается / скрыто ----
+// ---- нижнее меню: сворачивается / сворачивается после нажатия / скрыто ----
 const MENU_MODE_HINTS: Record<MenuMode, string> = {
   collapsible: "кнопки внизу, а значком ▦ в поле ввода их можно свернуть и развернуть",
-  always: "кнопки всегда внизу вместо клавиатуры, свернуть их нельзя",
+  once: "нажал кнопку — меню само свернулось; вернуть его — тем же значком ▦",
   hidden: "кнопок внизу нет; всё есть в кнопке «Меню» слева от поля ввода (/today, /week, /settings…), вернуть кнопки — /menu",
+};
+
+const MENU_MODE_DONE: Record<MenuMode, string> = {
+  collapsible: "Готово: меню внизу, свернуть и развернуть его можно значком ▦ в поле ввода.",
+  once: "Готово: после каждого нажатия меню будет сворачиваться само, вернуть его — значком ▦ в поле ввода.",
+  hidden: "Готово: меню скрыто. Всё есть в кнопке «Меню» слева от поля ввода, вернуть кнопки — /menu.",
 };
 
 function menuChoiceText(current: MenuMode): string {
@@ -320,27 +327,34 @@ function menuChoiceText(current: MenuMode): string {
 
 function menuChoiceKeyboard(current: MenuMode): InlineKeyboard {
   const kb = new InlineKeyboard();
-  for (const m of MENU_MODES) kb.text(`${m === current ? "✅ " : ""}${MENU_MODE_LABELS[m][0]!.toUpperCase()}${MENU_MODE_LABELS[m].slice(1)}`, `menu:${m}`).row();
-  return kb;
+  for (const m of MENU_MODES) kb.text(`${m === current ? "✅ " : ""}${MENU_MODE_LABELS[m].charAt(0).toUpperCase()}${MENU_MODE_LABELS[m].slice(1)}`, `menu:${m}`).row();
+  return kb.text("◀️ К настройкам", "menu:back");
 }
 
 /** Кнопки в чате меняются только новым сообщением: шлём его сразу, с новым меню (или с «убрать»). */
 async function applyMenu(ctx: BotContext, mode: MenuMode, text: string): Promise<void> {
-  ctx.deps.repo.updateUser(ctx.user.id, { menuMode: mode });
+  const repo = ctx.deps.repo;
+  repo.updateUser(ctx.user.id, { menuMode: mode });
   ctx.user.menuMode = mode;
   await ctx.reply(text, { reply_markup: menuFor(ctx.user) });
+  // Два быстрых нажатия разными режимами: сообщения могли дойти не по порядку,
+  // и в чате осталось не то меню, что записано. Тогда забываем, что меню стоит, —
+  // правильное придёт со следующим сообщением (menuRefresh.ts).
+  if (repo.getUser(ctx.user.id)?.menuMode !== mode) repo.updateUser(ctx.user.id, { menuSent: null });
 }
 
-settingsHandlers.callbackQuery(/^menu:(always|collapsible|hidden)$/, async (ctx) => {
-  const mode = ctx.match[1] as MenuMode;
+settingsHandlers.callbackQuery(/^menu:(collapsible|once|hidden|back)$/, async (ctx) => {
+  const choice = ctx.match[1]!;
+  const current = (ctx.deps.repo.getUser(ctx.user.id) ?? ctx.user).menuMode;
+  if (choice === "back" || choice === current) {
+    // Тот же режим (или двойное нажатие) — ничего не шлём: меню не раскрывается зря.
+    await ctx.answerCallbackQuery(choice === "back" ? undefined : { text: "Уже так" });
+    return renderSettings(ctx, true);
+  }
+  const mode = choice as MenuMode;
   await ctx.answerCallbackQuery({ text: `Нижнее меню: ${MENU_MODE_LABELS[mode]}` });
-  await ctx.editMessageText(menuChoiceText(mode), { parse_mode: "HTML", reply_markup: menuChoiceKeyboard(mode) }).catch(() => undefined);
-  const done = {
-    collapsible: "Готово: меню внизу, свернуть и развернуть его можно значком ▦ в поле ввода.",
-    always: "Готово: меню всегда внизу.",
-    hidden: "Готово: меню скрыто. Всё есть в кнопке «Меню» слева от поля ввода, вернуть кнопки — /menu.",
-  }[mode];
-  await applyMenu(ctx, mode, done);
+  await applyMenu(ctx, mode, MENU_MODE_DONE[mode]);
+  await renderSettings(ctx, true);
 });
 
 /** /menu — вернуть кнопки: скрытое меню снова становится «сворачивается». */
