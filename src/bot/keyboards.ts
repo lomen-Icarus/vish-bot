@@ -361,3 +361,21 @@ export function onboardingKeyboard(): InlineKeyboard {
 }
 
 export const WEBINAR_URL = "https://tt.chuvsu.ru/webinar";
+
+/**
+ * Напоминания о парах и пункт настроек, который их включает. Кнопка
+ * «отключить» — прямо под напоминанием: не всякий найдёт нужную строчку в
+ * настройках, а надоевшее напоминание хочется выключить тут же.
+ */
+export const REMINDERS = {
+  first: { field: "remindFirstMin", label: "до первой пары" },
+  each: { field: "remindEachMin", label: "перед каждой парой" },
+  distance: { field: "remindDistanceMin", label: "перед дистантом" },
+  evening: { field: "eveningAt", label: "вечером на завтра" },
+} as const satisfies Record<string, { field: keyof User; label: string }>;
+export type ReminderKind = keyof typeof REMINDERS;
+export const REMINDER_KINDS = Object.keys(REMINDERS) as ReminderKind[];
+
+export function reminderOff(kind: ReminderKind, kb = new InlineKeyboard()): InlineKeyboard {
+  return kb.text("🔕 Отключить эти уведомления", `rm:off:${kind}`);
+}
