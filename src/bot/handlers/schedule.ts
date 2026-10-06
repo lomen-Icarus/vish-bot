@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, formatPicker, groupPicker, menuFor, onboardingKeyboard } from "../keyboards.js";
+import { BTN, formatPicker, groupPicker, menuFor, menuHint, onboardingKeyboard } from "../keyboards.js";
 import { groupRequiredText, needGroup, sendDay, sendWeek } from "../views.js";
 import { addDays, fmtDDMM, isLocalDate, mondayOf, parseDayWord, parseRuDate, todayMsk, wallClock, type LocalDate } from "../../time.js";
 import { showOwnTeacher } from "../teacherMode.js";
@@ -176,7 +176,7 @@ scheduleHandlers.callbackQuery(/^g:(.+)$/, async (ctx) => {
     // из него список групп, а нижнее меню приходит вместе с подтверждением —
     // раньше его нести было не в чем (у приветствия только кнопки под текстом).
     await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
-    await ctx.reply(`✅ Группа: <b>${esc(group.title)}</b>. Меню — внизу 👇`, { parse_mode: "HTML", reply_markup: menuFor(ctx.user) });
+    await ctx.reply(`✅ Группа: <b>${esc(group.title)}</b>. ${menuHint(ctx.user)}`, { parse_mode: "HTML", reply_markup: menuFor(ctx.user) });
   } else {
     try {
       if (ctx.callbackQuery.message && !("photo" in ctx.callbackQuery.message && ctx.callbackQuery.message.photo)) {

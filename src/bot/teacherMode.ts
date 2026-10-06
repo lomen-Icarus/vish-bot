@@ -15,7 +15,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext, Deps } from "./context.js";
 import type { User } from "../db/repo.js";
-import { dayNav, onboardingKeyboard, teacherKeyboard, mainKeyboard, weekNav } from "./keyboards.js";
+import { dayNav, menuFor, onboardingKeyboard, weekNav } from "./keyboards.js";
 import { esc } from "../schedule/format.js";
 import { samePerson } from "../text/match.js";
 import { mondayOf, todayMsk, type LocalDate } from "../time.js";
@@ -93,7 +93,7 @@ async function announce(ctx: BotContext, fio: string, ref: PersonRef | null): Pr
   const found = ref ? "" : "\n\n<i>В справочнике портала тебя найти не получилось, поэтому расписание пока пустое. Напиши админу — он проверит, как ты записан на портале.</i>";
   await ctx.reply(
     `👨‍🏫 <b>Режим преподавателя</b> — ${esc(fio)}\n\n«📅 Сегодня», «📅 Завтра», «🗓 Неделя» — твои пары. «👥 Студенты» — расписание любой группы. Напоминания и календарь теперь тоже по твоему расписанию.\n\nВыключить: /prepod${found}`,
-    { parse_mode: "HTML", reply_markup: teacherKeyboard() },
+    { parse_mode: "HTML", reply_markup: menuFor({ teacherMode: true, menuMode: ctx.user.menuMode }) },
   );
   if (ref) await showOwnTeacher(ctx, todayMsk());
 }
@@ -104,7 +104,7 @@ teacherModeHandlers.command("prepod", async (ctx) => {
     deps.repo.updateUser(ctx.user.id, { teacherMode: false });
     deps.repo.setMeta(optOutKey(ctx.user.id), "1");
     ctx.user.teacherMode = false;
-    await ctx.reply("Режим преподавателя выключен: бот снова показывает расписание твоей группы.", { reply_markup: mainKeyboard() });
+    await ctx.reply("Режим преподавателя выключен: бот снова показывает расписание твоей группы.", { reply_markup: menuFor(ctx.user) });
     return;
   }
   const arg = (ctx.match ?? "").trim();
@@ -202,7 +202,7 @@ async function welcome(ctx: BotContext, fio: string, ref: PersonRef | null): Pro
   const missing = ref ? "" : "\n\n<i>В справочнике портала вас найти не получилось, поэтому расписание пока пустое. Мы проверим, как вы записаны на портале.</i>";
   await ctx.reply(
     `Здравствуйте, ${esc(name)}! Рад вас видеть 👋\n\nЯ вас узнал, поэтому вместо группы здесь ваше собственное расписание: «📅 Сегодня», «📅 Завтра», «🗓 Неделя» — ваши пары, «👥 Студенты» — расписание любой группы. Спросить что угодно — «🔍 ИИ поисковик».\n\nВыключить этот режим: /prepod${missing}`,
-    { parse_mode: "HTML", reply_markup: teacherKeyboard() },
+    { parse_mode: "HTML", reply_markup: menuFor({ teacherMode: true, menuMode: ctx.user.menuMode }) },
   );
   if (ref) await showOwnTeacher(ctx, todayMsk());
   await ctx.reply(
