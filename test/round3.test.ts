@@ -127,16 +127,16 @@ describe("quiet hours", () => {
     expect(await atNight.dispatchChangeEvents(clock("2026-09-15", 23, 0))).toBe(0);
     expect(sent).toHaveLength(0);
 
-    // Morning: the backlog arrives once, and only once — срочное на сегодня
-    // отдельно от изменений на будущие дни, пояснение про тихие часы — у первого.
+    // Morning: the backlog arrives once, and only once — одним сообщением:
+    // пояснение про тихие часы, срочное на сегодня, следом — на будущие дни.
     expect(await n.flushQuietBacklog(clock("2026-09-16", 9, 0))).toBe(1);
-    expect(sent).toHaveLength(2);
-    expect(sent[0]!.text).toMatch(/тихие часы/);
-    expect(sent[0]!.text).toMatch(/ИЗМЕНЕНИЯ НА СЕГОДНЯ/);
-    expect(sent[0]!.text).toMatch(/➕ 5️⃣ <code>15:10–16:30<\/code> <b>Матан<\/b>/);
-    expect(sent[1]!.text).not.toMatch(/тихие часы/);
-    expect(sent[1]!.text).toMatch(/Изменения на будущее/);
-    expect(sent[1]!.text).toMatch(/Физика/);
+    expect(sent).toHaveLength(1);
+    const text = sent[0]!.text;
+    expect(text).toMatch(/^🌙 <i>Пока у тебя были тихие часы/);
+    expect(text).toMatch(/ИЗМЕНЕНИЯ НА СЕГОДНЯ/);
+    expect(text).toMatch(/➕ 5️⃣ <code>15:10–16:30<\/code> <b>Матан<\/b>/);
+    expect(text.indexOf("Изменения на будущее")).toBeGreaterThan(text.indexOf("ИЗМЕНЕНИЯ НА СЕГОДНЯ"));
+    expect(text).toMatch(/Физика/);
     expect(await n.flushQuietBacklog(clock("2026-09-16", 9, 1))).toBe(0);
   });
 

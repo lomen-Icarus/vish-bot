@@ -6,6 +6,8 @@ import { autoTeacherStart, nameAndPatronymic } from "../teacherMode.js";
 import { knownFirstName } from "../social.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
 import { askAi } from "./ask.js";
+import { changesIcs } from "./calendar.js";
+import { parseStartPayload } from "../deeplink.js";
 import { aiLimits } from "../../ai/limits.js";
 import { candidatesKeyboard, showPerson } from "../people.js";
 import { ershovNamesakes, isErshovQuery, sendErshovCard } from "../easter.js";
@@ -79,6 +81,21 @@ miscHandlers.command("start", async (ctx) => {
     await ctx.reply("Можно попробовать прямо сейчас — кнопка откроет выбор чата:", {
       reply_markup: new InlineKeyboard().switchInline("💬 Попробовать в чате", "неделя"),
     });
+    return;
+  }
+  // Ссылки из подписи к альбому изменений (у альбома нет кнопок): то же, что кнопки.
+  const link = parseStartPayload(ctx.match ?? "");
+  if (link?.action === "ics") {
+    const res = changesIcs(ctx, link.groupKey);
+    if (typeof res === "string") await ctx.reply(res);
+    else await ctx.replyWithDocument(res.file, { caption: res.caption });
+    return;
+  }
+  if (link?.action === "unwatch") {
+    const title = ctx.deps.service.group(link.groupKey)?.title ?? link.groupKey;
+    const watching = ctx.deps.repo.watchGroups(ctx.user.id).includes(link.groupKey);
+    if (watching) ctx.deps.repo.toggleWatchGroup(ctx.user.id, link.groupKey);
+    await ctx.reply(watching ? `Больше не слежу за ${esc(title)}.` : "Слежение уже выключено.", { parse_mode: "HTML" });
     return;
   }
   const ask = askButton(ctx);

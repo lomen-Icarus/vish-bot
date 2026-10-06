@@ -17,7 +17,8 @@ import type { BotContext, Deps } from "../src/bot/context.js";
 import type { ScheduleService } from "../src/schedule/service.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
 import type { Occurrence } from "../src/schedule/model.js";
-import { todayMsk } from "../src/time.js";
+import { addDays, todayMsk } from "../src/time.js";
+import { startPayload } from "../src/bot/deeplink.js";
 
 const group: LogicalGroup = { key: "виш-12-23", title: "ВИШ-12-23", prefix: "ВИШ", number: 12, intake: 23, course: 4, portalIds: [8524], portalNames: ["ВИШ-12-23"] };
 const other: LogicalGroup = { ...group, key: "виш-14-24", title: "ВИШ-14-24", number: 14, intake: 24, course: 3 };
@@ -223,5 +224,50 @@ describe("peek navigation", () => {
     const navigated = await run(callbackUpdate(`pd:${other.key}:${today}`), deps);
     expect(navigated.calls.map((c) => c.method)).toContain("editMessageText");
     expect(texts(navigated.calls).join("\n")).toMatch(/ВИШ-14-24/);
+  });
+});
+
+describe("«🔔 Изменения» картинкой и ссылки /start из подписи к альбому", () => {
+  const fakeRenderer = { renderDay: async () => Buffer.from("png"), renderWeek: async () => Buffer.from("png"), renderStreamDay: async () => Buffer.from("png") };
+  const later = addDays(today, 2);
+  function withEvents(deps: Deps, both = true): void {
+    const l = lesson("Патентоведение");
+    const events = [{ groupKey: group.key, date: later, period: 1 as const, kind: "added", payload: { after: { ...l, date: later } } }];
+    if (both) events.unshift({ groupKey: group.key, date: today, period: 1 as const, kind: "changed", payload: { before: l, after: { ...l, room: "Т-204" }, fields: ["room"] } } as never);
+    deps.repo.insertChangeEvents(events);
+  }
+
+  it("картинкой: альбом (сегодня первым), следом текст с кнопкой календаря", async () => {
+    const deps = { ...makeDeps(), renderer: fakeRenderer } as Deps;
+    deps.repo.updateUser(7, { groupKey: group.key, format: "image" });
+    withEvents(deps);
+    const { calls } = await run(textUpdate(BTN.changes), deps);
+    expect(calls.map((c) => c.method)).toEqual(["sendMediaGroup", "sendMessage"]);
+    expect((calls[0]!.payload.media as unknown[]).length).toBe(2);
+    expect(JSON.stringify(calls[1]!.payload.reply_markup)).toContain(`cics:${group.key}`);
+  });
+
+  it("один день и короткий текст — один постер с подписью и кнопкой; «только текст» — как раньше", async () => {
+    const deps = { ...makeDeps(), renderer: fakeRenderer } as Deps;
+    deps.repo.updateUser(7, { groupKey: group.key, format: "image" });
+    withEvents(deps, false);
+    const one = await run(textUpdate(BTN.changes), deps);
+    expect(one.calls.map((c) => c.method)).toEqual(["sendPhoto"]);
+    expect(String(one.calls[0]!.payload.caption)).toMatch(/Изменения в расписании ВИШ-12-23/);
+    deps.repo.updateUser(7, { format: "text" });
+    const plain = await run(textUpdate(BTN.changes), deps);
+    expect(plain.calls.map((c) => c.method)).toEqual(["sendMessage"]);
+  });
+
+  it("/start ics_… присылает файл изменений, /start unwatch_… снимает слежение", async () => {
+    const deps = makeDeps();
+    deps.repo.updateUser(7, { groupKey: group.key });
+    withEvents(deps);
+    const ics = await run(textUpdate(`/start ${startPayload("ics", group.key)}`), deps);
+    expect(ics.calls.map((c) => c.method)).toEqual(["sendDocument"]);
+    deps.repo.toggleWatchGroup(7, other.key);
+    const off = await run(textUpdate(`/start ${startPayload("unwatch", other.key)}`), deps);
+    expect(texts(off.calls)[0]).toBe("Больше не слежу за ВИШ-14-24.");
+    expect(deps.repo.watchGroups(7)).not.toContain(other.key);
   });
 });

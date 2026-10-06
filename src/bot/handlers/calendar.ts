@@ -127,25 +127,36 @@ calendarHandlers.callbackQuery(/^ics:sub:(\d{1,3})$/, async (ctx) => {
 });
 
 // ---- "just the changes" file from «Изменения» ----
-calendarHandlers.callbackQuery(/^cics:(.+)$/, async (ctx) => {
-  const key = ctx.match[1]!;
+/**
+ * Файл .ics только с изменениями группы. Общий для кнопки «📆 Файл изменений
+ * в календарь» и ссылки с тем же текстом в подписи к альбому (/start ics_…).
+ * Без файла — причина строкой.
+ */
+export function changesIcs(ctx: BotContext, key: string): { file: InputFile; caption: string } | string {
   const group = ctx.deps.service.group(key);
-  if (!group) return void (await ctx.answerCallbackQuery({ text: "Группа не найдена" }));
+  if (!group) return "Группа не найдена";
   const own = ctx.user.groupKey === key;
   // Oldest first so the newest state of a lesson wins in the generated file.
   const rows = ctx.deps.repo.activeEvents(key, todayMsk(), 60).slice().sort((a, b) => a.id - b.id);
-  if (!rows.length) return void (await ctx.answerCallbackQuery({ text: "Актуальных изменений уже нет", show_alert: true }));
+  if (!rows.length) return "Актуальных изменений уже нет";
   const events: ChangeEvent[] = rows.map((r) => {
     const p = r.payload as { before?: ChangeEvent["before"]; after?: ChangeEvent["after"]; fields?: string[] };
     return { kind: r.kind as ChangeEvent["kind"], groupKey: r.groupKey, date: r.date, period: r.period, before: p.before, after: p.after, fields: p.fields };
   });
   const alarm = ctx.user.calAlarmMin;
   const { ics, live, cancelled } = changesCalendar(group, events, { subgroup: own ? ctx.user.subgroup : null, alarmMinutes: alarm });
-  await ctx.answerCallbackQuery({ text: "Собираю изменения…" });
   const sub = subscriptionsEnabled(ctx) ? "\n\nС подпиской (в /calendar) это не нужно: там всё меняется само." : "";
-  await ctx.replyWithDocument(new InputFile(Buffer.from(ics, "utf8"), icsFileName(group.title, todayMsk(), "_changes")), {
+  return {
+    file: new InputFile(Buffer.from(ics, "utf8"), icsFileName(group.title, todayMsk(), "_changes")),
     caption: `${group.title}: только изменения — обновить ${live} ${plural(live, "пару", "пары", "пар")}, снять ${cancelled} ${plural(cancelled, "пару", "пары", "пар")}.\n\nОткрой файл → «Добавить». Google-календарь заменит события с теми же парами; на iPhone изменённые пары добавятся, а отменённые придут помеченными «Отменено» — их можно удалить.${sub}`,
-  });
+  };
+}
+
+calendarHandlers.callbackQuery(/^cics:(.+)$/, async (ctx) => {
+  const res = changesIcs(ctx, ctx.match[1]!);
+  if (typeof res === "string") return void (await ctx.answerCallbackQuery({ text: res, show_alert: res !== "Группа не найдена" }));
+  await ctx.answerCallbackQuery({ text: "Собираю изменения…" });
+  await ctx.replyWithDocument(res.file, { caption: res.caption });
 });
 
 

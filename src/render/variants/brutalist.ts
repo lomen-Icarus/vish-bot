@@ -7,7 +7,7 @@
 import type { LogicalGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
-import { filterSubgroup, isActiveLesson, posterTeacher, type MarkedLesson, type TeacherView } from "../../schedule/format.js";
+import { filterSubgroup, isActiveLesson, markGone, posterTeacher, type MarkedLesson, type TeacherView } from "../../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate } from "../../time.js";
 import { FONT, MARK_STYLE, PAD, W, changeBanner, h, loadFonts, markBadge, pluralPairs, text, toPng as corePng, type El } from "../core.js";
 import type { DayRenderInput, Renderer, StreamRenderInput, StreamRenderRow, WeekRenderInput } from "../image.js";
@@ -193,7 +193,7 @@ function nowStrip(accent: string, end: number | null): El {
 }
 
 function lessonRow(o: MarkedLesson, ongoing: boolean, accent: string, view: TeacherView | undefined): El {
-  const cancelled = o.mark?.kind === "cancelled";
+  const cancelled = markGone(o.mark);
   const moved = o.status === "moved" || cancelled;
   const inv = ongoing;
   const fg = inv ? CARD : INK;
@@ -204,7 +204,7 @@ function lessonRow(o: MarkedLesson, ongoing: boolean, accent: string, view: Teac
   if (o.subgroup) meta.push(`${o.subgroup} подгруппа`);
   const badges: Array<{ label: string; bg: string }> = [];
   if (o.status === "moved" && !cancelled && o.movedTo) badges.push({ label: `перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, bg: "#ff9a8b" });
-  if (o.movedFrom) badges.push({ label: `перенос с ${o.movedFrom.date.slice(8, 10)}.${o.movedFrom.date.slice(5, 7)}`, bg: "#ffc247" });
+  if (o.movedFrom && o.mark?.kind !== "added") badges.push({ label: `перенос с ${o.movedFrom.date.slice(8, 10)}.${o.movedFrom.date.slice(5, 7)}`, bg: "#ffc247" });
   if (o.substituted) badges.push({ label: "замена", bg: "#ff9a8b" });
 
   return block(
