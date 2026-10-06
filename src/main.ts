@@ -133,7 +133,7 @@ async function main(): Promise<void> {
   logger.info({ username: bot.botInfo.username, inline: deps.inline }, "bot authorised");
   await registerCommands(bot, deps);
 
-  const notifier = new Notifier(bot.api, repo, service, renderer, config.ADMIN_IDS, webinars, teachers);
+  const notifier = new Notifier(bot.api, repo, service, renderer, config.ADMIN_IDS, webinars, teachers, bot.botInfo.username ?? null);
   const scheduler = startScheduler({ service, notifier, repo, busyCron: config.POLL_CRON_BUSY, idleCron: config.POLL_CRON_IDLE, newsCron: config.NEWS_SCAN_CRON, news: deps.news, teachers, webinars });
 
   // Calendar subscriptions + /health. Pterodactyl hands the allocated port in SERVER_PORT.

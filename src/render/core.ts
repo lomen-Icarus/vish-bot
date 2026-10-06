@@ -70,22 +70,24 @@ export function pluralPairs(n: number): string {
 
 // ---------- пометки изменений (уведомления об изменениях) ----------
 
-/** Что случилось с парой: изменилась, появилась или отменена. Общие для всех тем цвета и подписи. */
-export type MarkKind = "changed" | "added" | "cancelled";
+/** Что случилось с парой: изменилась, появилась, перенесена на другой день или отменена. Общие для всех тем цвета и подписи. */
+export type MarkKind = "changed" | "added" | "moved" | "cancelled";
 
 export const MARK_STYLE: Record<MarkKind, { color: string; label: string }> = {
   changed: { color: "#f59e0b", label: "ИЗМЕНЕНО" },
   added: { color: "#22c55e", label: "НОВАЯ ПАРА" },
+  moved: { color: "#fb7185", label: "ПЕРЕНЕСЕНА" },
   cancelled: { color: "#ef4444", label: "ОТМЕНЕНА" },
 };
 
 /**
  * Значки рисуем сами (SVG), а не эмодзи: в шрифте постера эмодзи нет.
- * Карандаш — изменение, плюс — новая пара, крестик — отмена.
+ * Карандаш — изменение, плюс — новая пара, стрелка-«повтор» — перенос, крестик — отмена.
  */
 const ICON_PATH: Record<MarkKind | "alert" | "calendar" | "arrow", string> = {
   changed: "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z",
   added: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z",
+  moved: "M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6z",
   cancelled: "M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z",
   alert: "M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z",
   calendar: "M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 16H5V9h14v11z",
@@ -111,7 +113,7 @@ export function icon(kind: keyof typeof ICON_PATH, color: string, size: number, 
   return { type: "img", props: { src: `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`, width: size, height: size, style: { width: size, height: size, ...style } } as El["props"] };
 }
 
-/** Плашка над строкой пары: значок, «ИЗМЕНЕНО / НОВАЯ ПАРА / ОТМЕНЕНА» и в чём дело. */
+/** Плашка над строкой пары: значок, «ИЗМЕНЕНО / НОВАЯ ПАРА / ПЕРЕНЕСЕНА / ОТМЕНЕНА» и в чём дело. */
 export function markBadge(mark: { kind: MarkKind; note: string }, opts: { fontSize?: number; marginBottom?: number } = {}): El {
   const { color, label } = MARK_STYLE[mark.kind];
   const fs = opts.fontSize ?? 22;
