@@ -1,7 +1,7 @@
 import { Composer, InputFile } from "grammy";
 import type { BotContext } from "../context.js";
 import type { LogicalGroup } from "../../schedule/groups.js";
-import { BTN, intakePicker, menuFor, streamDayNav, streamKeyboard } from "../keyboards.js";
+import { BTN, intakePicker, menuFor, menuHint, streamDayNav, streamKeyboard } from "../keyboards.js";
 import { editPhoto, isPhotoMessage, needGroup } from "../views.js";
 import { commonLessons, formatCommonLessons, formatStreamDay, formatStreamWeek, mergeStream, shortGroupLabel, type StreamRow } from "../../schedule/stream.js";
 import type { Occurrence } from "../../schedule/model.js";
@@ -61,7 +61,7 @@ async function sendStreamDay(ctx: BotContext, intake: number, date: LocalDate, o
   let textSent = false;
   if (opts.keyboard) {
     // A reply keyboard and an inline keyboard cannot share one message: send the mode keyboard first.
-    await ctx.reply("Поток открыт. Вернуться: «◀️ В меню».", { reply_markup: streamKeyboard({ poisk: ctx.deps.config.POISK && !!ctx.deps.students }) });
+    await ctx.reply("Поток открыт. Вернуться: «◀️ В меню».", { reply_markup: streamKeyboard({ poisk: ctx.deps.config.POISK && !!ctx.deps.students, mode: ctx.user.menuMode }) });
   }
   if (wantImage && renderer) {
     try {
@@ -218,5 +218,5 @@ async function renderCommonWeek(ctx: BotContext, intake: number, monday: LocalDa
 }
 
 streamHandlers.hears(BTN.backToMenu, async (ctx) => {
-  await ctx.reply("Главное меню.", { reply_markup: menuFor(ctx.user) });
+  await ctx.reply(ctx.user.menuMode === "hidden" ? `Поток закрыт. ${menuHint(ctx.user)}.` : "Главное меню.", { reply_markup: menuFor(ctx.user) });
 });

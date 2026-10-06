@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { InlineKeyboard, Keyboard } from "grammy";
+import type { ReplyKeyboardRemove } from "grammy/types";
 import type { LogicalGroup } from "../schedule/groups.js";
-import type { User } from "../db/repo.js";
+import type { MenuMode, User } from "../db/repo.js";
 import { isTheme, THEME_LABELS } from "../render/themes.js";
 import { addDays, fmtDDMM, type LocalDate } from "../time.js";
 
@@ -46,9 +48,25 @@ export function isMenuText(text: string | undefined): boolean {
   return !!text && MENU_TEXTS.has(text.trim());
 }
 
+/**
+ * Нижнее меню и то, как оно себя ведёт. По умолчанию — «сворачивается»: без
+ * is_persistent, и на телефоне в поле ввода есть значок ▦, которым меню
+ * сворачивают и разворачивают (с is_persistent Telegram показывает его всегда
+ * вместо клавиатуры, и свернуть его на телефоне нельзя). «Всегда на экране» —
+ * с is_persistent, как было раньше; «скрыто» — меню убрано совсем, команды
+ * остаются в кнопке «Меню» слева от поля ввода.
+ */
+export const MENU_MODES: readonly MenuMode[] = ["collapsible", "always", "hidden"];
+export const MENU_MODE_LABELS: Record<MenuMode, string> = { always: "всегда на экране", collapsible: "сворачивается", hidden: "скрыто" };
+
+function menuBehaviour(kb: Keyboard, mode: MenuMode): Keyboard {
+  kb.resized();
+  return mode === "always" ? kb.persistent() : kb;
+}
+
 /** 4 × 3 main menu, order agreed with the customer. */
-export function mainKeyboard(): Keyboard {
-  return new Keyboard()
+export function mainKeyboard(mode: MenuMode = "collapsible"): Keyboard {
+  const kb = new Keyboard()
     .text(BTN.today)
     .text(BTN.tomorrow)
     .text(BTN.otherGroups)
@@ -63,17 +81,16 @@ export function mainKeyboard(): Keyboard {
     .row()
     .text(BTN.features)
     .text(BTN.search)
-    .text(BTN.settings)
-    .resized()
-    .persistent();
+    .text(BTN.settings);
+  return menuBehaviour(kb, mode);
 }
 
 /**
  * Меню режима преподавателя: то же самое, только третья кнопка — «Студенты»
  * (расписание любой группы), а «Сегодня / Завтра / Неделя» — его собственные пары.
  */
-export function teacherKeyboard(): Keyboard {
-  return new Keyboard()
+export function teacherKeyboard(mode: MenuMode = "collapsible"): Keyboard {
+  const kb = new Keyboard()
     .text(BTN.today)
     .text(BTN.tomorrow)
     .text(BTN.students)
@@ -88,21 +105,39 @@ export function teacherKeyboard(): Keyboard {
     .row()
     .text(BTN.features)
     .text(BTN.search)
-    .text(BTN.settings)
-    .resized()
-    .persistent();
+    .text(BTN.settings);
+  return menuBehaviour(kb, mode);
 }
 
-/** Нижнее меню этого человека: обычное или режима преподавателя. */
-export function menuFor(user: Pick<User, "teacherMode"> | null | undefined): Keyboard {
-  return user?.teacherMode ? teacherKeyboard() : mainKeyboard();
+export type MenuMarkup = Keyboard | ReplyKeyboardRemove;
+
+/** Нижнее меню этого человека: обычное или режима преподавателя — или «убрать», если он его скрыл. */
+export function menuFor(user: Pick<User, "teacherMode" | "menuMode"> | null | undefined): MenuMarkup {
+  const mode = user?.menuMode ?? "collapsible";
+  if (mode === "hidden") return { remove_keyboard: true };
+  return user?.teacherMode ? teacherKeyboard(mode) : mainKeyboard(mode);
 }
 
-/** `poisk` добавляет кнопку глобального поиска студента (POISK=TRUE). */
-export function streamKeyboard(opts: { poisk?: boolean } = {}): Keyboard {
+/** Отпечаток меню: то же меню — тот же отпечаток (по нему бот понимает, что меню уже стоит). */
+export function menuStamp(markup: unknown): string {
+  return createHash("sha1").update(JSON.stringify(markup)).digest("base64url").slice(0, 12);
+}
+
+/** Где искать меню — для подсказок в тексте («Нажми кнопку ниже» не годится, если меню скрыто). */
+export function menuHint(user: Pick<User, "menuMode"> | null | undefined): string {
+  return user?.menuMode === "hidden" ? "Команды — в кнопке «Меню» слева от поля ввода, вернуть кнопки внизу — /menu" : "Меню — внизу 👇";
+}
+
+/**
+ * Меню режима потока. Его открывают сами, поэтому оно приходит и тем, кто
+ * скрыл основное меню (свернуть его можно тем же значком ▦), а «◀️ В меню»
+ * возвращает к их выбору. `poisk` добавляет кнопку глобального поиска
+ * студента (POISK=TRUE).
+ */
+export function streamKeyboard(opts: { poisk?: boolean; mode?: MenuMode } = {}): Keyboard {
   const kb = new Keyboard().text(BTN.streamYesterday).text(BTN.streamToday).text(BTN.streamTomorrow).row().text(BTN.streamWeek).text(BTN.streamCommon).row();
   if (opts.poisk) kb.text(BTN.whereStudent).row();
-  return kb.text(BTN.settings).text(BTN.backToMenu).resized().persistent();
+  return menuBehaviour(kb.text(BTN.settings).text(BTN.backToMenu), opts.mode === "always" ? "always" : "collapsible");
 }
 
 export function intakePicker(intakes: number[], selected: number): InlineKeyboard {
@@ -276,6 +311,7 @@ export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: {
   // тумблер от несуществующей лампочки.
   if (opts.known) kb.text(`🕶 Усиленная анонимность: ${onoff(user.anon)}`, "s:anon").row();
   if (opts.teacherCount) kb.text(`👨‍🏫 Слежу за преподавателями (${opts.teacherCount})`, "s:teachers").row();
+  kb.text(`⌨️ Нижнее меню: ${MENU_MODE_LABELS[user.menuMode]}`, "s:menu").row();
   kb.text("✖️ Закрыть", "s:close");
   return kb;
 }
