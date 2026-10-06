@@ -99,7 +99,7 @@ async function ownTeacherContext(ctx: BotContext): Promise<{ name: string; lesso
 
 /**
  * Кнопки на то, что ИИ нашёл: людей и группы. Подписи и карточка — те же,
- * что у кнопок «👨‍🏫 Преподаватели» и «Где студент»: человек выглядит
+ * что у кнопок «👨‍🏫 Преподы» и «Где студент»: человек выглядит
  * одинаково, как бы его ни искали.
  */
 function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentions): void {

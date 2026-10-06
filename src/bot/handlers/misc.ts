@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor } from "../keyboards.js";
+import { BTN, btnRef, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor } from "../keyboards.js";
 import { autoTeacherStart, nameAndPatronymic } from "../teacherMode.js";
 import { knownFirstName } from "../social.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
@@ -110,7 +110,8 @@ miscHandlers.command("start", async (ctx) => {
   // Режим преподавателя: своя «группа» — он сам, обращение по имени-отчеству.
   if (ctx.user.teacherMode) {
     const name = ctx.user.teacherName ? nameAndPatronymic(ctx.user.teacherName) : null;
-    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} «📅 Сегодня» и «🗓 Неделя» — ваши пары, «👥 Студенты» — расписание любой группы.${askLine}`, { parse_mode: "HTML", reply_markup: ask ?? menuFor(ctx.user) });
+    const u = ctx.user;
+    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} ${btnRef(u, BTN.today, "/today")} и ${btnRef(u, BTN.week, "/week")} — ваши пары, ${btnRef(u, BTN.students, "/groups")} — расписание любой группы.${askLine}`, { parse_mode: "HTML", reply_markup: menuFor(u) });
     return;
   }
   // Бот может узнать человека по телеграм-нику из файла старост. ФИО у людей
@@ -129,13 +130,15 @@ miscHandlers.command("start", async (ctx) => {
     );
     return;
   }
-  // Одно сообщение с одной кнопкой. Нижнее меню у вернувшегося уже есть.
-  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.${askLine}`, { parse_mode: "HTML", reply_markup: ask ?? menuFor(ctx.user) });
+  // Одно сообщение — и с ним нижнее меню: /start жмут и после очистки чата,
+  // когда меню пропало, а бот этого знать не может. Спросить можно и без
+  // кнопки — просто написать вопрос (об этом строка askLine).
+  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.${askLine}`, { parse_mode: "HTML", reply_markup: menuFor(ctx.user) });
 });
 
 /** Карта функций приходит двумя сообщениями: одним она не влезает в лимит Telegram. */
 async function showFeatures(ctx: BotContext): Promise<void> {
-  for (const part of featuresSections(ctx.deps, { admin: ctx.isAdmin })) {
+  for (const part of featuresSections(ctx.deps, { admin: ctx.isAdmin, menuHidden: ctx.user.menuMode === "hidden" })) {
     await ctx.reply(clampHtml(part), { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
   }
 }
@@ -334,7 +337,7 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
   }
 
   // 3. Люди: преподаватели и студенты — тем же поиском, что и кнопки
-  // «👨‍🏫 Преподаватели» и «Где студент», с теми же подписями и карточкой.
+  // «👨‍🏫 Преподы» и «Где студент», с теми же подписями и карточкой.
   // Только для запроса, похожего на имя: целый вопрос разослал бы каждое своё
   // слово в поиск портала по очереди.
   const nameWords = query.trim().split(/\s+/).filter((w) => /\p{L}{3,}/u.test(w));

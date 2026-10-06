@@ -17,7 +17,7 @@ export const BTN = {
   stream: "🎓 Поток",
   changes: "🔔 Изменения",
   calendar: "📆 Календарь",
-  teachers: "👨‍🏫 Преподаватели",
+  teachers: "👨‍🏫 Преподы",
   features: "🧭 Функции",
   search: "🔍 ИИ поисковик",
   settings: "⚙️ Настройки",
@@ -39,6 +39,7 @@ export const BTN = {
  */
 export const LEGACY_BTN = {
   search: "🔍 Поиск",
+  teachers: "👨‍🏫 Преподаватели",
 } as const;
 
 /** Every label of the reply keyboards; a pending flow must never swallow one. */
@@ -52,16 +53,17 @@ export function isMenuText(text: string | undefined): boolean {
  * Нижнее меню и то, как оно себя ведёт. По умолчанию — «сворачивается»: без
  * is_persistent, и на телефоне в поле ввода есть значок ▦, которым меню
  * сворачивают и разворачивают (с is_persistent Telegram показывает его всегда
- * вместо клавиатуры, и свернуть его на телефоне нельзя). «Всегда на экране» —
- * с is_persistent, как было раньше; «скрыто» — меню убрано совсем, команды
- * остаются в кнопке «Меню» слева от поля ввода.
+ * вместо клавиатуры, и свернуть его на телефоне нельзя). «После нажатия» —
+ * one_time_keyboard: нажал кнопку — меню само свернулось, вернуть — тем же
+ * значком. «Скрыто» — меню убрано совсем, команды остаются в кнопке «Меню»
+ * слева от поля ввода.
  */
-export const MENU_MODES: readonly MenuMode[] = ["collapsible", "always", "hidden"];
-export const MENU_MODE_LABELS: Record<MenuMode, string> = { always: "всегда на экране", collapsible: "сворачивается", hidden: "скрыто" };
+export const MENU_MODES: readonly MenuMode[] = ["collapsible", "once", "hidden"];
+export const MENU_MODE_LABELS: Record<MenuMode, string> = { collapsible: "сворачивается", once: "сворачивать после нажатия", hidden: "скрыто" };
 
 function menuBehaviour(kb: Keyboard, mode: MenuMode): Keyboard {
   kb.resized();
-  return mode === "always" ? kb.persistent() : kb;
+  return mode === "once" ? kb.oneTime() : kb;
 }
 
 /** 4 × 3 main menu, order agreed with the customer. */
@@ -123,9 +125,23 @@ export function menuStamp(markup: unknown): string {
   return createHash("sha1").update(JSON.stringify(markup)).digest("base64url").slice(0, 12);
 }
 
+/** Отпечатки возможных меню считаем один раз: вариантов всего пять. */
+const stamps = new Map<string, string>();
+export function menuStampFor(user: Pick<User, "teacherMode" | "menuMode">): string {
+  const key = `${user.teacherMode ? 1 : 0}|${user.menuMode}`;
+  let stamp = stamps.get(key);
+  if (!stamp) stamps.set(key, (stamp = menuStamp(menuFor(user))));
+  return stamp;
+}
+
 /** Где искать меню — для подсказок в тексте («Нажми кнопку ниже» не годится, если меню скрыто). */
 export function menuHint(user: Pick<User, "menuMode"> | null | undefined): string {
   return user?.menuMode === "hidden" ? "Команды — в кнопке «Меню» слева от поля ввода, вернуть кнопки внизу — /menu" : "Меню — внизу 👇";
+}
+
+/** Как сослаться на кнопку в тексте: «📅 Сегодня», а если меню скрыто — командой. */
+export function btnRef(user: Pick<User, "menuMode"> | null | undefined, label: string, command: string): string {
+  return user?.menuMode === "hidden" ? command : `«${label}»`;
 }
 
 /**
@@ -137,7 +153,7 @@ export function menuHint(user: Pick<User, "menuMode"> | null | undefined): strin
 export function streamKeyboard(opts: { poisk?: boolean; mode?: MenuMode } = {}): Keyboard {
   const kb = new Keyboard().text(BTN.streamYesterday).text(BTN.streamToday).text(BTN.streamTomorrow).row().text(BTN.streamWeek).text(BTN.streamCommon).row();
   if (opts.poisk) kb.text(BTN.whereStudent).row();
-  return menuBehaviour(kb.text(BTN.settings).text(BTN.backToMenu), opts.mode === "always" ? "always" : "collapsible");
+  return menuBehaviour(kb.text(BTN.settings).text(BTN.backToMenu), opts.mode === "once" ? "once" : "collapsible");
 }
 
 export function intakePicker(intakes: number[], selected: number): InlineKeyboard {

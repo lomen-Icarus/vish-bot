@@ -14,7 +14,7 @@ import { sourceHandlers } from "./handlers/sources.js";
 import { poiskHandlers } from "./handlers/poisk.js";
 import { peopleHandlers } from "./people.js";
 import { logger } from "../logger.js";
-import { menuFor } from "./keyboards.js";
+import { menuFor, menuHint } from "./keyboards.js";
 import { menuRefresher } from "./menuRefresh.js";
 import { teacherModeHandlers } from "./teacherMode.js";
 import { subjectHandlers } from "./handlers/subjects.js";
@@ -102,7 +102,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
   bot.use(scheduleHandlers);
 
   bot.on("message:text", async (ctx) => {
-    await ctx.reply(ctx.user.menuMode === "hidden" ? "Не понял. Команды — в кнопке «Меню» слева от поля ввода, или посмотри /help" : "Не понял. Нажми кнопку ниже или посмотри /help", {
+    await ctx.reply(`Не понял. ${ctx.user.menuMode === "hidden" ? `${menuHint(ctx.user)}.` : "Нажми кнопку ниже."} Подсказки — /help`, {
       reply_markup: menuFor(ctx.user),
     });
   });
