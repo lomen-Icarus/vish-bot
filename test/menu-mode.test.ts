@@ -190,3 +190,49 @@ describe("тексты при скрытом меню называют кома�
     expect(btnRef({ menuMode: "hidden" }, BTN.today, "/today")).toBe("/today");
   });
 });
+
+describe("/menu_refresh: кому обновить меню", () => {
+  it("тем, у кого меню старое и вообще есть; не скрывшим, не заблокировавшим, не тем, у кого уже новое", async () => {
+    const { menuRefreshTargets } = await import("../src/bot/handlers/admin.js");
+    const { menuStampFor } = await import("../src/bot/keyboards.js");
+    const repo = new Repo(openDatabase(":memory:"));
+    for (const id of [1, 2, 3, 4, 5, 6]) repo.touchUser(id, `u${id}`, "U");
+    repo.updateUser(1, { groupKey: "виш-12-23" }); // старое меню — да
+    repo.updateUser(2, { groupKey: "виш-12-23", menuMode: "hidden" }); // скрыл — нет
+    repo.updateUser(3, { groupKey: "виш-12-23" });
+    repo.updateUser(3, { menuSent: menuStampFor(repo.getUser(3)!) }); // уже новое — нет
+    // 4 — без группы, меню у него и не было — нет
+    repo.updateUser(5, { groupKey: "виш-12-23", blocked: true }); // заблокировал — нет
+    repo.updateUser(6, { teacherMode: true }); // преподаватель — да
+    expect(menuRefreshTargets(repo.listUsers({ onlyActive: false })).map((u) => u.id).sort()).toEqual([1, 6]);
+  });
+});
+
+describe("/menu_refresh: предпросмотр, подтверждение, тихая рассылка", () => {
+  it("сначала спрашивает, потом шлёт каждому тихое сообщение с его меню", async () => {
+    const { adminHandlers } = await import("../src/bot/handlers/admin.js");
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(7, "admin", "A");
+    repo.touchUser(8, "u", "U");
+    repo.updateUser(8, { groupKey: "виш-12-23", menuMode: "once" });
+    const deps = { repo, config: { ADMIN_IDS: [7] }, pending: new Map() } as unknown as Deps;
+    const exec = async (update: Update) => {
+      const calls: Array<{ method: string; payload: Record<string, unknown> }> = [];
+      const api = new Api("123:FAKE");
+      api.config.use(async (_prev, method, payload) => (calls.push({ method, payload: payload as Record<string, unknown> }), { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never }));
+      const ctx = new Context(update, api, ME) as BotContext;
+      ctx.deps = deps;
+      ctx.user = repo.getUser(7)!;
+      ctx.isAdmin = true;
+      await new Composer<BotContext>().use(adminHandlers).middleware()(ctx, async () => undefined);
+      return calls;
+    };
+    const preview = await exec(cmd("/menu_refresh"));
+    expect(String(preview[0]!.payload.text)).toMatch(/у <b>1<\/b> человека/);
+    const go = await exec(cb("mr:go"));
+    const sent = go.find((c) => c.method === "sendMessage" && c.payload.chat_id === 8)!;
+    expect(sent.payload.disable_notification).toBe(true);
+    expect(plain(sent.payload.reply_markup).one_time_keyboard).toBe(true);
+    expect(String(sent.payload.text)).toContain("👨‍🏫 Преподы");
+  });
+});

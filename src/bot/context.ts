@@ -14,7 +14,7 @@ import type { ChatService } from "../chat/service.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
-  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "ask" | "teacher" | "search" | "poisk" | "people" | "qa-import";
+  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "menu-refresh" | "ask" | "teacher" | "search" | "poisk" | "people" | "qa-import";
   /** For broadcast: captured message to forward. */
   chatId?: number;
   messageId?: number;

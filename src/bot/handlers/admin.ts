@@ -3,7 +3,7 @@ import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { esc, plural } from "../../schedule/format.js";
 import { pruneFalseChangeEvents } from "../../db/cleanup.js";
-import { isMenuText, TOPIC_LABELS, TOPICS } from "../keyboards.js";
+import { isMenuText, menuFor, menuStampFor, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
 import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
 import { todayMsk } from "../../time.js";
@@ -605,4 +605,59 @@ adminOnly.callbackQuery("bc:back", async (ctx) => {
   setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: pending.chatId, messageId: pending.messageId, text: pending.text }, 15 * 60_000);
   await ctx.answerCallbackQuery();
   await ctx.editMessageText("Кому отправить?", { reply_markup: targetKeyboard() });
+});
+
+// ---- обновить нижнее меню у всех ----
+/**
+ * Нижнее меню в чате меняется только новым сообщением от бота: тихо
+ * переслать его, не дожидаясь, пока человек сам что-то нажмёт или придёт
+ * сообщение без своих кнопок. Только тем, у кого меню ещё старое (отпечаток
+ * menu_sent не совпадает), у кого оно вообще есть (выбрана группа или режим
+ * преподавателя) и кто его не скрыл. Удалить сообщение после отправки нельзя:
+ * клиенты Telegram вместе с сообщением могут убрать и меню.
+ */
+export const MENU_REFRESH_TEXT =
+  "🆕 Обновили меню: теперь его можно свернуть значком ▦ в поле ввода и развернуть им же, а «👨‍🏫 Преподаватели» стали «👨‍🏫 Преподы». В ⚙️ Настройках → «⌨️ Нижнее меню» можно сделать, чтобы меню сворачивалось само после каждого нажатия, или скрыть его совсем.";
+
+export function menuRefreshTargets(users: User[]): User[] {
+  return users.filter((u) => !u.blocked && u.menuMode !== "hidden" && (u.groupKey || u.teacherMode) && u.menuSent !== menuStampFor(u));
+}
+
+adminOnly.command("menu_refresh", async (ctx) => {
+  const text = ctx.match?.trim() || MENU_REFRESH_TEXT;
+  const users = menuRefreshTargets(ctx.deps.repo.listUsers({ onlyActive: true }));
+  if (!users.length) return void (await ctx.reply("У всех уже новое меню — рассылать некому."));
+  setPending(ctx.deps, ctx.user.id, { kind: "menu-refresh", text }, 15 * 60_000);
+  await ctx.reply(
+    `Обновить нижнее меню у <b>${users.length}</b> ${plural(users.length, "человека", "человек", "человек")}? Придёт тихое сообщение (без звука) с новым меню:\n\n${esc(text)}\n\n<i>Свой текст: /menu_refresh текст</i>`,
+    { parse_mode: "HTML", reply_markup: new InlineKeyboard().text(`✅ Разослать ${users.length}`, "mr:go").text("✖️ Отмена", "mr:cancel") },
+  );
+});
+
+adminOnly.callbackQuery(/^mr:(go|cancel)$/, async (ctx) => {
+  const pending = takePending(ctx.deps, ctx.user.id);
+  if (ctx.match[1] === "cancel" || !pending || pending.kind !== "menu-refresh") {
+    await ctx.answerCallbackQuery(ctx.match[1] === "cancel" ? { text: "Отменено" } : { text: "Начни заново: /menu_refresh", show_alert: true });
+    await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => undefined);
+    return;
+  }
+  // Список — заново: пока админ думал, кто-то мог получить меню сам.
+  const users = menuRefreshTargets(ctx.deps.repo.listUsers({ onlyActive: true }));
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageText(`Обновляю меню: ${users.length} чел…`);
+  let ok = 0;
+  let failed = 0;
+  for (const u of users) {
+    try {
+      // Отпечаток запишет menuRefresh.ts: это и есть меню человека.
+      await ctx.api.sendMessage(u.id, pending.text ?? MENU_REFRESH_TEXT, { reply_markup: menuFor(u), disable_notification: true });
+      ok++;
+    } catch (err) {
+      failed++;
+      if (isUnreachable(err)) ctx.deps.repo.updateUser(u.id, { blocked: true });
+      logger.warn({ err: String(err).slice(0, 200), userId: u.id }, "menu refresh failed");
+    }
+    await sleep(40);
+  }
+  await ctx.reply(`Меню обновлено: доставлено ${ok}, не доставлено ${failed}.`);
 });
