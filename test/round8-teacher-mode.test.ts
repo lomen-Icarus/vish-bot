@@ -192,14 +192,23 @@ describe("/start — одно сообщение", () => {
   };
   const buttonTexts = (c: Call): string[] => ((c.payload.reply_markup as { inline_keyboard?: Array<Array<{ text: string }>> }).inline_keyboard ?? []).flat().map((b) => b.text);
 
-  it("вернувшийся: одно сообщение и с ним нижнее меню (после очистки чата оно пропадает)", async () => {
+  it("вернувшийся: приветствие с нижним меню (после очистки чата оно пропадает), следом «💬 Спросить?»", async () => {
     const deps = startDeps(true);
     deps.repo.updateUser(7, { groupKey: group.key });
     const calls = await runStart(deps);
     const sent = calls.filter((c) => c.method === "sendMessage");
-    expect(sent).toHaveLength(1);
+    expect(sent).toHaveLength(2);
     expect(String(sent[0]!.payload.text)).toContain("С возвращением");
-    expect(String(sent[0]!.payload.text)).toContain("Можно просто спросить словами");
+    expect(JSON.stringify(sent[0]!.payload.reply_markup)).toContain("📅 Сегодня");
+    expect(String(sent[1]!.payload.text)).toContain("Можно просто спросить словами");
+    expect(buttonTexts(sent[1]!)).toEqual(["💬 Спросить?"]);
+  });
+
+  it("без ИИ — одно сообщение, с меню", async () => {
+    const deps = startDeps(false);
+    deps.repo.updateUser(7, { groupKey: group.key });
+    const sent = (await runStart(deps)).filter((c) => c.method === "sendMessage");
+    expect(sent).toHaveLength(1);
     expect(JSON.stringify(sent[0]!.payload.reply_markup)).toContain("📅 Сегодня");
   });
 

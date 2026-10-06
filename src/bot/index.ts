@@ -156,6 +156,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     ...common,
     { command: "admin", description: "Админка" },
     { command: "broadcast", description: "Рассылка" },
+    { command: "menu_refresh", description: "Обновить нижнее меню у всех" },
     { command: "announcements", description: "Доска объявлений" },
     { command: "sources", description: "Источники новостей" },
     { command: "news_scan", description: "Сканировать новости сейчас" },
