@@ -84,6 +84,9 @@ function rowToItem(r: NewsItemRow): NewsItem {
   return { id: r.id, sourceId: r.source_id, externalId: r.external_id, url: r.url, publishedAt: r.published_at, text: r.text, photoUrl: r.photo_url, topic: r.topic, title: r.title, sentCount: r.sent_count };
 }
 
+/** Как показывать нижнее меню бота (см. keyboards.ts, menuFor). */
+export type MenuMode = "always" | "collapsible" | "hidden";
+
 export interface User {
   id: number;
   username: string | null;
@@ -122,6 +125,10 @@ export interface User {
   calAlarmMin: number | null;
   /** Poster look; null = the bot's default (POSTER_THEME). */
   posterTheme: string | null;
+  /** Нижнее меню: всегда на экране, сворачивается (по умолчанию) или скрыто. */
+  menuMode: MenuMode;
+  /** Отпечаток меню, которое сейчас стоит в чате; null — неизвестно. */
+  menuSent: string | null;
   blocked: boolean;
   createdAt: string;
   lastSeenAt: string;
@@ -154,6 +161,8 @@ interface UserRow {
   cal_token: string | null;
   cal_alarm_min: number | null;
   poster_theme: string | null;
+  menu_mode: string | null;
+  menu_sent: string | null;
   blocked: number;
   created_at: string;
   last_seen_at: string;
@@ -193,6 +202,8 @@ function rowToUser(r: UserRow): User {
     calToken: r.cal_token ?? null,
     calAlarmMin: r.cal_alarm_min ?? null,
     posterTheme: r.poster_theme ?? null,
+    menuMode: r.menu_mode === "always" || r.menu_mode === "hidden" ? r.menu_mode : "collapsible",
+    menuSent: r.menu_sent ?? null,
     blocked: r.blocked === 1,
     createdAt: r.created_at,
     lastSeenAt: r.last_seen_at,
@@ -472,6 +483,8 @@ export class Repo {
       cal_token: null,
       cal_alarm_min: null,
       poster_theme: null,
+      menu_mode: null,
+      menu_sent: null,
       blocked: 0,
       created_at: ts,
       last_seen_at: ts,
@@ -519,6 +532,8 @@ export class Repo {
     if (patch.calToken !== undefined) map.cal_token = patch.calToken;
     if (patch.calAlarmMin !== undefined) map.cal_alarm_min = patch.calAlarmMin;
     if (patch.posterTheme !== undefined) map.poster_theme = patch.posterTheme;
+    if (patch.menuMode !== undefined) map.menu_mode = patch.menuMode === "collapsible" ? null : patch.menuMode;
+    if (patch.menuSent !== undefined) map.menu_sent = patch.menuSent;
     if (patch.blocked !== undefined) map.blocked = patch.blocked ? 1 : 0;
     const keys = Object.keys(map);
     if (keys.length === 0) return;
