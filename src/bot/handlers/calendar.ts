@@ -130,15 +130,16 @@ calendarHandlers.callbackQuery(/^ics:sub:(\d{1,3})$/, async (ctx) => {
 /**
  * Файл .ics только с изменениями группы. Общий для кнопки «📆 Файл изменений
  * в календарь» и ссылки с тем же текстом в подписи к альбому (/start ics_…).
- * Без файла — причина строкой.
+ * Без файла — причина и стоит ли показать её всплывающим окном.
  */
-export function changesIcs(ctx: BotContext, key: string): { file: InputFile; caption: string } | string {
+export function changesIcs(ctx: BotContext, key: string): { file: InputFile; caption: string } | { error: string; alert: boolean } {
   const group = ctx.deps.service.group(key);
-  if (!group) return "Группа не найдена";
+  if (!group) return { error: "Группа не найдена", alert: false };
   const own = ctx.user.groupKey === key;
   // Oldest first so the newest state of a lesson wins in the generated file.
-  const rows = ctx.deps.repo.activeEvents(key, todayMsk(), 60).slice().sort((a, b) => a.id - b.id);
-  if (!rows.length) return "Актуальных изменений уже нет";
+  // Все актуальные — на них ссылается «…и ещё N» в «🔔 Изменения».
+  const rows = ctx.deps.repo.activeEvents(key, todayMsk(), 200).slice().sort((a, b) => a.id - b.id);
+  if (!rows.length) return { error: "Актуальных изменений уже нет", alert: true };
   const events: ChangeEvent[] = rows.map((r) => {
     const p = r.payload as { before?: ChangeEvent["before"]; after?: ChangeEvent["after"]; fields?: string[] };
     return { kind: r.kind as ChangeEvent["kind"], groupKey: r.groupKey, date: r.date, period: r.period, before: p.before, after: p.after, fields: p.fields };
@@ -154,7 +155,7 @@ export function changesIcs(ctx: BotContext, key: string): { file: InputFile; cap
 
 calendarHandlers.callbackQuery(/^cics:(.+)$/, async (ctx) => {
   const res = changesIcs(ctx, ctx.match[1]!);
-  if (typeof res === "string") return void (await ctx.answerCallbackQuery({ text: res, show_alert: res !== "Группа не найдена" }));
+  if ("error" in res) return void (await ctx.answerCallbackQuery({ text: res.error, show_alert: res.alert }));
   await ctx.answerCallbackQuery({ text: "Собираю изменения…" });
   await ctx.replyWithDocument(res.file, { caption: res.caption });
 });

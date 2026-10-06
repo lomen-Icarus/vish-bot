@@ -3,8 +3,8 @@ import { GrammyError, InlineKeyboard, InputFile, InputMediaBuilder } from "gramm
 import type { ChangeEventRow, Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
-import { captionFits, esc as escapeHtml, formatDay, formatNotice, filterSubgroup, plural, type MarkedLesson } from "../schedule/format.js";
-import { isSessionPeriod, lessonTypeLabel, positionKey, type Occurrence } from "../schedule/model.js";
+import { captionFits, esc as escapeHtml, formatDay, formatNotice, filterSubgroup, plural } from "../schedule/format.js";
+import { isSessionPeriod, lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
@@ -18,7 +18,8 @@ import { readFileSync } from "node:fs";
 import { isUnreachable } from "../bot/errors.js";
 import { sameSubject } from "../chat/social.js";
 import { deckFileName } from "./deckName.js";
-import { changeDays, changesCaption, changesMessage, changesMessageFit, MAX_LATER_POSTERS, splitByToday } from "./changes.js";
+import { changeDays, changesCaption, changesMessage, changesMessageFit, forSubgroup, MAX_LATER_POSTERS, splitByToday, type ChangesInput } from "./changes.js";
+import { ChangePosters, dayLessonsFor } from "./changePosters.js";
 import { startLink } from "../bot/deeplink.js";
 
 /**
@@ -290,15 +291,20 @@ export class Notifier {
       await sleep(35);
       return true;
     } catch (err) {
-      const msg = err instanceof GrammyError ? err.description : String(err);
-      this.repo.logNotification(user.id, opts.kind, false, msg.slice(0, 200));
-      if (isUnreachable(err)) {
-        this.repo.updateUser(user.id, { blocked: true });
-        logger.info({ userId: user.id }, "user unreachable, marked blocked");
-      } else {
-        logger.warn({ err: msg, userId: user.id }, "notification failed");
-      }
+      this.sendFailed(user, opts.kind, err);
       return false;
+    }
+  }
+
+  /** Неудачная отправка: в журнал, а недоступного (заблокировал бота) — пометить. */
+  private sendFailed(user: User, kind: string, err: unknown): void {
+    const msg = err instanceof GrammyError ? err.description : String(err);
+    this.repo.logNotification(user.id, kind, false, msg.slice(0, 200));
+    if (isUnreachable(err)) {
+      this.repo.updateUser(user.id, { blocked: true });
+      logger.info({ userId: user.id }, "user unreachable, marked blocked");
+    } else {
+      logger.warn({ err: msg, userId: user.id }, "notification failed");
     }
   }
 
@@ -317,7 +323,7 @@ export class Notifier {
   }
 
   private async dispatchChangeEventsOnce(now: WallClock): Promise<number> {
-    this.posterCache.clear();
+    this.posters.clear();
     let rows = this.repo.unnotifiedEvents();
     if (rows.length === 0) return 0;
     // Подозрительно большая пачка — не рассылаем, пока админ не решит.
@@ -356,6 +362,8 @@ export class Notifier {
         this.repo.markEventsNotified(list.map((r) => r.id));
         continue;
       }
+      // По порядку появления: у одной пары последнее изменение главнее (markDay).
+      list.sort((a, b) => a.id - b.id);
       const events: ChangeEvent[] = list.map((r) => {
         const p = r.payload as { before?: Occurrence; after?: Occurrence; fields?: string[] };
         return { kind: r.kind as ChangeEvent["kind"], groupKey: r.groupKey, date: r.date, period: r.period, before: p.before, after: p.after, fields: p.fields };
@@ -374,12 +382,7 @@ export class Notifier {
       list.forEach((r, i) => idByEvent.set(events[i]!, r.id));
       for (const { user, events: evs } of recipients.values()) {
         const own = user.groupKey === groupKey;
-        const mine = own
-          ? evs.filter((e) => {
-              const sg = e.after?.subgroup ?? e.before?.subgroup ?? null;
-              return !user.subgroup || sg == null || sg === user.subgroup;
-            })
-          : evs;
+        const mine = own ? forSubgroup(evs, user.subgroup) : evs;
         // The once-a-minute backlog pass may have taken an event first.
         const fresh = mine.filter((e) => {
           const id = idByEvent.get(e);
@@ -452,23 +455,21 @@ export class Notifier {
   private async deliverChanges(user: User, group: LogicalGroup, events: ChangeEvent[], opts: ChangeDelivery): Promise<ChangeEvent[]> {
     const today = opts.now.date;
     const { today: todayEvents, later } = splitByToday(events, today);
-    const wantPosters = !!this.renderer && user.format !== "text";
-    const days = changeDays(events, today, (d) => this.dayLessons(user, group, d, opts.own), wantPosters ? MAX_LATER_POSTERS : 0);
-    const todayMarked = todayEvents.length ? (days.find((d) => d.date === today)?.lessons ?? null) : null;
-    const info = this.service.weekInfo(today);
-    const full = changesMessage(group, todayMarked, later, info, opts.now, user.teacherView);
-    const text = changesMessageFit(group, todayMarked, later, info, opts.now, user.teacherView, opts.head);
-    const photos = wantPosters ? (await Promise.all(days.map((d) => this.renderChanges(user, group, d.date, d.lessons, opts.now, d.banner)))).filter((p): p is Buffer => !!p) : [];
-    if (!photos.length) return (await this.send(user, text, { kind: opts.kind, replyMarkup: opts.kb })) ? events : [];
+    const renderer = user.format !== "text" ? this.renderer : null;
+    const days = changeDays(events, today, dayLessonsFor(this.service, group, opts.own ? user.subgroup : null), renderer ? MAX_LATER_POSTERS : 0);
+    const todayDay = todayEvents.length ? (days.find((d) => d.date === today) ?? null) : null;
+    const input: ChangesInput = { group, todayMarked: todayDay?.lessons ?? null, later, now: opts.now, info: this.service.weekInfo(today), teacherView: user.teacherView, own: opts.own, head: opts.head };
+    const asText = async (): Promise<ChangeEvent[]> => ((await this.send(user, changesMessageFit(input), { kind: opts.kind, replyMarkup: opts.kb })) ? events : []);
+    if (!renderer) return asText();
+    const drawn = await Promise.all(days.map(async (day) => ({ day, png: await this.posters.render(renderer, this.service, { group, day, now: opts.now, theme: user.posterTheme, teacherView: user.teacherView }) })));
+    const photos = drawn.flatMap((d) => (d.png ? [d.png] : []));
+    // Сегодняшний день не нарисовался — без него картинка неполная, а в подписи
+    // только изменившиеся пары: шлём текстом, где день целиком.
+    if (!photos.length || (todayDay && !drawn.find((d) => d.day === todayDay)?.png)) return asText();
     const album = photos.length > 1;
-    const caption = changesCaption(group, { todayMarked, later, today, full: user.format === "both" ? full : null, head: opts.head, tail: album ? this.albumLinks(group.key, opts.own) : "" });
+    const caption = changesCaption({ ...input, full: user.format === "both" ? changesMessage(input) : null, tail: album ? this.albumLinks(group.key, opts.own) : "" });
     if (!album) return (await this.send(user, caption, { kind: opts.kind, replyMarkup: opts.kb, photo: photos[0] })) ? events : [];
-    return (await this.sendAlbum(user, photos, caption, { kind: opts.kind, fallback: text, kb: opts.kb })) ? events : [];
-  }
-
-  private dayLessons(user: User, group: LogicalGroup, date: LocalDate, own: boolean): Occurrence[] {
-    const all = this.service.lessonsOn(group, date);
-    return own ? filterSubgroup(all, user.subgroup) : all;
+    return (await this.sendAlbum(user, photos, caption, { kind: opts.kind, fallback: () => changesMessageFit(input), kb: opts.kb })) ? events : [];
   }
 
   /** Кнопки уведомления ссылками — для подписи к альбому. */
@@ -479,8 +480,13 @@ export class Notifier {
     return links.length ? `\n\n${links.join("\n")}` : "";
   }
 
-  /** Альбом картинок с подписью — одно сообщение. Не ушёл — шлём текстом с кнопками. */
-  private async sendAlbum(user: User, photos: Buffer[], caption: string, opts: { kind: string; fallback: string; kb: InlineKeyboard }): Promise<boolean> {
+  /**
+   * Альбом картинок с подписью — одно сообщение. Telegram его отверг — шлём
+   * то же текстом с кнопками. Сеть оборвалась (альбом мог и дойти) или человек
+   * заблокировал бота — второго сообщения сейчас не шлём: недошедшее повторит
+   * добор, а дубль был бы хуже.
+   */
+  private async sendAlbum(user: User, photos: Buffer[], caption: string, opts: { kind: string; fallback: () => string; kb: InlineKeyboard }): Promise<boolean> {
     try {
       await this.api.sendMediaGroup(
         user.id,
@@ -490,32 +496,17 @@ export class Notifier {
       await sleep(35);
       return true;
     } catch (err) {
-      logger.warn({ err: String(err).slice(0, 200), userId: user.id }, "changes album failed, sending text only");
-      return this.send(user, opts.fallback, { kind: opts.kind, replyMarkup: opts.kb });
+      if (err instanceof GrammyError && !isUnreachable(err)) {
+        logger.warn({ err: err.description.slice(0, 200), userId: user.id }, "changes album rejected, sending text only");
+        return this.send(user, opts.fallback(), { kind: opts.kind, replyMarkup: opts.kb });
+      }
+      this.sendFailed(user, opts.kind, err);
+      return false;
     }
   }
 
-  /**
-   * Одинаковые постеры за одну рассылку рисуем один раз: у подписчиков одной
-   * группы картинка различается только темой, подгруппой и видом преподавателя.
-   */
-  private posterCache = new Map<string, Promise<Buffer | undefined>>();
-
-  /** Картинка дня с пометками изменений — если человек выбрал картинку и отрисовка есть. */
-  private renderChanges(user: User, group: LogicalGroup, date: LocalDate, lessons: MarkedLesson[], now: WallClock, banner: { text: string; tone: "urgent" | "info" }): Promise<Buffer | undefined> {
-    const renderer = this.renderer;
-    if (!renderer || user.format === "text") return Promise.resolve(undefined);
-    const key = JSON.stringify([group.key, date, user.posterTheme ?? "", user.teacherView ?? "", banner.text, now.date === date ? now.minutes : 0, lessons.map((o) => [positionKey(o), o.room, o.start, o.end, o.status, o.mark?.kind ?? "", o.mark?.note ?? ""])]);
-    let png = this.posterCache.get(key);
-    if (!png) {
-      png = renderer.renderDay({ group, date, lessons, weekInfo: this.service.weekInfo(date), today: now.date, now, theme: user.posterTheme ?? undefined, teacherView: user.teacherView, banner }).catch((err: unknown) => {
-        logger.warn({ err: String(err).slice(0, 200) }, "changes image render failed");
-        return undefined;
-      });
-      this.posterCache.set(key, png);
-    }
-    return png;
-  }
+  /** Одинаковые постеры за одну рассылку рисуем один раз (кеш чистится в начале прохода). */
+  private readonly posters = new ChangePosters();
 
   /**
    * Change events that were not delivered because the user was in quiet hours.
@@ -542,7 +533,7 @@ export class Notifier {
       return rows;
     };
     let sent = 0;
-    this.posterCache.clear();
+    this.posters.clear();
     for (const user of this.repo.listUsers({ onlyActive: true })) {
       if (this.inQuietHours(user, now)) continue;
       const quiet = !!user.quietFrom && !!user.quietTo;
@@ -566,7 +557,7 @@ export class Notifier {
         // неудачной отправки, а не как пересказ всего дня. Отсев по времени —
         // до поиска отметок: он дешёвый, а отметки — запрос на каждую правку.
         const recent = quiet ? rowsFor(key) : rowsFor(key).filter((r) => Date.now() - Date.parse(r.createdAt) < 2 * 60 * 60 * 1000);
-        const fresh = recent.filter((r) => !this.repo.reminderSent(user.id, "event", String(r.id)));
+        const fresh = recent.filter((r) => !this.repo.reminderSent(user.id, "event", String(r.id))).sort((a, b) => a.id - b.id);
         if (!fresh.length) continue;
         const idByEvent = new Map<ChangeEvent, number>();
         const events: ChangeEvent[] = fresh.map((r) => {
@@ -575,12 +566,10 @@ export class Notifier {
           idByEvent.set(e, r.id);
           return e;
         });
-        const mine = events.filter((e) => {
-          if (isSessionPeriod(e.period) && !user.notifySession) return false;
-          if (!own) return true;
-          const sg = e.after?.subgroup ?? e.before?.subgroup ?? null;
-          return !user.subgroup || sg == null || sg === user.subgroup;
-        });
+        const mine = forSubgroup(
+          events.filter((e) => !isSessionPeriod(e.period) || user.notifySession),
+          own ? user.subgroup : null,
+        );
         if (!mine.length) {
           // Чужая подгруппа или сессия без подписки: это не «не доставлено».
           for (const r of fresh) this.repo.markReminderSent(user.id, "event", String(r.id));

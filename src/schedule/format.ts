@@ -37,6 +37,9 @@ export const MARK_ICON: Record<LessonMark["kind"], string> = { changed: "✏️"
 /** Пары в этот день больше нет: отменили или перенесли на другой. Рисуется зачёркнутой. */
 export const markGone = (mark: LessonMark | undefined): boolean => mark?.kind === "cancelled" || mark?.kind === "moved";
 
+/** Писать ли «перенос с …» у пары: у новой пары он уже в пометке. Общее для текста и всех тем постеров. */
+export const showMovedFrom = (o: MarkedLesson): boolean => !!o.movedFrom && o.mark?.kind !== "added";
+
 /** Отменённая и перенесённая на другой день пара в счёт пар дня не идёт. */
 export const isActiveLesson = (o: MarkedLesson): boolean => o.status === "scheduled" && !markGone(o.mark);
 
@@ -91,11 +94,14 @@ export function dayHeader(date: LocalDate, info: WeekInfo, today: LocalDate): st
   return `<b>${rel ? `${rel} · ` : ""}${main}</b>${pl ? `\n${pl}` : ""}`;
 }
 
+/** Лимит текста сообщения с запасом (у Telegram 4096 видимых символов). */
+export const MESSAGE_MAX = 3900;
+
 /**
  * Telegram rejects a message whose HTML is cut mid-tag, so a long text is
  * trimmed at a line break and every tag left open is closed again.
  */
-export function clampHtml(html: string, limit = 3900): string {
+export function clampHtml(html: string, limit = MESSAGE_MAX): string {
   if (html.length <= limit) return html;
   let cut = html.slice(0, limit);
   const nl = cut.lastIndexOf("\n");
@@ -120,9 +126,17 @@ export function clampHtml(html: string, limit = 3900): string {
  */
 export const CAPTION_MAX = 1000;
 
+/**
+ * Сколько символов увидит Telegram: без тегов, а «&lt;» и подобное — за один.
+ * Лимиты сообщения и подписи он считает именно так.
+ */
+export function visibleLength(html: string): number {
+  return html.replace(/<[^>]+>/g, "").replace(/&(?:lt|gt|amp|quot|#\d+);/g, "_").length;
+}
+
 /** Влезет ли расписание в подпись к постеру одним сообщением. */
 export function captionFits(html: string): boolean {
-  return html.replace(/<[^>]+>/g, "").length <= CAPTION_MAX;
+  return visibleLength(html) <= CAPTION_MAX;
 }
 
 /**
@@ -206,7 +220,7 @@ export function formatLesson(o: MarkedLesson, opts: FormatOptions = {}): string 
   if (o.topic && o.isDistance) lines.push(`     📝 ${esc(o.topic.length > 90 ? o.topic.slice(0, 87).trimEnd() + "…" : o.topic)}`);
   if (o.status === "moved" && !cancelled && o.movedTo) lines.push(`     ↪️ перенесена на ${fmtDDMM(o.movedTo.date)}${o.movedTo.slot ? ` (${o.movedTo.slot} пара)` : ""}`);
   // У новой пары «перенос с …» уже написан в пометке.
-  if (o.movedFrom && mark?.kind !== "added") lines.push(`     ↩️ перенос с ${fmtDDMM(o.movedFrom.date)} (${o.movedFrom.slot} пара)`);
+  if (showMovedFrom(o)) lines.push(`     ↩️ перенос с ${fmtDDMM(o.movedFrom!.date)} (${o.movedFrom!.slot} пара)`);
   if (o.substituted) {
     const bits: string[] = [];
     if (o.substituted.room !== undefined && o.substituted.room !== o.room) bits.push(`ауд. ${esc(o.substituted.room ?? "—")} → ${esc(o.room ?? "—")}`);
@@ -323,9 +337,11 @@ export function formatChangeEvent(e: ChangeEvent): string {
         if (f === "status" && a.status === "moved") bits.push(`перенесена${a.movedTo ? ` на ${fmtDDMM(a.movedTo.date)}${a.movedTo.slot ? ` (${a.movedTo.slot} пара)` : ""}` : ""}`);
         if (f === "status" && a.status === "scheduled") bits.push("перенос отменён, пара снова на месте");
       }
-      // Аудитория или формат сменились — пишем их один раз, в самом изменении:
-      // «ауд. Т-310 → Т-204», а не «· ауд. Т-204 — ауд. Т-310 → Т-204».
-      const hideWhere = (e.fields ?? []).some((f) => f === "room" || f === "distance");
+      // Где пара — пишем один раз: если это уже сказано в самом изменении
+      // («ауд. Т-310 → Т-204», «теперь дистанционно»), в начале строки не
+      // повторяем. «Теперь очно» без аудитории не говорит, куда идти, — там оставляем.
+      const fields = e.fields ?? [];
+      const hideWhere = a.isDistance ? fields.includes("distance") : fields.includes("room");
       return `✏️ ${when(a)}: ${describe(a, { hideWhere })} — ${bits.join("; ") || "изменения"}`;
     }
   }

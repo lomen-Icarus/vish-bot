@@ -8,7 +8,7 @@
 import type { LogicalGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
-import { filterSubgroup, isActiveLesson, markGone, posterTeacher, type MarkedLesson, type TeacherView } from "../../schedule/format.js";
+import { filterSubgroup, isActiveLesson, markGone, posterTeacher, showMovedFrom, type MarkedLesson, type TeacherView } from "../../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, weekdayOf, type LocalDate, type WallClock } from "../../time.js";
 import { FONT, MARK_STYLE, PAD, W, changeBanner, h, loadFonts, markBadge, pluralPairs, text, toPng as corePng, type El, type Style } from "../core.js";
 import type { DayRenderInput, Renderer, StreamRenderInput, StreamRenderRow, WeekRenderInput } from "../image.js";
@@ -160,7 +160,7 @@ function lessonRow(o: MarkedLesson, accent: string, ongoing: boolean, view: Teac
   const moved = o.status === "moved" || cancelled;
   const badges: El[] = [];
   if (o.status === "moved" && !cancelled && o.movedTo) badges.push(tag(`перенесена на ${ddmm(o.movedTo.date)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, MUTED));
-  if (o.movedFrom && o.mark?.kind !== "added") badges.push(tag(`перенос с ${ddmm(o.movedFrom.date)}`, accent));
+  if (showMovedFrom(o)) badges.push(tag(`перенос с ${ddmm(o.movedFrom!.date)}`, accent));
   if (o.substituted) badges.push(tag("замена", "#d1495b"));
 
   const meta: El[] = [typeMark(o.type, 24, moved ? MUTED : INK)];

@@ -15,7 +15,7 @@ import type { ChangeEvent } from "../schedule/diff.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { groupByDate, positionKey, type Occurrence } from "../schedule/model.js";
 import type { WeekInfo } from "../schedule/service.js";
-import { captionFits, clampHtml, CAPTION_MAX, esc, formatChangeEvent, formatDay, MARK_ICON, plural, shortTeacher, type LessonMark, type MarkedLesson, type TeacherView } from "../schedule/format.js";
+import { captionFits, clampHtml, CAPTION_MAX, esc, formatChangeEvent, formatDay, MARK_ICON, MESSAGE_MAX, plural, shortTeacher, visibleLength, type LessonMark, type MarkedLesson, type TeacherView } from "../schedule/format.js";
 import { addDays, fmtDDMM, fmtDayMonth, fmtHHMM, mondayOf, weekdayName, weekdayShort, type LocalDate, type WallClock } from "../time.js";
 
 const range = (o: Occurrence): string => (o.start != null && o.end != null ? `${fmtHHMM(o.start)}–${fmtHHMM(o.end)}` : "—");
@@ -32,6 +32,15 @@ export function splitByToday(events: ChangeEvent[], today: LocalDate): { today: 
   const later: ChangeEvent[] = [];
   for (const e of events) (touchesDate(e, today) ? now : later).push(e);
   return { today: now, later };
+}
+
+/** Изменения, которые касаются человека из этой подгруппы (подгруппа не выбрана — все). */
+export function forSubgroup<T extends ChangeEvent>(events: T[], subgroup: number | null | undefined): T[] {
+  if (!subgroup) return events;
+  return events.filter((e) => {
+    const sg = e.after?.subgroup ?? e.before?.subgroup ?? null;
+    return sg == null || sg === subgroup;
+  });
 }
 
 /** «ауд. Т-310 → Т-204; время 11:40–13:00 → 12:00–13:20» — простым текстом. */
@@ -51,12 +60,14 @@ export function changedNote(e: ChangeEvent): string {
   return bits.join("; ");
 }
 
-const RANK: Record<LessonMark["kind"], number> = { changed: 0, added: 1, moved: 2, cancelled: 3 };
-
 /**
  * Пары дня с пометками изменений. Отменённые и перенесённые с этого дня пары
  * в расписании уже не числятся — их возвращаем в список зачёркнутыми, чтобы
  * человек видел, что именно отменили или куда перенесли.
+ *
+ * События — по порядку появления (по id): у одной пары за несколько опросов
+ * их бывает несколько, и главное — последнее. Отменили, а потом вернули — пара
+ * на месте, а не «ОТМЕНЕНА».
  */
 export function markDay(lessons: Occurrence[], events: ChangeEvent[], date: LocalDate): MarkedLesson[] {
   const out: MarkedLesson[] = lessons.map((o) => ({ ...o }));
@@ -69,10 +80,11 @@ export function markDay(lessons: Occurrence[], events: ChangeEvent[], date: Loca
       out.push(target);
       byKey.set(key, target);
     }
-    // Два изменения одной пары за раз — одна пометка: важнее отмена, потом перенос, потом «новая».
+    // Позднее изменение главнее раннего. Правки одного рода (сменили аудиторию,
+    // потом преподавателя) — одна пометка с обоими пояснениями.
     const prev = target.mark;
-    if (!prev) target.mark = { ...mark };
-    else target.mark = { kind: RANK[mark.kind] > RANK[prev.kind] ? mark.kind : prev.kind, note: [prev.note, mark.note].filter(Boolean).join("; ") };
+    if (!prev || prev.kind !== mark.kind) target.mark = { ...mark };
+    else target.mark = { kind: mark.kind, note: [...new Set([prev.note, mark.note].filter(Boolean))].join("; ") };
   };
   for (const e of events) {
     const b = e.before;
@@ -141,12 +153,22 @@ export function laterDates(events: ChangeEvent[], today: LocalDate): LocalDate[]
 export const LATER_HEAD = "🗓 <b>Изменения на будущее</b>";
 
 /**
+ * «…и ещё N — где остальные». Своя группа — в «🔔 Изменения» (там ближайшие,
+ * а все — в файле календаря); группа, за которой только следят, в «🔔
+ * Изменения» не попадает — её актуальное расписание в «Других группах».
+ */
+export function moreLine(rest: number, own: boolean): string {
+  return `<i>…и ещё ${rest} ${plural(rest, "изменение", "изменения", "изменений")} — ${own ? "остальные в «🔔 Изменения»" : "смотри расписание группы"}</i>`;
+}
+
+/**
  * Текст: изменения на другие дни списком по дням, как раньше, с пометкой недели.
  * `title: false` — без названия группы (оно уже есть выше, в «на сегодня»);
  * `limit` — показать только первые столько изменений, про остальные — строкой
- * «…и ещё N» (подпись к картинке у Telegram короткая).
+ * «…и ещё N» (подпись к картинке у Telegram короткая); `own` — своя ли группа
+ * (куда отправлять за остальными).
  */
-export function laterText(group: LogicalGroup, events: ChangeEvent[], today: LocalDate, opts: { title?: boolean; limit?: number } = {}): string {
+export function laterText(group: LogicalGroup, events: ChangeEvent[], today: LocalDate, opts: { title?: boolean; limit?: number; own?: boolean } = {}): string {
   const phrase = weekPhrase(laterDates(events, today), today);
   const tomorrow = addDays(today, 1);
   const sorted = [...events].sort((a, b) => a.date.localeCompare(b.date));
@@ -155,7 +177,7 @@ export function laterText(group: LogicalGroup, events: ChangeEvent[], today: Loc
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, list]) => `<b>${weekdayName(date)}, ${fmtDayMonth(date)}</b>${date === tomorrow ? " · <i>завтра</i>" : ""}\n${list.map(formatChangeEvent).join("\n")}`);
   const rest = sorted.length - shown.length;
-  if (rest > 0) blocks.push(`<i>…и ещё ${rest} ${plural(rest, "изменение", "изменения", "изменений")} — все в «🔔 Изменения»</i>`);
+  if (rest > 0) blocks.push(moreLine(rest, opts.own ?? true));
   return `${LATER_HEAD}${opts.title === false ? "" : ` · ${esc(group.title)}`}${phrase ? `\n<i>${phrase}</i>` : ""}\n\n${blocks.join("\n\n")}`;
 }
 
@@ -189,26 +211,39 @@ export function changeDays(events: ChangeEvent[], today: LocalDate, lessonsOn: (
   return days;
 }
 
+/** Что нужно, чтобы собрать текст уведомления. */
+export interface ChangesInput {
+  group: LogicalGroup;
+  /** Сегодняшний день с пометками; изменений на сегодня нет — null. */
+  todayMarked: MarkedLesson[] | null;
+  /** Изменения на другие дни (без задевших сегодня). */
+  later: ChangeEvent[];
+  now: WallClock;
+  info: WeekInfo;
+  teacherView?: TeacherView;
+  /** Своя группа человека (а не та, за которой он следит). */
+  own: boolean;
+  /** Строка перед уведомлением («пока были тихие часы…»). */
+  head: string;
+}
+
+const laterPart = (input: ChangesInput, limit?: number): string => (input.later.length ? laterText(input.group, input.later, input.now.date, { title: !input.todayMarked, limit, own: input.own }) : "");
+
 /**
  * Весь текст уведомления одним сообщением: «на сегодня» со всем днём и
  * пометками, а следом — на будущее (без повтора названия группы). `limit` —
  * сколько изменений на будущее показать (см. laterText).
  */
-export function changesMessage(group: LogicalGroup, todayMarked: MarkedLesson[] | null, later: ChangeEvent[], info: WeekInfo, now: WallClock, teacherView?: TeacherView, limit?: number): string {
-  const parts: string[] = [];
-  if (todayMarked) parts.push(todayText(group, now.date, todayMarked, info, now, teacherView));
-  if (later.length) parts.push(laterText(group, later, now.date, { title: !todayMarked, limit }));
-  return parts.join("\n\n");
+export function changesMessage(input: ChangesInput, limit?: number): string {
+  const today = input.todayMarked ? todayText(input.group, input.now.date, input.todayMarked, input.info, input.now, input.teacherView) : "";
+  return `${input.head}${[today, laterPart(input, limit)].filter(Boolean).join("\n\n")}`;
 }
-
-/** Лимит текста сообщения с запасом (у Telegram 4096). */
-export const MESSAGE_MAX = 3900;
 
 /**
  * Наибольшее n из 0..max, при котором fits(n); длина текста растёт с n,
  * поэтому делим пополам, а не перебираем — изменений после «Разослать» бывают сотни.
  */
-function largestFit(max: number, fits: (n: number) => boolean): number | null {
+export function largestFit(max: number, fits: (n: number) => boolean): number | null {
   let lo = 0;
   let hi = max;
   let best: number | null = null;
@@ -222,16 +257,20 @@ function largestFit(max: number, fits: (n: number) => boolean): number | null {
   return best;
 }
 
+const messageFits = (html: string): boolean => visibleLength(html) <= MESSAGE_MAX;
+
 /**
  * Текст уведомления, который точно влезет в одно сообщение: не влезает —
- * будущее показываем не целиком, а «…и ещё N — все в «🔔 Изменения»».
+ * будущее показываем не целиком, а «…и ещё N». Даже сегодняшний день один не
+ * влезает — режем его, но строку про другие дни оставляем.
  */
-export function changesMessageFit(group: LogicalGroup, todayMarked: MarkedLesson[] | null, later: ChangeEvent[], info: WeekInfo, now: WallClock, teacherView: TeacherView | undefined, head: string): string {
-  const build = (n?: number): string => `${head}${changesMessage(group, todayMarked, later, info, now, teacherView, n)}`;
-  const whole = build();
-  if (whole.length <= MESSAGE_MAX || !later.length) return clampHtml(whole, MESSAGE_MAX);
-  const n = largestFit(later.length - 1, (k) => build(k).length <= MESSAGE_MAX);
-  return clampHtml(build(n ?? 0), MESSAGE_MAX);
+export function changesMessageFit(input: ChangesInput): string {
+  const whole = changesMessage(input);
+  if (messageFits(whole)) return whole;
+  const n = input.later.length ? largestFit(input.later.length - 1, (k) => messageFits(changesMessage(input, k))) : null;
+  if (n != null) return changesMessage(input, n);
+  const hint = input.later.length ? `\n\n${moreLine(input.later.length, input.own)}` : "";
+  return `${clampHtml(changesMessage({ ...input, later: [] }), MESSAGE_MAX - hint.length)}${hint}`;
 }
 
 /**
@@ -240,18 +279,17 @@ export function changesMessageFit(group: LogicalGroup, todayMarked: MarkedLesson
  * изменившиеся пары, а будущее — столько изменений, сколько поместится.
  * `tail` — ссылки под подписью (у альбома кнопок не бывает).
  */
-export function changesCaption(group: LogicalGroup, opts: { todayMarked: MarkedLesson[] | null; later: ChangeEvent[]; today: LocalDate; full: string | null; head: string; tail: string }): string {
-  const { todayMarked, later, today, head, tail } = opts;
-  if (opts.full && captionFits(`${head}${opts.full}${tail}`)) return `${head}${opts.full}${tail}`;
+export function changesCaption(input: ChangesInput & { full: string | null; tail: string }): string {
+  const { group, todayMarked, head, tail } = input;
+  if (input.full && captionFits(`${input.full}${tail}`)) return `${input.full}${tail}`;
   const top = todayMarked ? todayCaption(group, todayMarked) : "";
-  const build = (n?: number): string => {
-    const bottom = later.length ? laterText(group, later, today, { title: !todayMarked, limit: n }) : "";
-    return `${head}${[top, bottom].filter(Boolean).join("\n\n")}${tail}`;
-  };
+  const build = (n?: number): string => `${head}${[top, laterPart(input, n)].filter(Boolean).join("\n\n")}${tail}`;
   const whole = build();
   if (captionFits(whole)) return whole;
-  const n = later.length ? largestFit(later.length - 1, (k) => captionFits(build(k))) : null;
+  const n = input.later.length ? largestFit(input.later.length - 1, (k) => captionFits(build(k))) : null;
   if (n != null) return build(n);
-  // Даже без будущего не влезло (очень много пар сегодня) — режем по строкам.
-  return `${clampHtml(`${head}${top}`, CAPTION_MAX - tail.length - 10)}${tail}`;
+  // Даже без будущего не влезло (очень много пар сегодня) — режем сегодня по
+  // строкам, но про другие дни всё равно говорим.
+  const hint = input.later.length ? `\n\n${moreLine(input.later.length, input.own)}` : "";
+  return `${clampHtml(`${head}${top}`, CAPTION_MAX - visibleLength(`${hint}${tail}`) - 10)}${hint}${tail}`;
 }
