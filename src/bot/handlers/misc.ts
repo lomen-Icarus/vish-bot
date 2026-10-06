@@ -105,13 +105,20 @@ miscHandlers.command("start", async (ctx) => {
   }
   const ask = askButton(ctx);
   const askLine = ctx.deps.ask ? "\n\nМожно просто спросить словами — «когда матан», «где Беляев», «как включить напоминания»." : "";
+  // Вернувшемуся — два сообщения: приветствие несёт нижнее меню (после очистки
+  // чата оно пропадает, а бот этого знать не может), следом — «Спросить?»: у
+  // одного сообщения не может быть и меню внизу, и кнопки под текстом.
+  const askOffer = async (): Promise<void> => {
+    if (ask) await ctx.reply(askLine.trim(), { reply_markup: ask });
+  };
   // Преподаватель из реестра: режим включается сам, без выбора группы.
   if (await autoTeacherStart(ctx)) return;
   // Режим преподавателя: своя «группа» — он сам, обращение по имени-отчеству.
   if (ctx.user.teacherMode) {
     const name = ctx.user.teacherName ? nameAndPatronymic(ctx.user.teacherName) : null;
     const u = ctx.user;
-    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} ${btnRef(u, BTN.today, "/today")} и ${btnRef(u, BTN.week, "/week")} — ваши пары, ${btnRef(u, BTN.students, "/groups")} — расписание любой группы.${askLine}`, { parse_mode: "HTML", reply_markup: menuFor(u) });
+    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} ${btnRef(u, BTN.today, "/today")} и ${btnRef(u, BTN.week, "/week")} — ваши пары, ${btnRef(u, BTN.students, "/groups")} — расписание любой группы.`, { parse_mode: "HTML", reply_markup: menuFor(u) });
+    await askOffer();
     return;
   }
   // Бот может узнать человека по телеграм-нику из файла старост. ФИО у людей
@@ -130,10 +137,8 @@ miscHandlers.command("start", async (ctx) => {
     );
     return;
   }
-  // Одно сообщение — и с ним нижнее меню: /start жмут и после очистки чата,
-  // когда меню пропало, а бот этого знать не может. Спросить можно и без
-  // кнопки — просто написать вопрос (об этом строка askLine).
-  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.${askLine}`, { parse_mode: "HTML", reply_markup: menuFor(ctx.user) });
+  await ctx.reply(`${hello ? `Привет, ${esc(hello)}!` : "С возвращением!"} Твоя группа: <b>${esc(group.title)}</b>.`, { parse_mode: "HTML", reply_markup: menuFor(ctx.user) });
+  await askOffer();
 });
 
 /** Карта функций приходит двумя сообщениями: одним она не влезает в лимит Telegram. */
