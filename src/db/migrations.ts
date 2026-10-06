@@ -402,4 +402,12 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX feature_ideas_created ON feature_ideas (created_at);
   `,
+  // Нижнее меню: «всегда на экране» / «сворачивается» (по умолчанию, NULL) /
+  // «скрыто». menu_sent — отпечаток меню, которое у человека сейчас стоит:
+  // присылаем меню заново, только когда оно правда поменялось, а не после
+  // каждого перезапуска бота (свёрнутое меню раскрывалось бы само).
+  `
+  ALTER TABLE users ADD COLUMN menu_mode TEXT;
+  ALTER TABLE users ADD COLUMN menu_sent TEXT;
+  `,
 ];

@@ -15,6 +15,7 @@ import { poiskHandlers } from "./handlers/poisk.js";
 import { peopleHandlers } from "./people.js";
 import { logger } from "../logger.js";
 import { menuFor } from "./keyboards.js";
+import { menuRefresher } from "./menuRefresh.js";
 import { teacherModeHandlers } from "./teacherMode.js";
 import { subjectHandlers } from "./handlers/subjects.js";
 import { groupChatHandlers } from "./handlers/groupChat.js";
@@ -25,19 +26,8 @@ export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
   bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 30 }));
 
-  // A Telegram reply keyboard lives in the chat until a message replaces it, so
-  // after an update everyone would keep the previous menu. The first reply each
-  // chat gets carries the current one.
-  const menuRefreshed = new Set<number>();
-  bot.api.config.use(async (prev, method, payload, signal) => {
-    const p = payload as { chat_id?: number | string; reply_markup?: unknown };
-    if ((method === "sendMessage" || method === "sendPhoto" || method === "sendDocument") && !p.reply_markup && typeof p.chat_id === "number" && p.chat_id > 0 && !menuRefreshed.has(p.chat_id)) {
-      menuRefreshed.add(p.chat_id);
-      // В режиме преподавателя меню своё: третья кнопка — «Студенты».
-      return prev(method, { ...payload, reply_markup: menuFor(deps.repo.getUser(p.chat_id)) } as typeof payload, signal);
-    }
-    return prev(method, payload, signal);
-  });
+  // Меню человека — с первым его сообщением, если поменялось (menuRefresh.ts).
+  bot.api.config.use(menuRefresher(deps.repo));
 
   bot.use(session({ initial: () => ({}) }));
 
@@ -112,7 +102,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
   bot.use(scheduleHandlers);
 
   bot.on("message:text", async (ctx) => {
-    await ctx.reply("Не понял. Нажми кнопку ниже или посмотри /help", {
+    await ctx.reply(ctx.user.menuMode === "hidden" ? "Не понял. Команды — в кнопке «Меню» слева от поля ввода, или посмотри /help" : "Не понял. Нажми кнопку ниже или посмотри /help", {
       reply_markup: menuFor(ctx.user),
     });
   });
@@ -153,6 +143,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "calendar", description: "Пары в календарь телефона (.ics)" },
     { command: "stream", description: "Режим потока: все группы курса" },
     { command: "settings", description: "Уведомления и напоминания" },
+    { command: "menu", description: "Показать кнопки меню внизу" },
     { command: "features", description: "Что умеет бот" },
     { command: "help", description: "Что умеет бот" },
   ];
