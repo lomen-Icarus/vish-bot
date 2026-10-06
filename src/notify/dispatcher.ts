@@ -3,9 +3,9 @@ import { GrammyError, InlineKeyboard, InputFile, InputMediaBuilder } from "gramm
 import type { ChangeEventRow, Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
-import { captionFits, clampHtml, esc as escapeHtml, formatDay, formatNotice, filterSubgroup, plural, type MarkedLesson } from "../schedule/format.js";
+import { captionFits, esc as escapeHtml, formatDay, formatNotice, filterSubgroup, plural, type MarkedLesson } from "../schedule/format.js";
 import { isSessionPeriod, lessonTypeLabel, positionKey, type Occurrence } from "../schedule/model.js";
-import { fmtDDMM, fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, weekdayShort, type LocalDate, type WallClock } from "../time.js";
+import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
 import { WEBINAR_URL } from "../bot/keyboards.js";
@@ -18,7 +18,8 @@ import { readFileSync } from "node:fs";
 import { isUnreachable } from "../bot/errors.js";
 import { sameSubject } from "../chat/social.js";
 import { deckFileName } from "./deckName.js";
-import { laterDates, laterText, markDay, splitByToday, todayCaption, todayText, touchesDate } from "./changes.js";
+import { changeDays, changesCaption, changesMessage, changesMessageFit, MAX_LATER_POSTERS, splitByToday } from "./changes.js";
+import { startLink } from "../bot/deeplink.js";
 
 /**
  * Тормоз массовой рассылки. Столько изменений за раз в живом расписании не
@@ -30,9 +31,6 @@ export const MASS_CHANGES_PER_GROUP = 25;
 /** Мета-ключи тормоза: «придержано с …» и «админ разрешил разослать». */
 export const CHANGES_HELD_KEY = "changes:held";
 export const CHANGES_RELEASE_KEY = "changes:release";
-/** Больше картинок дней в одном уведомлении о будущих изменениях не шлём. */
-const MAX_CHANGE_POSTERS = 4;
-
 /** Пачка изменений подозрительно большая (см. MASS_CHANGES_*). */
 export function isMassChange(rows: Array<{ groupKey: string }>): boolean {
   if (rows.length >= MASS_CHANGES_TOTAL) return true;
@@ -89,6 +87,8 @@ export class Notifier {
     private readonly adminIds: number[] = [],
     private readonly webinars: WebinarService | null = null,
     private readonly teachers: TeacherService | null = null,
+    /** Для ссылок «t.me/бот?start=…» в подписи к альбому (у альбома нет кнопок). */
+    private readonly botUsername: string | null = null,
   ) {}
 
   /**
@@ -279,7 +279,8 @@ export class Notifier {
   async send(user: User, html: string, opts: SendOptions): Promise<boolean> {
     try {
       if (opts.photo) {
-        const short = html.length <= 1000;
+        // Лимит подписи Telegram считает по видимому тексту, без разметки.
+        const short = captionFits(html);
         await this.api.sendPhoto(user.id, new InputFile(opts.photo, "schedule.png"), { caption: short ? html : undefined, parse_mode: "HTML", disable_notification: opts.silent, reply_markup: short ? opts.replyMarkup : undefined });
         if (!short) await this.api.sendMessage(user.id, html, { parse_mode: "HTML", disable_notification: true, reply_markup: opts.replyMarkup });
       } else {
@@ -441,18 +442,28 @@ export class Notifier {
   }
 
   /**
-   * Изменения одному человеку. Касающиеся сегодняшнего дня — отдельным
-   * срочным сообщением со всем днём и пометками, остальные — списком «на
-   * будущее». Каждое — текстом или картинкой, как человек выбрал. Возвращает
+   * Изменения одному человеку — всегда одним сообщением, чтобы оно не
+   * потерялось в чате: сверху «на сегодня» (весь день с пометками), следом —
+   * на будущее. Текстом — один текст с кнопками; картинкой — постер с
+   * подписью, а если дней несколько — альбом постеров с подписью (у альбома
+   * кнопок не бывает, поэтому календарь в подписи — ссылкой). Возвращает
    * изменения, которые дошли (их и помечаем как доставленные).
    */
   private async deliverChanges(user: User, group: LogicalGroup, events: ChangeEvent[], opts: ChangeDelivery): Promise<ChangeEvent[]> {
-    const { today, later } = splitByToday(events, opts.now.date);
-    const done: ChangeEvent[] = [];
-    if (today.length && (await this.sendTodayChanges(user, group, today, opts))) done.push(...today);
-    // Пояснение сверху («пока были тихие часы…») — только у первого сообщения.
-    if (later.length && (await this.sendLaterChanges(user, group, later, today.length ? { ...opts, head: "" } : opts))) done.push(...later);
-    return done;
+    const today = opts.now.date;
+    const { today: todayEvents, later } = splitByToday(events, today);
+    const wantPosters = !!this.renderer && user.format !== "text";
+    const days = changeDays(events, today, (d) => this.dayLessons(user, group, d, opts.own), wantPosters ? MAX_LATER_POSTERS : 0);
+    const todayMarked = todayEvents.length ? (days.find((d) => d.date === today)?.lessons ?? null) : null;
+    const info = this.service.weekInfo(today);
+    const full = changesMessage(group, todayMarked, later, info, opts.now, user.teacherView);
+    const text = changesMessageFit(group, todayMarked, later, info, opts.now, user.teacherView, opts.head);
+    const photos = wantPosters ? (await Promise.all(days.map((d) => this.renderChanges(user, group, d.date, d.lessons, opts.now, d.banner)))).filter((p): p is Buffer => !!p) : [];
+    if (!photos.length) return (await this.send(user, text, { kind: opts.kind, replyMarkup: opts.kb })) ? events : [];
+    const album = photos.length > 1;
+    const caption = changesCaption(group, { todayMarked, later, today, full: user.format === "both" ? full : null, head: opts.head, tail: album ? this.albumLinks(group.key, opts.own) : "" });
+    if (!album) return (await this.send(user, caption, { kind: opts.kind, replyMarkup: opts.kb, photo: photos[0] })) ? events : [];
+    return (await this.sendAlbum(user, photos, caption, { kind: opts.kind, fallback: text, kb: opts.kb })) ? events : [];
   }
 
   private dayLessons(user: User, group: LogicalGroup, date: LocalDate, own: boolean): Occurrence[] {
@@ -460,39 +471,28 @@ export class Notifier {
     return own ? filterSubgroup(all, user.subgroup) : all;
   }
 
-  /** «ИЗМЕНЕНИЯ НА СЕГОДНЯ»: весь день, затронутые пары помечены. */
-  private async sendTodayChanges(user: User, group: LogicalGroup, events: ChangeEvent[], opts: ChangeDelivery): Promise<boolean> {
-    const date = opts.now.date;
-    const marked = markDay(this.dayLessons(user, group, date, opts.own), events, date);
-    const photo = await this.renderChanges(user, group, date, marked, opts.now, { text: "ИЗМЕНЕНИЯ НА СЕГОДНЯ", tone: "urgent" });
-    const full = todayText(group, date, marked, this.service.weekInfo(date), opts.now, user.teacherView);
-    // С картинкой день уже на ней: в подписи — весь текст, если влезает и выбрано
-    // «и так, и так», иначе — только что изменилось. Одно сообщение, а не два.
-    const body = !photo ? full : user.format === "both" && captionFits(`${opts.head}${full}`) ? full : todayCaption(group, marked);
-    return this.send(user, clampHtml(`${opts.head}${body}`), { kind: opts.kind, replyMarkup: opts.kb, photo });
+  /** Кнопки уведомления ссылками — для подписи к альбому. */
+  private albumLinks(groupKey: string, own: boolean): string {
+    const ics = startLink(this.botUsername, "ics", groupKey);
+    const unwatch = own ? null : startLink(this.botUsername, "unwatch", groupKey);
+    const links = [ics ? `<a href="${ics}">📆 Файл изменений в календарь</a>` : "", unwatch ? `<a href="${unwatch}">👁 Не следить за группой</a>` : ""].filter(Boolean);
+    return links.length ? `\n\n${links.join("\n")}` : "";
   }
 
-  /** Изменения на другие дни: список по дням; картинкой — день с пометками на каждый затронутый день. */
-  private async sendLaterChanges(user: User, group: LogicalGroup, events: ChangeEvent[], opts: ChangeDelivery): Promise<boolean> {
-    const text = clampHtml(`${opts.head}${laterText(group, events, opts.now.date)}`);
-    const photos: Buffer[] = [];
-    if (this.renderer && user.format !== "text") {
-      const tomorrow = addDays(opts.now.date, 1);
-      for (const d of laterDates(events, opts.now.date).slice(0, MAX_CHANGE_POSTERS)) {
-        const marked = markDay(this.dayLessons(user, group, d, opts.own), events.filter((e) => touchesDate(e, d)), d);
-        const banner = d === tomorrow ? `ИЗМЕНЕНИЯ НА ЗАВТРА · ${fmtDDMM(d)}` : `ИЗМЕНЕНИЯ НА ${weekdayShort(d).toUpperCase()} ${fmtDDMM(d)}`;
-        const png = await this.renderChanges(user, group, d, marked, opts.now, { text: banner, tone: "info" });
-        if (png) photos.push(png);
-      }
-    }
-    if (photos.length <= 1) return this.send(user, text, { kind: opts.kind, replyMarkup: opts.kb, photo: photos[0] });
-    // Несколько дней — альбомом, а следом текст с кнопками (у альбома кнопок не бывает).
+  /** Альбом картинок с подписью — одно сообщение. Не ушёл — шлём текстом с кнопками. */
+  private async sendAlbum(user: User, photos: Buffer[], caption: string, opts: { kind: string; fallback: string; kb: InlineKeyboard }): Promise<boolean> {
     try {
-      await this.api.sendMediaGroup(user.id, photos.map((p, i) => InputMediaBuilder.photo(new InputFile(p, `changes-${i + 1}.png`))), { disable_notification: true });
+      await this.api.sendMediaGroup(
+        user.id,
+        photos.map((p, i) => InputMediaBuilder.photo(new InputFile(p, `changes-${i + 1}.png`), i === 0 ? { caption, parse_mode: "HTML" } : {})),
+      );
+      this.repo.logNotification(user.id, opts.kind, true);
+      await sleep(35);
+      return true;
     } catch (err) {
       logger.warn({ err: String(err).slice(0, 200), userId: user.id }, "changes album failed, sending text only");
+      return this.send(user, opts.fallback, { kind: opts.kind, replyMarkup: opts.kb });
     }
-    return this.send(user, text, { kind: opts.kind, replyMarkup: opts.kb });
   }
 
   /**

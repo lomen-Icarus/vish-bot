@@ -5,7 +5,7 @@
 import type { LogicalGroup } from "../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../schedule/model.js";
 import type { WeekInfo } from "../schedule/service.js";
-import { filterSubgroup, isActiveLesson, posterTeacher, type MarkedLesson, type TeacherView } from "../schedule/format.js";
+import { filterSubgroup, isActiveLesson, markGone, posterTeacher, type MarkedLesson, type TeacherView } from "../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallClock } from "../time.js";
 import { FONT, MARK_STYLE, PAD, W, changeBanner, h, loadFonts, markBadge, pluralPairs, text, toPng as corePng, type El } from "./core.js";
 
@@ -140,7 +140,7 @@ function header(title: string, subtitle: string, group: LogicalGroup, accent: st
 
 function lessonRow(o: MarkedLesson, opts: { ongoing: boolean; variantCount: number; teacherView?: TeacherView }): El {
   const color = typeColor(o.type);
-  const cancelled = o.mark?.kind === "cancelled";
+  const cancelled = markGone(o.mark);
   const moved = o.status === "moved" || cancelled;
   const markColor = o.mark ? MARK_STYLE[o.mark.kind].color : null;
   const time = o.start != null && o.end != null ? [fmtHHMM(o.start), fmtHHMM(o.end)] : ["—", ""];
@@ -152,7 +152,7 @@ function lessonRow(o: MarkedLesson, opts: { ongoing: boolean; variantCount: numb
   if (o.subgroup) meta.push(`${o.subgroup} подгруппа`);
   const badges: Array<{ label: string; color: string }> = [];
   if (o.status === "moved" && !cancelled && o.movedTo) badges.push({ label: `перенесена на ${o.movedTo.date.slice(8, 10)}.${o.movedTo.date.slice(5, 7)}${o.movedTo.slot ? `, ${o.movedTo.slot} пара` : ""}`, color: "#fb7185" });
-  if (o.movedFrom) badges.push({ label: `перенос с ${o.movedFrom.date.slice(8, 10)}.${o.movedFrom.date.slice(5, 7)}`, color: "#fbbf24" });
+  if (o.movedFrom && o.mark?.kind !== "added") badges.push({ label: `перенос с ${o.movedFrom.date.slice(8, 10)}.${o.movedFrom.date.slice(5, 7)}`, color: "#fbbf24" });
   if (o.substituted) badges.push({ label: "замена", color: "#f472b6" });
   if (o.isDistance) badges.push({ label: "ДОТ", color: "#38bdf8" });
   if (opts.ongoing) badges.push({ label: "сейчас", color: "#4ade80" });

@@ -1,10 +1,11 @@
-import { Composer, InlineKeyboard } from "grammy";
+import { Composer, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext } from "../context.js";
 import { BTN, formatPicker, groupPicker, menuFor, onboardingKeyboard } from "../keyboards.js";
 import { groupRequiredText, needGroup, sendDay, sendWeek } from "../views.js";
-import { addDays, fmtDDMM, isLocalDate, mondayOf, parseDayWord, parseRuDate, todayMsk, type LocalDate } from "../../time.js";
+import { addDays, fmtDDMM, isLocalDate, mondayOf, parseDayWord, parseRuDate, todayMsk, wallClock, type LocalDate } from "../../time.js";
 import { showOwnTeacher } from "../teacherMode.js";
-import { clampHtml, esc, formatChangeEvent } from "../../schedule/format.js";
+import { captionFits, clampHtml, esc, filterSubgroup, formatChangeEvent } from "../../schedule/format.js";
+import { changeDays } from "../../notify/changes.js";
 import type { ChangeEvent } from "../../schedule/diff.js";
 import { findGroup } from "../../schedule/groups.js";
 import { logger } from "../../logger.js";
@@ -267,7 +268,7 @@ scheduleHandlers.hears(/^\s*(оз\s*)?(виш)?[\s-]*\d{1,2}[\s-]+\d{2}\s*(\(.*\
 });
 
 // ---- "Изменения": announcements board + still-relevant changes ----
-export function changesText(ctx: BotContext): { text: string; hasEvents: boolean } {
+export function changesText(ctx: BotContext): { text: string; hasEvents: boolean; events: ChangeEvent[] } {
   const group = needGroup(ctx);
   const parts: string[] = [];
   const board = ctx.deps.repo.activeAnnouncements();
@@ -283,34 +284,69 @@ export function changesText(ctx: BotContext): { text: string; hasEvents: boolean
     // У преподавателя нет «своей группы», за изменениями которой следить: его пары
     // идут у разных групп, и их изменения видны прямо в расписании этих групп.
     parts.push("🔔 <b>Изменения в расписании</b>\n\nВ режиме преподавателя изменения видны в расписании групп: открой «👥 Студенты» и выбери группу — переносы, замены и отмены там уже учтены.");
-    return { text: parts.join("\n\n"), hasEvents: false };
+    return { text: parts.join("\n\n"), hasEvents: false, events: [] };
   }
   if (!group) {
     parts.push(groupRequiredText());
-    return { text: parts.join("\n\n"), hasEvents: false };
+    return { text: parts.join("\n\n"), hasEvents: false, events: [] };
   }
   const today = todayMsk();
   const events = ctx.deps.repo.activeEvents(group.key, today, 30);
   if (!events.length) {
     parts.push(`🔔 <b>Изменения в расписании ${esc(group.title)}</b>\n\nАктуальных изменений нет: бот проверяет портал каждые несколько минут и пришлёт, как только что-то поменяется.`);
-    return { text: parts.join("\n\n"), hasEvents: false };
+    return { text: parts.join("\n\n"), hasEvents: false, events: [] };
   }
   const byDate = new Map<string, string[]>();
+  const list: ChangeEvent[] = [];
   for (const e of events) {
     const p = e.payload as { before?: ChangeEvent["before"]; after?: ChangeEvent["after"]; fields?: string[] };
     const ev: ChangeEvent = { kind: e.kind as ChangeEvent["kind"], groupKey: e.groupKey, date: e.date, period: e.period, before: p.before, after: p.after, fields: p.fields };
+    list.push(ev);
     byDate.set(e.date, [...(byDate.get(e.date) ?? []), formatChangeEvent(ev)]);
   }
   const blocks = [...byDate.entries()].map(([date, lines]) => `<b>${fmtDDMM(date)}</b>\n${lines.join("\n")}`);
   parts.push(`🔔 <b>Изменения в расписании ${esc(group.title)}</b>\n\n${blocks.join("\n\n")}`);
-  return { text: parts.join("\n\n"), hasEvents: true };
+  return { text: parts.join("\n\n"), hasEvents: true, events: list };
+}
+
+/**
+ * Картинки дней с изменениями — как в уведомлении: сегодня (красная полоса)
+ * первой, потом ближайшие дни (синяя). Только если человек выбрал картинку.
+ */
+async function changePosters(ctx: BotContext, events: ChangeEvent[]): Promise<Buffer[]> {
+  const renderer = ctx.deps.renderer;
+  const group = needGroup(ctx);
+  if (!renderer || !group || ctx.user.format === "text" || !events.length) return [];
+  const now = wallClock();
+  const days = changeDays(events, now.date, (d) => filterSubgroup(ctx.deps.service.lessonsOn(group, d), ctx.user.subgroup));
+  const rendered = await Promise.allSettled(
+    days.map((d) => renderer.renderDay({ group, date: d.date, lessons: d.lessons, weekInfo: ctx.deps.service.weekInfo(d.date), today: now.date, now, theme: ctx.user.posterTheme ?? undefined, teacherView: ctx.user.teacherView, banner: d.banner })),
+  );
+  for (const r of rendered) if (r.status === "rejected") logger.warn({ err: String(r.reason).slice(0, 200) }, "changes poster render failed");
+  return rendered.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
 }
 
 async function showChanges(ctx: BotContext): Promise<void> {
-  const { text, hasEvents } = changesText(ctx);
+  const { text, hasEvents, events } = changesText(ctx);
   const kb = new InlineKeyboard();
   if (hasEvents && ctx.user.groupKey) kb.text("📆 Файл изменений в календарь", `cics:${ctx.user.groupKey}`);
-  await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: hasEvents ? kb : undefined });
+  const replyMarkup = hasEvents ? kb : undefined;
+  const photos = await changePosters(ctx, events);
+  // Один день и короткий текст — одним сообщением: постер с подписью и кнопкой.
+  if (photos.length === 1 && captionFits(text)) {
+    await ctx.replyWithPhoto(new InputFile(photos[0]!, "changes.png"), { caption: text, parse_mode: "HTML", reply_markup: replyMarkup });
+    return;
+  }
+  // Несколько дней — альбомом, следом текст с кнопкой (у альбома кнопок не бывает).
+  if (photos.length) {
+    try {
+      if (photos.length === 1) await ctx.replyWithPhoto(new InputFile(photos[0]!, "changes.png"));
+      else await ctx.replyWithMediaGroup(photos.map((p, i) => InputMediaBuilder.photo(new InputFile(p, `changes-${i + 1}.png`))));
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 200) }, "changes posters failed, text only");
+    }
+  }
+  await ctx.reply(clampHtml(text), { parse_mode: "HTML", reply_markup: replyMarkup });
 }
 scheduleHandlers.command("changes", showChanges);
 scheduleHandlers.hears(BTN.changes, showChanges);
