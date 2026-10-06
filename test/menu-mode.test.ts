@@ -3,23 +3,25 @@ import { Api, Composer, Context } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
-import { mainKeyboard, menuFor, menuStamp, streamKeyboard } from "../src/bot/keyboards.js";
+import { isMenuText, mainKeyboard, menuFor, menuStamp, streamKeyboard } from "../src/bot/keyboards.js";
 import { menuRefresher } from "../src/bot/menuRefresh.js";
 import { settingsHandlers } from "../src/bot/handlers/settings.js";
 import type { BotContext, Deps } from "../src/bot/context.js";
 
 const plain = (kb: unknown): Record<string, unknown> => JSON.parse(JSON.stringify(kb)) as Record<string, unknown>;
 
-describe("нижнее меню: сворачивается, всегда на экране, скрыто", () => {
-  it("по умолчанию без is_persistent — на телефоне его сворачивает значок ▦; «всегда» — с ним; «скрыто» — убрать", () => {
+describe("нижнее меню: сворачивается, сворачивается после нажатия, скрыто", () => {
+  it("по умолчанию без is_persistent — на телефоне его сворачивает значок ▦; «после нажатия» — one_time; «скрыто» — убрать", () => {
     expect(plain(mainKeyboard()).is_persistent).toBeUndefined();
+    expect(plain(mainKeyboard()).one_time_keyboard).toBeUndefined();
     expect(plain(mainKeyboard()).resize_keyboard).toBe(true);
-    expect(plain(menuFor({ teacherMode: false, menuMode: "always" })).is_persistent).toBe(true);
+    expect(plain(menuFor({ teacherMode: false, menuMode: "once" })).one_time_keyboard).toBe(true);
+    expect(plain(menuFor({ teacherMode: false, menuMode: "once" })).is_persistent).toBeUndefined();
     expect(menuFor({ teacherMode: true, menuMode: "hidden" })).toEqual({ remove_keyboard: true });
     expect(JSON.stringify(menuFor({ teacherMode: true, menuMode: "collapsible" }))).toContain("Студенты");
     // Меню потока открывают сами — оно приходит и тем, кто скрыл основное.
     expect(plain(streamKeyboard({ mode: "hidden" })).keyboard).toBeTruthy();
-    expect(plain(streamKeyboard({ mode: "always" })).is_persistent).toBe(true);
+    expect(plain(streamKeyboard({ mode: "once" })).one_time_keyboard).toBe(true);
   });
 
   it("режим хранится у человека; «сворачивается» — значение по умолчанию (NULL)", () => {
@@ -29,6 +31,27 @@ describe("нижнее меню: сворачивается, всегда на �
     expect(repo.getUser(1)!.menuMode).toBe("hidden");
     repo.updateUser(1, { menuMode: "collapsible" });
     expect(repo.getUser(1)!.menuMode).toBe("collapsible");
+  });
+
+  it("кнопка «👨‍🏫 Преподы»; старая подпись «👨‍🏫 Преподаватели» у тех, кому меню ещё не обновилось, тоже работает", () => {
+    expect(JSON.stringify(mainKeyboard())).toContain("👨‍🏫 Преподы");
+    expect(JSON.stringify(mainKeyboard())).not.toContain("Преподаватели");
+    expect(isMenuText("👨‍🏫 Преподаватели")).toBe(true);
+  });
+
+  it("заблокировал бота или вернулся после блокировки — отпечаток меню забыт: меню придёт снова", () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    repo.touchUser(1, "u", "U");
+    repo.updateUser(1, { menuSent: "abc" });
+    repo.updateUser(1, { blocked: true });
+    expect(repo.getUser(1)!.menuSent).toBeNull();
+    repo.updateUser(1, { menuSent: "abc" });
+    repo.touchUser(1, "u", "U");
+    expect(repo.getUser(1)!.menuSent).toBeNull();
+    // Обычный заход (не после блокировки) отпечаток не трогает.
+    repo.updateUser(1, { menuSent: "abc" });
+    repo.touchUser(1, "u", "U");
+    expect(repo.getUser(1)!.menuSent).toBe("abc");
   });
 });
 
@@ -46,6 +69,19 @@ describe("меню приходит заново, только когда пом
     const send = (t: ReturnType<typeof menuRefresher>, payload: Record<string, unknown> = {}) => t(prev, "sendMessage", { chat_id: 7, text: "x", ...payload } as never);
     return { repo, calls, send, failNext: (v: boolean) => (fail = v) };
   }
+
+  it("кнопки под сообщением — база не нужна; сбой записи отпечатка не делает отправку неудачной", async () => {
+    const { repo, calls, send } = setup();
+    let reads = 0;
+    const spy = { getUser: (id: number) => (reads++, repo.getUser(id)), updateUser: () => {
+      throw new Error("database is locked");
+    } };
+    const t = menuRefresher(spy as never);
+    await send(t, { reply_markup: { inline_keyboard: [[{ text: "a", callback_data: "a" }]] } });
+    expect(reads).toBe(0);
+    await expect(send(t)).resolves.toBeTruthy();
+    expect(calls.at(-1)!.payload.reply_markup).toBeTruthy();
+  });
 
   it("одно сообщение с меню — и всё; после перезапуска бота свёрнутое меню не раскрывается", async () => {
     const { repo, calls, send } = setup();
@@ -79,12 +115,12 @@ describe("меню приходит заново, только когда пом
     expect(calls[2]!.payload.reply_markup).toBeUndefined();
     await send(t, { reply_markup: { inline_keyboard: [[{ text: "a", callback_data: "a" }]] } });
     expect(JSON.stringify(calls[3]!.payload.reply_markup)).toContain("inline_keyboard");
-    repo.updateUser(7, { menuMode: "always" });
+    repo.updateUser(7, { menuMode: "once" });
     failNext(true);
     await expect(send(t)).rejects.toThrow("network");
     failNext(false);
     await send(t);
-    expect(plain(calls.at(-1)!.payload.reply_markup).is_persistent).toBe(true);
+    expect(plain(calls.at(-1)!.payload.reply_markup).one_time_keyboard).toBe(true);
     expect(repo.getUser(7)!.menuSent).toBe(menuStamp(menuFor(repo.getUser(7))));
   });
 });
@@ -99,7 +135,7 @@ async function run(update: Update, repo: Repo): Promise<Array<{ method: string; 
     return { ok: true, result: { message_id: 1, date: 0, chat: { id: 7, type: "private" } } as never };
   });
   const ctx = new Context(update, api, ME) as BotContext;
-  ctx.deps = { repo, config: {}, service: { group: () => null } } as unknown as Deps;
+  ctx.deps = { repo, config: { POSTER_THEME: "midnight" }, service: { group: () => null }, renderer: null, known: null, teachers: null } as unknown as Deps;
   ctx.user = repo.getUser(7)!;
   ctx.isAdmin = false;
   await new Composer<BotContext>().use(settingsHandlers).middleware()(ctx, async () => undefined);
@@ -113,9 +149,12 @@ describe("⚙️ Нижнее меню и /menu", () => {
   it("выбор «скрыто» — меню убирается сразу; /menu возвращает кнопки («сворачивается»)", async () => {
     const repo = new Repo(openDatabase(":memory:"));
     repo.touchUser(7, "u", "U");
+    // Выбор открывается в том же сообщении настроек.
     const screen = await run(cb("s:menu"), repo);
-    expect(String(screen.find((c) => c.method === "sendMessage")!.payload.text)).toContain("✅ <b>сворачивается</b>");
+    expect(String(screen.find((c) => c.method === "editMessageText")!.payload.text)).toContain("✅ <b>сворачивается</b>");
     const hide = await run(cb("menu:hidden"), repo);
+    // …и после выбора оно снова — настройки, уже с новой подписью.
+    expect(JSON.stringify(hide.find((c) => c.method === "editMessageText")!.payload.reply_markup)).toContain("⌨️ Нижнее меню: скрыто");
     expect(repo.getUser(7)!.menuMode).toBe("hidden");
     const sent = hide.find((c) => c.method === "sendMessage")!;
     expect(sent.payload.reply_markup).toEqual({ remove_keyboard: true });
@@ -125,11 +164,29 @@ describe("⚙️ Нижнее меню и /menu", () => {
     expect(plain(back.find((c) => c.method === "sendMessage")!.payload.reply_markup).keyboard).toBeTruthy();
   });
 
-  it("«всегда на экране» — меню с is_persistent, как раньше", async () => {
+  it("«сворачивать после нажатия» — меню с one_time_keyboard; тот же режим повторно — без нового сообщения", async () => {
     const repo = new Repo(openDatabase(":memory:"));
     repo.touchUser(7, "u", "U");
-    const calls = await run(cb("menu:always"), repo);
-    expect(repo.getUser(7)!.menuMode).toBe("always");
-    expect(plain(calls.find((c) => c.method === "sendMessage")!.payload.reply_markup).is_persistent).toBe(true);
+    const calls = await run(cb("menu:once"), repo);
+    expect(repo.getUser(7)!.menuMode).toBe("once");
+    expect(plain(calls.find((c) => c.method === "sendMessage")!.payload.reply_markup).one_time_keyboard).toBe(true);
+    const again = await run(cb("menu:once"), repo);
+    expect(again.filter((c) => c.method === "sendMessage")).toHaveLength(0);
+  });
+
+  it("недолго живший режим «всегда на экране» читается как «сворачивается»", () => {
+    const db = openDatabase(":memory:");
+    const repo = new Repo(db);
+    repo.touchUser(7, "u", "U");
+    (db as unknown as { prepare: (s: string) => { run: (...a: unknown[]) => void } }).prepare("UPDATE users SET menu_mode = 'always' WHERE id = 7").run();
+    expect(repo.getUser(7)!.menuMode).toBe("collapsible");
+  });
+});
+
+describe("тексты при скрытом меню называют команды", () => {
+  it("btnRef: кнопка или команда", async () => {
+    const { btnRef, BTN } = await import("../src/bot/keyboards.js");
+    expect(btnRef({ menuMode: "collapsible" }, BTN.today, "/today")).toBe("«📅 Сегодня»");
+    expect(btnRef({ menuMode: "hidden" }, BTN.today, "/today")).toBe("/today");
   });
 });

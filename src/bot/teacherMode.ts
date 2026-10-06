@@ -15,7 +15,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext, Deps } from "./context.js";
 import type { User } from "../db/repo.js";
-import { dayNav, menuFor, onboardingKeyboard, weekNav } from "./keyboards.js";
+import { BTN, btnRef, dayNav, menuFor, onboardingKeyboard, weekNav } from "./keyboards.js";
 import { esc } from "../schedule/format.js";
 import { samePerson } from "../text/match.js";
 import { mondayOf, todayMsk, type LocalDate } from "../time.js";
@@ -88,12 +88,19 @@ async function enable(ctx: BotContext, fio: string, ref: PersonRef | null): Prom
   await announce(ctx, fio, ref);
 }
 
+/** «📅 Сегодня», «📅 Завтра», «🗓 Неделя» — или команды, если нижнее меню скрыто. */
+function dayRefs(ctx: BotContext): string {
+  return [btnRef(ctx.user, BTN.today, "/today"), btnRef(ctx.user, BTN.tomorrow, "/tomorrow"), btnRef(ctx.user, BTN.week, "/week")].join(", ");
+}
+
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
 /** Сообщение «режим включён» после /prepod. */
 async function announce(ctx: BotContext, fio: string, ref: PersonRef | null): Promise<void> {
   const found = ref ? "" : "\n\n<i>В справочнике портала тебя найти не получилось, поэтому расписание пока пустое. Напиши админу — он проверит, как ты записан на портале.</i>";
   await ctx.reply(
-    `👨‍🏫 <b>Режим преподавателя</b> — ${esc(fio)}\n\n«📅 Сегодня», «📅 Завтра», «🗓 Неделя» — твои пары. «👥 Студенты» — расписание любой группы. Напоминания и календарь теперь тоже по твоему расписанию.\n\nВыключить: /prepod${found}`,
-    { parse_mode: "HTML", reply_markup: menuFor({ teacherMode: true, menuMode: ctx.user.menuMode }) },
+    `👨‍🏫 <b>Режим преподавателя</b> — ${esc(fio)}\n\n${dayRefs(ctx)} — твои пары. ${cap(btnRef(ctx.user, BTN.students, "/groups"))} — расписание любой группы. Напоминания и календарь теперь тоже по твоему расписанию.\n\nВыключить: /prepod${found}`,
+    { parse_mode: "HTML", reply_markup: menuFor(ctx.user) },
   );
   if (ref) await showOwnTeacher(ctx, todayMsk());
 }
@@ -201,8 +208,8 @@ async function welcome(ctx: BotContext, fio: string, ref: PersonRef | null): Pro
   const name = nameAndPatronymic(fio);
   const missing = ref ? "" : "\n\n<i>В справочнике портала вас найти не получилось, поэтому расписание пока пустое. Мы проверим, как вы записаны на портале.</i>";
   await ctx.reply(
-    `Здравствуйте, ${esc(name)}! Рад вас видеть 👋\n\nЯ вас узнал, поэтому вместо группы здесь ваше собственное расписание: «📅 Сегодня», «📅 Завтра», «🗓 Неделя» — ваши пары, «👥 Студенты» — расписание любой группы. Спросить что угодно — «🔍 ИИ поисковик».\n\nВыключить этот режим: /prepod${missing}`,
-    { parse_mode: "HTML", reply_markup: menuFor({ teacherMode: true, menuMode: ctx.user.menuMode }) },
+    `Здравствуйте, ${esc(name)}! Рад вас видеть 👋\n\nЯ вас узнал, поэтому вместо группы здесь ваше собственное расписание: ${dayRefs(ctx)} — ваши пары, ${btnRef(ctx.user, BTN.students, "/groups")} — расписание любой группы. Спросить что угодно — ${btnRef(ctx.user, BTN.search, "/search")}.\n\nВыключить этот режим: /prepod${missing}`,
+    { parse_mode: "HTML", reply_markup: menuFor(ctx.user) },
   );
   if (ref) await showOwnTeacher(ctx, todayMsk());
   await ctx.reply(
