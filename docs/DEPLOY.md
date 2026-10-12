@@ -82,7 +82,11 @@
    - `RECORDER_SSH_KEY` — всё содержимое файла `vish-deploy` (приватный ключ целиком, с `-----BEGIN…` и `-----END…`);
    - по желанию: `RECORDER_SSH_USER` (по умолчанию `root`), `RECORDER_SSH_PORT` (по умолчанию `22`), `RECORDER_SSH_KNOWN_HOSTS` (строка из `ssh-keyscan <IP>`; без неё отпечаток сервера берётся при каждом деплое).
 4. Запустить Actions → «CI & Deploy» → Run workflow (или дождаться следующего мёржа). Шаг «Deploy recorder to the VPS» покажет последние строки лога записывалки; упавший контейнер делает шаг красным.
-5. Руками на VPS: `docker logs -f vish-recorder` — лог, `docker restart vish-recorder` — перезапуск (после правки `.env`), слайды и кадры — в `/opt/vish-recorder/data`.
+5. Руками на VPS: `docker logs -f vish-recorder` — лог, `docker restart vish-recorder` — перезапуск, слайды и кадры — в `/opt/vish-recorder/data`. **После правки `.env` restart не помогает**: Docker читает `--env-file` только при создании контейнера. Пересоздать (записи на диске не пропадут):
+   ```
+   docker rm -f vish-recorder && docker run -d --name vish-recorder --restart unless-stopped --init --env-file /opt/vish-recorder/.env -v /opt/vish-recorder/data:/app/data --log-opt max-size=10m --log-opt max-file=3 vish-recorder:latest
+   ```
+   Или просто запустить деплой (Actions → «CI & Deploy» → Run workflow) — он пересоздаёт контейнер сам.
 
 **Вариант Б — сервер в панели Pterodactyl.** Обычный Node-egg не годится: Chromium нужны системные библиотеки, а `npx playwright install --with-deps` ставит их через `apt` от root, которого в контейнере панели нет; к тому же yolks `nodejs_21` — это Node 21 (записывалке нужен ≥ 22.19), а `npx playwright` тянет чужую версию, не совпадающую с закреплённым `playwright-core`. Поэтому для панели есть свой образ — `ghcr.io/lomen-icarus/vish-recorder:latest` (`recorder/Dockerfile.ptero`: образ Playwright с Chromium и Node 24 плюс точка входа под Wings; кода в нём нет, код заливает workflow). Его собирает workflow «Recorder image» при изменении Dockerfile, точки входа или версии `playwright-core` (и вручную: Actions → Recorder image → Run workflow). Настройка:
 

@@ -3,7 +3,7 @@
  * health probe. Plain HTTP is enough: iOS/macOS Calendar and Google Calendar
  * subscribe to http:// feeds, so the hosting's open port and domain suffice.
  */
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -56,21 +56,21 @@ const MAX_PARTS = Math.ceil(MAX_DECK_BYTES / (512 * 1024));
 const STALE_PARTS_MS = 24 * 60 * 60 * 1000;
 const UPLOAD_ID = /^[a-f0-9]{16,64}$/;
 
-/** Читает тело запроса целиком, с жёстким потолком по размеру. */
+/**
+ * Тело запроса не больше limit. Лишнее дочитываем впустую, а не рвём
+ * соединение: оборванное nginx хостинга отдаёт записывалке как 502, и она
+ * не понимает, что файл просто велик, — с 413 понимает.
+ */
 function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
-      if (size > limit) {
-        reject(new Error("too large"));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
+      if (size <= limit) chunks.push(chunk);
+      else chunks.length = 0;
     });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("end", () => (size > limit ? reject(new Error("too large")) : resolve(Buffer.concat(chunks))));
     req.on("error", reject);
   });
 }
@@ -120,7 +120,9 @@ export function createHttpServer(deps: HttpDeps): Server {
     mkdirSync(dir, { recursive: true });
     // В один день по одному предмету бывает две пары у разных потоков —
     // без времени в имени вторая затирала бы первую.
-    const stamp = new Date().toISOString().slice(11, 16).replace(":", "");
+    // Части одной большой записи приходят в одну минуту: секунды и случайный
+    // хвост, чтобы вторая часть не затёрла первую.
+    const stamp = `${new Date().toISOString().slice(11, 19).replace(/:/g, "")}-${randomBytes(2).toString("hex")}`;
     const safe = `${meta.date}-${stamp}-${String(meta.subject).replace(/[^\p{L}\p{N} .-]/gu, "").trim().slice(0, 60) || "вебинар"}.pdf`.replace(/[/\\]/g, "-");
     const file = path.join(dir, safe);
     writeFileSync(file, body);

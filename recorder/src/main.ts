@@ -12,7 +12,7 @@ import path from "node:path";
 import { loadConfig, loadDotEnv, type RecorderConfig } from "./config.js";
 import { joinWithProfiles, Portal, parseWebinarRows, type WebinarRow } from "./portal.js";
 import { captureWebinar } from "./capture.js";
-import { buildPdf, deckFileName, deliver, retryPending, savePending, type DeckMeta } from "./deliver.js";
+import { buildPdf, deckFileName, deliverDeck, retryPending, type DeckMeta } from "./deliver.js";
 import { deckBaseName, keyOf, mskNow, planRecording, profileSummary, type RecordState } from "./plan.js";
 import { log } from "./log.js";
 
@@ -71,10 +71,8 @@ async function recordOne(cfg: RecorderConfig, portal: Portal, date: string, row:
   if (!result.slides.length) return result.ended ? "done" : "retry";
   const pdfPath = path.join(cfg.outDir, deckFileName(meta));
   const pdf = await buildPdf(result.slides.map((s) => s.file), pdfPath, meta);
-  if (!(await deliver({ url: cfg.botUrl, token: cfg.botToken, pdf, meta, slides: result.slides.length }))) {
-    // Бот перезапускался или сеть моргнула — PDF не теряем, отправим позже.
-    savePending(pdfPath, meta, result.slides.length);
-  }
+  // Бот перезапускался или сеть моргнула — непринятое остаётся в очереди, отправим позже.
+  await deliverDeck({ url: cfg.botUrl, token: cfg.botToken, pdfPath, pdf, meta, slides: result.slides.length });
   return "done";
 }
 
