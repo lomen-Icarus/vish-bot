@@ -49,17 +49,31 @@ async function postWithRetry(url: string, headers: Record<string, string>, body:
   return last;
 }
 
+/**
+ * Адрес приёма у бота — …/slides. Забыли путь (BOT_SLIDES_URL=https://домен) —
+ * бот отвечал 405 на каждую отправку, и записи неделю копились в очереди.
+ */
+export function slidesEndpoint(url: string): string {
+  const trimmed = url.replace(/\/+$/, "");
+  try {
+    if (new URL(trimmed).pathname === "/") return `${trimmed}/slides`;
+  } catch {
+    /* не URL — отдадим как есть, бот или fetch скажут, что не так */
+  }
+  return trimmed;
+}
+
 /** Отдать PDF боту. true — бот принял. */
 export async function uploadDeck(opts: UploadOptions): Promise<boolean> {
   const partBytes = opts.partBytes ?? PART_BYTES;
   const delay = opts.retryDelayMs ?? 2000;
-  const base = opts.url.replace(/\/+$/, "");
+  const base = slidesEndpoint(opts.url);
   const auth = { Authorization: `Bearer ${opts.token}` };
   const whole = await postWithRetry(base, { ...auth, "Content-Type": "application/pdf", "X-Slides-Meta": opts.meta }, opts.pdf, delay);
   if (whole.status >= 200 && whole.status < 300) return true;
   // 413 на маленьком PDF кусками не лечится; на большом — это лимит прокси.
   if (whole.status !== 413 || opts.pdf.length <= partBytes) {
-    log.warn({ status: whole.status, body: whole.text }, "бот не принял слайды");
+    log.warn({ status: whole.status, body: whole.text, ...(whole.status === 405 ? { hint: "BOT_SLIDES_URL должен вести на …/slides" } : {}) }, "бот не принял слайды");
     return false;
   }
   log.info({ bytes: opts.pdf.length }, "прокси не пропустил PDF целиком (413) — отправляю кусками");
