@@ -173,7 +173,7 @@ export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDat
     p = null;
   }
   if (!p) {
-    await ctx.reply(ref.kind === "student" ? "Человек не найден — база обновилась. Поищи заново." : "Преподаватель не найден, поищи заново: " + BTN.teachers);
+    await ctx.reply(ref.kind === "student" ? "Человек не найден — база обновилась. Поищи заново." : "Преподаватель не найден, поищи заново: «🔍 Найти → 👨‍🏫 Преподы»");
     return false;
   }
   const view = mode === "day" ? await personDayView(ctx.deps, p, date, ctx.user) : await personWeekView(ctx.deps, p, date, ctx.user);

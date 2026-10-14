@@ -4,7 +4,8 @@ import type { BotContext, Deps } from "./context.js";
 import { scheduleHandlers } from "./handlers/schedule.js";
 import { settingsHandlers } from "./handlers/settings.js";
 import { adminHandlers } from "./handlers/admin.js";
-import { miscHandlers } from "./handlers/misc.js";
+import { freeTextSearch, miscHandlers } from "./handlers/misc.js";
+import { hubHandlers } from "./handlers/hub.js";
 import { askHandlers } from "./handlers/ask.js";
 import { teacherHandlers } from "./handlers/teachers.js";
 import { streamHandlers } from "./handlers/stream.js";
@@ -14,7 +15,8 @@ import { sourceHandlers } from "./handlers/sources.js";
 import { poiskHandlers } from "./handlers/poisk.js";
 import { peopleHandlers } from "./people.js";
 import { logger } from "../logger.js";
-import { menuFor, menuHint } from "./keyboards.js";
+import { isMenuText, menuFor, menuHint } from "./keyboards.js";
+import { todayMsk } from "../time.js";
 import { menuRefresher } from "./menuRefresh.js";
 import { teacherModeHandlers } from "./teacherMode.js";
 import { subjectHandlers } from "./handlers/subjects.js";
@@ -78,6 +80,24 @@ export function createBot(deps: Deps): Bot<BotContext> {
     await next();
   });
 
+  // Счётчики нажатий: кнопка меню, команда или кнопка под сообщением — по
+  // одной строке на день, без id людей. По ним видно, что реально нужно.
+  bot.use(async (ctx, next) => {
+    try {
+      const key = ctx.callbackQuery?.data
+        ? `cb:${ctx.callbackQuery.data.split(":")[0]}`
+        : ctx.msg?.text?.startsWith("/")
+          ? `cmd:${ctx.msg.text.split(/[\s@]/)[0]}`
+          : isMenuText(ctx.msg?.text)
+            ? `btn:${ctx.msg!.text!.trim()}`
+            : null;
+      if (key && ctx.chat?.type === "private") deps.repo.bumpCounter(todayMsk(), key);
+    } catch (err) {
+      logger.debug({ err: String(err) }, "counter not saved");
+    }
+    await next();
+  });
+
   bot.use(adminHandlers);
   bot.use(chatAdminHandlers);
   // Режим преподавателя: только команда /prepod, кнопок нет.
@@ -85,6 +105,9 @@ export function createBot(deps: Deps): Bot<BotContext> {
   // Пасхалка: секретная /ershov (ни в одном меню её нет).
   bot.use(easterHandlers);
   bot.use(sourceHandlers);
+  // «🔍 Найти», «☰ Ещё», «🏛 Жалоба»: до misc — обращение в Министерство
+  // Жалоб может быть фото или документом, не только текстом.
+  bot.use(hubHandlers);
   bot.use(miscHandlers);
   bot.use(askHandlers);
   // Карточка человека, кнопки под ней и ввод фамилии — общие для преподавателей
@@ -102,7 +125,10 @@ export function createBot(deps: Deps): Bot<BotContext> {
   bot.use(scheduleHandlers);
 
   bot.on("message:text", async (ctx) => {
-    await ctx.reply(`Не понял. ${ctx.user.menuMode === "hidden" ? `${menuHint(ctx.user)}.` : "Нажми кнопку ниже."} Подсказки — /help`, {
+    // Незнакомая команда — подсказка; любой другой текст — поиск по своей базе
+    // (группа, преподаватель, предмет), без ИИ: см. freeTextSearch.
+    if (!ctx.msg.text.startsWith("/")) return freeTextSearch(ctx, ctx.msg.text);
+    await ctx.reply(`Не знаю такой команды. ${ctx.user.menuMode === "hidden" ? `${menuHint(ctx.user)}.` : "Нажми кнопку ниже."} Подсказки — /help`, {
       reply_markup: menuFor(ctx.user),
     });
   });
@@ -148,6 +174,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "help", description: "Что умеет бот" },
   ];
   if (deps.ask) common.push({ command: "ask", description: "Спросить про расписание своими словами" });
+  common.push({ command: "support", description: "Министерство Жалоб: написать админу" });
   common.push({ command: "suggest", description: "Отправить новость медиа-ВИШ" });
   common.push({ command: "soon", description: "Удалить мои данные и начать заново" });
   if (deps.config.POISK) common.push({ command: "poisk", description: "Где студент: глобальный поиск по ФИО" });

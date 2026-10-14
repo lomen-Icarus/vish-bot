@@ -45,7 +45,7 @@ function alarmKeyboard(prefix: string): InlineKeyboard {
   return new InlineKeyboard().text("Без напоминаний", `${prefix}:0`).row().text("⏰ за 15 мин", `${prefix}:15`).text("⏰ за 30 мин", `${prefix}:30`).text("⏰ за 60 мин", `${prefix}:60`);
 }
 
-async function offer(ctx: BotContext): Promise<void> {
+export async function offerCalendar(ctx: BotContext): Promise<void> {
   const group = needGroup(ctx);
   if (!group && !ctx.user.teacherMode) return void (await ctx.reply(groupRequiredText()));
   const lines = ["<b>📆 Пары в календарь телефона</b>", ""];
@@ -57,11 +57,11 @@ async function offer(ctx: BotContext): Promise<void> {
   await ctx.reply(lines.join("\n"), { parse_mode: "HTML", reply_markup: calendarKeyboard(ctx) });
 }
 
-calendarHandlers.command("calendar", offer);
-calendarHandlers.hears(BTN.calendar, offer);
+calendarHandlers.command("calendar", offerCalendar);
+calendarHandlers.hears(BTN.calendar, offerCalendar);
 calendarHandlers.callbackQuery("ics:menu", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await offer(ctx);
+  await offerCalendar(ctx);
 });
 
 // ---- one-off file ----

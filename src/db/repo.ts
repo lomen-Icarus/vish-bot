@@ -939,6 +939,9 @@ export class Repo {
         // chat_usage остаётся по той же причине, что ai_usage; реплики — нет.
         "DELETE FROM chat_log WHERE user_id = ?",
         "DELETE FROM news_complaints WHERE user_id = ?",
+        // Обращения — чтобы ответ на старое не нашёл человека; блок от спама
+        // (support_blocks) остаётся, как ai_usage.
+        "DELETE FROM support_tickets WHERE user_id = ?",
         "DELETE FROM users WHERE id = ?",
       ]) {
         this.db.prepare(sql).run(userId);
@@ -1510,5 +1513,39 @@ export class Repo {
       | undefined;
     if (!r) return null;
     return { startedAt: r.started_at, finishedAt: r.finished_at, ok: r.ok === null ? null : r.ok === 1, groupsTotal: r.groups_total, groupsChanged: r.groups_changed, events: r.events, error: r.error };
+  }
+
+  // ---- счётчики нажатий (без id людей) ----
+  bumpCounter(day: LocalDate, key: string): void {
+    this.db.prepare("INSERT INTO ui_counters (day, key, n) VALUES (?, ?, 1) ON CONFLICT(day, key) DO UPDATE SET n = n + 1").run(day, key.slice(0, 64));
+  }
+
+  /** Сумма нажатий с этой даты включительно, самые частые первыми. */
+  countersSince(day: LocalDate): Array<{ key: string; n: number }> {
+    return this.db.prepare("SELECT key, SUM(n) AS n FROM ui_counters WHERE day >= ? GROUP BY key ORDER BY n DESC, key").all(day) as Array<{ key: string; n: number }>;
+  }
+
+  // ---- «Министерство Жалоб» ----
+  addSupportTicket(userId: number, anon: boolean): number {
+    const r = this.db.prepare("INSERT INTO support_tickets (user_id, anon, created_at) VALUES (?, ?, ?)").run(userId, anon ? 1 : 0, nowIso());
+    return Number(r.lastInsertRowid);
+  }
+
+  supportTicket(id: number): { id: number; userId: number; anon: boolean } | null {
+    const r = this.db.prepare("SELECT id, user_id, anon FROM support_tickets WHERE id = ?").get(id) as { id: number; user_id: number; anon: number } | undefined;
+    return r ? { id: r.id, userId: r.user_id, anon: r.anon === 1 } : null;
+  }
+
+  /** Сколько обращений человек отправил с этого момента (лимит против спама). */
+  supportTicketsSince(userId: number, sinceIso: string): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM support_tickets WHERE user_id = ? AND created_at >= ?").get(userId, sinceIso) as { n: number }).n;
+  }
+
+  blockSupport(userId: number): void {
+    this.db.prepare("INSERT OR IGNORE INTO support_blocks (user_id, created_at) VALUES (?, ?)").run(userId, nowIso());
+  }
+
+  supportBlocked(userId: number): boolean {
+    return !!this.db.prepare("SELECT 1 FROM support_blocks WHERE user_id = ?").get(userId);
   }
 }

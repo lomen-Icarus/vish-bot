@@ -326,7 +326,7 @@ describe("подпись влезает в лимит Telegram, ссылки и 
     const later: ChangeEvent[] = Array.from({ length: 30 }, (_, i) => ev({ kind: "removed", date: `2026-10-${String(6 + (i % 10)).padStart(2, "0")}`, before: lesson(`2026-10-${String(6 + (i % 10)).padStart(2, "0")}`, 1 + (i % 5), 8 * 60 + 20, `Очень длинное название предмета номер ${i}`) }));
     const caption = changesCaption({ ...input({ later }), full: null, tail: "" });
     expect(caption.replace(/<[^>]+>/g, "").length).toBeLessThanOrEqual(1000);
-    expect(caption).toMatch(/…и ещё \d+ изменени[йяе] — остальные в «🔔 Изменения»/);
+    expect(caption).toMatch(/…и ещё \d+ изменени[йяе] — остальные в «☰ Ещё → 🔔 Изменения»/);
     // У группы, за которой только следят, в «🔔 Изменения» их нет — туда и не отправляем.
     expect(changesCaption({ ...input({ later, own: false }), full: null, tail: "" })).toMatch(/— смотри расписание группы<\/i>$/);
   });
@@ -341,7 +341,7 @@ describe("подпись влезает в лимит Telegram, ссылки и 
     const text = changesMessageFit(input({ todayMarked, later }));
     expect(text.replace(/<[^>]+>/g, "").length).toBeLessThanOrEqual(3900);
     expect(text).toContain("<s>Химия</s>");
-    expect(text).toMatch(/…и ещё \d+ изменени[йяе] — остальные в «🔔 Изменения»<\/i>$/);
+    expect(text).toMatch(/…и ещё \d+ изменени[йяе] — остальные в «☰ Ещё → 🔔 Изменения»<\/i>$/);
   });
 
   it("сменилась аудитория — она в строке один раз", () => {
@@ -376,7 +376,7 @@ describe("подпись влезает в лимит Telegram, ссылки и 
     const later = [ev({ kind: "removed", date: "2026-10-06", before: lesson("2026-10-06", 1, 500, "Химия") })];
     const caption = changesCaption({ ...input({ todayMarked, later }), full: null, tail: "" });
     expect(caption.replace(/<[^>]+>/g, "").length).toBeLessThanOrEqual(1000);
-    expect(caption).toMatch(/…и ещё 1 изменение — остальные в «🔔 Изменения»<\/i>$/);
+    expect(caption).toMatch(/…и ещё 1 изменение — остальные в «☰ Ещё → 🔔 Изменения»<\/i>$/);
   });
 });
 
