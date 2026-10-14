@@ -110,7 +110,7 @@ function supportText(ctx: BotContext, anon: boolean): string {
     `Написать можно: ${esc(ctx.deps.config.SUPPORT_CONTACT)}`,
     "Или отправь сообщение ниже — жалобу, ошибку в расписании, идею. Можно текст, фото или скриншот.",
     "",
-    anon ? "Сейчас: 🕶 <b>анонимно</b> — админ не увидит, кто ты. Ответ, если будет, придёт сюда." : "Сейчас: 👤 <b>с твоим ником</b>, чтобы можно было ответить лично.",
+    anon ? "Сейчас: 🕶 <b>анонимно</b> — в обращении не будет ни ника, ни id. Ответ, если будет, придёт сюда." : "Сейчас: 👤 <b>с твоим ником</b>, чтобы можно было ответить лично.",
   ].join("\n");
 }
 
@@ -138,12 +138,25 @@ hubHandlers.callbackQuery(/^sup:(anon|named|back)$/, async (ctx) => {
     return;
   }
   const anon = choice === "anon";
-  setPending(ctx.deps, ctx.user.id, { kind: "support", anon }, SUPPORT_TTL_MS);
+  // Уже написанное (ждёт «Отправить») не теряем — меняется только режим.
+  const was = takePending(ctx.deps, ctx.user.id);
+  const kept = was?.kind === "support" ? { chatId: was.chatId, messageId: was.messageId } : {};
+  setPending(ctx.deps, ctx.user.id, { kind: "support", anon, ...kept }, SUPPORT_TTL_MS);
   await ctx.answerCallbackQuery({ text: anon ? "Отправлю анонимно" : "Отправлю с твоим ником" });
-  await ctx.editMessageText(supportText(ctx, anon), { parse_mode: "HTML", reply_markup: supportKeyboard(anon), link_preview_options: { is_disabled: true } }).catch(() => undefined);
+  if (kept.messageId) await ctx.editMessageText(confirmText(anon), { reply_markup: confirmKeyboard(anon) }).catch(() => undefined);
+  else await ctx.editMessageText(supportText(ctx, anon), { parse_mode: "HTML", reply_markup: supportKeyboard(anon), link_preview_options: { is_disabled: true } }).catch(() => undefined);
 });
 
-/** Обращение: любое сообщение — текст, фото, документ, голосовое. */
+const confirmText = (anon: boolean): string => `Отправить это в Министерство Жалоб ${anon ? "🕶 анонимно" : "👤 с твоим ником"}?`;
+function confirmKeyboard(anon: boolean): InlineKeyboard {
+  return new InlineKeyboard().text("✅ Отправить", "sup:send").text("✖️ Не отправлять", "sup:back").row().text(anon ? "👤 Отправить с ником" : "🕶 Отправить анонимно", anon ? "sup:named" : "sup:anon");
+}
+
+/**
+ * Обращение: любое сообщение — текст, фото, документ, голосовое. Сразу не
+ * уходит: «🏛 Жалоба» — постоянная кнопка, её жмут из любопытства, и
+ * набранное потом «14-24» иначе улетело бы админу. Поэтому — «Отправить?».
+ */
 hubHandlers.on("message", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || (pending.kind !== "support" && pending.kind !== "support-reply")) return next();
@@ -153,42 +166,56 @@ hubHandlers.on("message", async (ctx, next) => {
     clearPending(ctx.deps, ctx.user.id);
     return next();
   }
-  clearPending(ctx.deps, ctx.user.id);
-  if (pending.kind === "support-reply") return void (await relayReply(ctx, pending.ticket ?? 0));
-
-  const repo = ctx.deps.repo;
+  if (pending.kind === "support-reply") {
+    clearPending(ctx.deps, ctx.user.id);
+    return void (await relayReply(ctx, pending.ticket ?? 0));
+  }
   const anon = !!pending.anon;
-  if (repo.supportBlocked(ctx.user.id)) {
-    await ctx.reply("Министерство сейчас не принимает от тебя обращения.");
+  setPending(ctx.deps, ctx.user.id, { kind: "support", anon, chatId: ctx.chat.id, messageId: ctx.msg.message_id }, SUPPORT_TTL_MS);
+  await ctx.reply(confirmText(anon), { reply_parameters: { message_id: ctx.msg.message_id, allow_sending_without_reply: true }, reply_markup: confirmKeyboard(anon) });
+});
+
+hubHandlers.callbackQuery("sup:send", async (ctx) => {
+  const pending = takePending(ctx.deps, ctx.user.id);
+  if (pending?.kind !== "support" || !pending.messageId || !pending.chatId) {
+    await ctx.answerCallbackQuery({ text: "Не нашёл, что отправлять — напиши ещё раз", show_alert: true });
     return;
   }
+  clearPending(ctx.deps, ctx.user.id);
+  await ctx.answerCallbackQuery();
+  const text = await sendTicket(ctx, pending.chatId, pending.messageId, !!pending.anon);
+  await ctx.editMessageText(text).catch(() => ctx.reply(text));
+});
+
+async function sendTicket(ctx: BotContext, chatId: number, messageId: number, anon: boolean): Promise<string> {
+  const repo = ctx.deps.repo;
+  if (repo.supportBlocked(ctx.user.id)) return "Министерство сейчас не принимает от тебя обращения.";
   const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
   if (repo.supportTicketsSince(ctx.user.id, since) >= DAILY_LIMIT[anon ? "anon" : "named"]) {
-    await ctx.reply(`На сегодня обращений хватит — напиши завтра или напрямую: ${ctx.deps.config.SUPPORT_CONTACT}`);
-    return;
+    return `На сегодня обращений хватит — напиши завтра или напрямую: ${ctx.deps.config.SUPPORT_CONTACT}`;
   }
   const ticket = repo.addSupportTicket(ctx.user.id, anon);
-  const from = ctx.from;
+  // Ник — из записи бота: обращение уходит по нажатию «Отправить», а не из самого сообщения.
+  const username = ctx.from?.username ?? ctx.user.username;
+  const name = ctx.from?.first_name ?? ctx.user.firstName;
   const group = needGroup(ctx);
-  const who = anon ? "🕶 анонимно" : `от ${from?.username ? `@${esc(from.username)}` : esc(from?.first_name ?? "без имени")}${group ? ` (${esc(group.title)})` : ""} · id <code>${from?.id}</code>`;
+  const who = anon ? "🕶 анонимно" : `от ${username ? `@${esc(username)}` : esc(name ?? "без имени")}${group ? ` (${esc(group.title)})` : ""} · id <code>${ctx.user.id}</code>`;
   const kb = new InlineKeyboard().text("↩️ Ответить", `supa:r:${ticket}`).text("🚫 Не принимать", `supa:b:${ticket}`);
   let delivered = 0;
   for (const adminId of ctx.deps.config.ADMIN_IDS) {
     try {
       await ctx.api.sendMessage(adminId, `🏛 <b>Обращение #${ticket}</b> ${who}`, { parse_mode: "HTML" });
-      await ctx.api.copyMessage(adminId, ctx.chat.id, ctx.msg.message_id, { reply_markup: kb });
+      await ctx.api.copyMessage(adminId, chatId, messageId, { reply_markup: kb });
       delivered++;
     } catch (err) {
       logger.warn({ err: String(err).slice(0, 200), ticket }, "support ticket not delivered");
     }
   }
   logger.info({ ticket, anon, delivered }, "support ticket");
-  await ctx.reply(
-    delivered
-      ? `Передал в Министерство Жалоб 🏛 Обращение #${ticket}${anon ? " — анонимно, админ не увидит, кто ты" : ""}. Ответ, если будет, придёт сюда.`
-      : `Не получилось передать. Напиши напрямую: ${ctx.deps.config.SUPPORT_CONTACT}`,
-  );
-});
+  return delivered
+    ? `Передал в Министерство Жалоб 🏛 Обращение #${ticket}${anon ? " — анонимно: в обращении нет ни ника, ни id" : ""}. Ответ, если будет, придёт сюда.`
+    : `Не получилось передать. Напиши напрямую: ${ctx.deps.config.SUPPORT_CONTACT}`;
+}
 
 // ---- ответ админа ----
 hubHandlers.callbackQuery(/^supa:(r|b):(\d+)$/, async (ctx) => {
