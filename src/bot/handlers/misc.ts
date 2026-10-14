@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, btnRef, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor, panelRef } from "../keyboards.js";
+import { BTN, btnRef, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor, menuHint, panelRef } from "../keyboards.js";
 import { autoTeacherStart, nameAndPatronymic } from "../teacherMode.js";
 import { knownFirstName } from "../social.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
@@ -298,11 +298,12 @@ function looksLikeName(query: string): boolean {
 }
 
 /**
- * people: "teacher" — студентов не искать. Так ищет свободный текст: «спасибо»
- * похоже на фамилию, и поиск студентов писал бы в журнал «сыска» и тратил
- * его лимит на каждую реплику.
+ * freeText — так ищет текст без команды: «спасибо» похоже на фамилию, поэтому
+ * студентов не ищем (иначе каждая реплика писалась бы в журнал «сыска» и
+ * тратила его лимит), а преподавателей — только по своему справочнику, без
+ * похода на портал (он при сбоях отвечает до минуты).
  */
-async function localSearch(ctx: BotContext, query: string, opts: { people?: "teacher" } = {}): Promise<LocalHits> {
+async function localSearch(ctx: BotContext, query: string, opts: { freeText?: boolean } = {}): Promise<LocalHits> {
   const deps = ctx.deps;
   const today = todayMsk();
   const parts: string[] = [];
@@ -359,8 +360,8 @@ async function localSearch(ctx: BotContext, query: string, opts: { people?: "tea
       // студентов ищем, только когда запрос похож на имя: «матан», «кто ведёт
       // БЖД» или «что у 14-24» не должны тратить лимит поиска людей и попадать
       // в журнал как поиск человека. Преподаватели ищутся всегда.
-      const scope = opts.people !== "teacher" && looksLikeName(query) && !parts.length ? "all" : "teacher";
-      people = (await searchPeople(deps, query, { scope, viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск", limit: 6 })).hits;
+      const scope = !opts.freeText && looksLikeName(query) && !parts.length ? "all" : "teacher";
+      people = (await searchPeople(deps, query, { scope, viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск", limit: 6, localOnly: opts.freeText })).hits;
     } catch (err) {
       logger.warn({ err: String(err) }, "search: people failed");
     }
@@ -432,7 +433,7 @@ const FREE_TEXT_TTL_MS = 15 * 60_000;
  */
 export async function freeTextSearch(ctx: BotContext, text: string): Promise<void> {
   const q = text.trim().slice(0, 200);
-  const hits = await localSearch(ctx, q, { people: "teacher" });
+  const hits = await localSearch(ctx, q, { freeText: true });
   ctx.deps.repo.bumpCounter(todayMsk(), hits.parts.length ? "text:found" : "text:miss");
   const person = hits.onlyPeople ? clearHit(hits.people) : null;
   if (person) return void (await showPerson(ctx, person.ref, todayMsk(), { others: tiedWith(hits.people, person), self: person }));
@@ -444,7 +445,7 @@ export async function freeTextSearch(ctx: BotContext, text: string): Promise<voi
   }
   const markup = kb.inline_keyboard.some((row) => row.length) ? kb : undefined;
   if (!hits.parts.length) {
-    await ctx.reply(`Не нашёл «${esc(q.slice(0, 60))}». Напиши номер группы (<code>14-24</code>), фамилию преподавателя, предмет или дату (<code>15.10</code>). Остальное — кнопками внизу.`, { parse_mode: "HTML", reply_markup: markup });
+    await ctx.reply(`Не нашёл «${esc(q.slice(0, 60))}». Напиши номер группы (<code>14-24</code>), фамилию преподавателя, предмет или дату (<code>15.10</code>). ${menuHint(ctx.user)}.`, { parse_mode: "HTML", reply_markup: markup });
     return;
   }
   await ctx.reply(clampHtml(`🔍 <b>${esc(q.slice(0, 60))}</b>\n\n${hits.parts.join("\n\n")}`), { parse_mode: "HTML", reply_markup: markup });

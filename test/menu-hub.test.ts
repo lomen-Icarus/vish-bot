@@ -83,7 +83,11 @@ describe("🏛 Министерство Жалоб", () => {
     expect(String(panel.payload.text)).toContain("@lomen_Icarus");
     expect(markup(panel)).toContain("sup:anon");
     expect(markup(panel)).toContain("sup:back");
-    const sent = await run(deps, text("Пары в пятницу показывает не те"));
+    const typed = await run(deps, text("Пары в пятницу показывает не те"));
+    // Сразу не уходит: сначала «Отправить?» — кнопку жмут и из любопытства.
+    expect(typed.some((c) => c.payload.chat_id === ADMIN)).toBe(false);
+    expect(markup(typed.find((c) => c.method === "sendMessage"))).toContain("sup:send");
+    const sent = await run(deps, press("sup:send"));
     const header = sent.find((c) => c.method === "sendMessage" && c.payload.chat_id === ADMIN)!;
     expect(String(header.payload.text)).toContain("Обращение #1");
     expect(String(header.payload.text)).toContain("@student_u");
@@ -91,7 +95,7 @@ describe("🏛 Министерство Жалоб", () => {
     expect(copy.payload.chat_id).toBe(ADMIN);
     expect(markup(copy)).toContain("supa:r:1");
     expect(sent.some((c) => c.method === "forwardMessage")).toBe(false);
-    expect(String(sent.find((c) => c.method === "sendMessage" && c.payload.chat_id === USER)!.payload.text)).toContain("Обращение #1");
+    expect(String(sent.find((c) => c.method === "editMessageText")!.payload.text)).toContain("Обращение #1");
   });
 
   it("анонимно: ни ника, ни id в заголовке, только копия (у пересылки Telegram показал бы автора); фото тоже принимается", async () => {
@@ -99,7 +103,8 @@ describe("🏛 Министерство Жалоб", () => {
     await run(deps, text("🏛 Жалоба"));
     const toggled = await run(deps, press("sup:anon"));
     expect(String(toggled.find((c) => c.method === "editMessageText")!.payload.text)).toContain("анонимно");
-    const sent = await run(deps, photo());
+    await run(deps, photo());
+    const sent = await run(deps, press("sup:send"));
     const header = String(sent.find((c) => c.method === "sendMessage" && c.payload.chat_id === ADMIN)!.payload.text);
     expect(header).toContain("анонимно");
     expect(header).not.toContain("student_u");
@@ -115,6 +120,23 @@ describe("🏛 Министерство Жалоб", () => {
     expect(back.some((c) => c.method === "deleteMessage")).toBe(true);
     const after = await run(deps, text("просто текст"));
     expect(after.some((c) => c.payload.chat_id === ADMIN)).toBe(false);
+    // Нажал «Жалоба», потом написал «14-24» и передумал — «Не отправлять».
+    await run(deps, text("🏛 Жалоба"));
+    await run(deps, text("14-24"));
+    await run(deps, press("sup:back"));
+    expect((await run(deps, press("sup:send"))).some((c) => c.payload.chat_id === ADMIN)).toBe(false);
+  });
+
+  it("на экране «Отправить?» можно переключить анонимность — написанное не теряется", async () => {
+    const deps = makeDeps();
+    await run(deps, text("🏛 Жалоба"));
+    await run(deps, text("жалоба"));
+    const toggled = await run(deps, press("sup:anon"));
+    const edit = toggled.find((c) => c.method === "editMessageText")!;
+    expect(String(edit.payload.text)).toContain("анонимно");
+    expect(markup(edit)).toContain("sup:send");
+    const sent = await run(deps, press("sup:send"));
+    expect(String(sent.find((c) => c.method === "sendMessage" && c.payload.chat_id === ADMIN)!.payload.text)).toContain("анонимно");
   });
 
   it("админ отвечает — ответ приходит человеку, даже анонимному; «Не принимать» — дальше обращения не уходят", async () => {
@@ -122,6 +144,7 @@ describe("🏛 Министерство Жалоб", () => {
     await run(deps, text("🏛 Жалоба"));
     await run(deps, press("sup:anon"));
     await run(deps, text("анонимная жалоба"));
+    await run(deps, press("sup:send"));
     const ask = await run(deps, press("supa:r:1", ADMIN), ADMIN);
     expect(String(ask.find((c) => c.method === "sendMessage")!.payload.text)).toContain("#1");
     const reply = await run(deps, text("Спасибо, поправим", ADMIN), ADMIN);
@@ -133,9 +156,10 @@ describe("🏛 Министерство Жалоб", () => {
 
     await run(deps, press("supa:b:1", ADMIN), ADMIN);
     await run(deps, text("🏛 Жалоба"));
-    const blocked = await run(deps, text("ещё жалоба"));
+    await run(deps, text("ещё жалоба"));
+    const blocked = await run(deps, press("sup:send"));
     expect(blocked.some((c) => c.payload.chat_id === ADMIN)).toBe(false);
-    expect(String(blocked.find((c) => c.method === "sendMessage")!.payload.text)).toMatch(/не принимает/);
+    expect(String(blocked.find((c) => c.method === "editMessageText")!.payload.text)).toMatch(/не принимает/);
   });
 
   it("анонимно — не больше 5 за сутки", async () => {
@@ -144,18 +168,22 @@ describe("🏛 Министерство Жалоб", () => {
       await run(deps, text("🏛 Жалоба"));
       await run(deps, press("sup:anon"));
       await run(deps, text(`жалоба ${i}`));
+      await run(deps, press("sup:send"));
     }
     await run(deps, text("🏛 Жалоба"));
     await run(deps, press("sup:anon"));
-    const sixth = await run(deps, text("шестая"));
+    await run(deps, text("шестая"));
+    const sixth = await run(deps, press("sup:send"));
     expect(sixth.some((c) => c.payload.chat_id === ADMIN)).toBe(false);
-    expect(String(sixth.find((c) => c.method === "sendMessage")!.payload.text)).toMatch(/хватит/);
+    expect(String(sixth.find((c) => c.method === "editMessageText")!.payload.text)).toMatch(/хватит/);
   });
 
   it("/soon стирает обращения — ответить на старое уже некому", async () => {
     const deps = makeDeps();
     await run(deps, text("🏛 Жалоба"));
     await run(deps, text("жалоба"));
+    await run(deps, press("sup:send"));
+    expect(deps.repo.supportTicket(1)).not.toBeNull();
     deps.repo.forgetUser(USER);
     expect(deps.repo.supportTicket(1)).toBeNull();
   });
@@ -198,5 +226,49 @@ describe("текст без кнопки — поиск по своей базе
     repo.bumpCounter("2026-10-15", "cb:hub");
     expect(repo.countersSince("2026-10-14")).toEqual([{ key: "btn:📅 Сегодня", n: 3 }, { key: "cb:hub", n: 1 }]);
     expect(repo.countersSince("2026-10-15")).toEqual([{ key: "btn:📅 Сегодня", n: 1 }, { key: "cb:hub", n: 1 }]);
+  });
+});
+
+describe("весь бот (createBot): порядок обработчиков, счётчики, текст без кнопки", () => {
+  async function botWith(deps: Deps) {
+    const { createBot } = await import("../src/bot/index.js");
+    const bot = createBot(deps);
+    bot.botInfo = ME;
+    const calls: Call[] = [];
+    bot.api.config.use(async (_prev, method, payload) => {
+      calls.push({ method, payload: payload as Record<string, unknown> });
+      return { ok: true, result: { message_id: 77, date: 0, chat: { id: USER, type: "private" } } as never };
+    });
+    return { bot, calls };
+  }
+  function fullDeps() {
+    const deps = makeDeps();
+    Object.assign(deps.config, { BOT_TOKEN: "123:FAKE-TOKEN-FOR-TESTS-ONLY", NEWS_CHANNEL_IDS: [], MEDIA_CHAT_IDS: [] });
+    return deps;
+  }
+
+  it("«спасибо» — поиск («Не нашёл»), а не «Не понял»; /foo — «Не знаю такой команды»; нажатие кнопки посчитано", async () => {
+    const deps = fullDeps();
+    const { bot, calls } = await botWith(deps);
+    await bot.handleUpdate(text("спасибо"));
+    expect(String(calls.find((c) => c.method === "sendMessage")!.payload.text)).toContain("Не нашёл");
+    calls.length = 0;
+    await bot.handleUpdate(text("/foo"));
+    expect(String(calls.find((c) => c.method === "sendMessage")!.payload.text)).toContain("Не знаю такой команды");
+    await bot.handleUpdate(text("☰ Ещё"));
+    const keys = deps.repo.countersSince("2000-01-01").map((c) => c.key);
+    expect(keys).toContain("btn:☰ Ещё");
+    expect(keys).toContain("cmd:/foo");
+    expect(keys).toContain("text:miss");
+  });
+
+  it("«🏛 Жалоба» → сообщение → «Отправить» доходит до админа копией при полном порядке обработчиков", async () => {
+    const deps = fullDeps();
+    const { bot, calls } = await botWith(deps);
+    await bot.handleUpdate(text("🏛 Жалоба"));
+    await bot.handleUpdate(text("в расписании ошибка"));
+    expect(calls.some((c) => c.payload.chat_id === ADMIN)).toBe(false);
+    await bot.handleUpdate(press("sup:send"));
+    expect(calls.find((c) => c.method === "copyMessage" && c.payload.chat_id === ADMIN)).toBeTruthy();
   });
 });
