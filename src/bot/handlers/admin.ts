@@ -6,7 +6,7 @@ import { pruneFalseChangeEvents } from "../../db/cleanup.js";
 import { isMenuText, menuFor, menuStampFor, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
 import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
-import { todayMsk } from "../../time.js";
+import { addDays, todayMsk } from "../../time.js";
 import type { User } from "../../db/repo.js";
 import { logger } from "../../logger.js";
 import { sleep } from "../../time.js";
@@ -51,6 +51,9 @@ function statsText(ctx: BotContext): string {
     "",
     ...pop.slice(0, 30).map((p) => `${esc(ctx.deps.service.group(p.groupKey)?.title ?? p.groupKey)} — ${p.users}`),
   ];
+  // Что жмут: кнопки меню, кнопки под сообщениями и команды за неделю (без id людей).
+  const clicks = repo.countersSince(addDays(todayMsk(), -6));
+  if (clicks.length) lines.push("", "<b>Нажатия за 7 дней</b>", ...clicks.slice(0, 20).map((c) => `${esc(c.key.replace(/^btn:/, "").replace(/^cb:/, "под сообщением: ").replace(/^cmd:/, "").replace(/^text:found$/, "текст → нашёл").replace(/^text:miss$/, "текст → не нашёл"))} — ${c.n}`));
   return lines.join("\n");
 }
 
@@ -151,7 +154,7 @@ function aiLimitsScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     .text("🔄 Обновить", "ail:show");
   const text = [
     "<b>🤖 Лимиты «Спросить?»</b>",
-    "Кнопка «💬 Спросить?» в приветствии /start, «🔍 ИИ поисковик» и /ask — это один ИИ-поиск с общим лимитом.",
+    "Кнопка «💬 Спросить?» в приветствии /start, «🔍 Найти → 💬 Спросить ИИ», «💬 Спросить ИИ» под поиском и /ask — это один ИИ-поиск с общим лимитом.",
     ctx.deps.ask ? `Модель: <code>${esc(ctx.deps.config.AI_MODEL)}</code>` : "ИИ выключен: не задан ANTHROPIC_API_KEY.",
     "",
     `На человека в сутки: <b>${l.perUser}</b>${l.bonusUser ? ` (${l.baseUser} + ${l.bonusUser} на сегодня)` : ""}${l.userOverridden ? ` · в .env ${l.envUser}` : ""}`,
@@ -582,7 +585,7 @@ async function showConfirm(ctx: BotContext, target: string, board: boolean, hasT
   const kb = new InlineKeyboard().text(`✅ Отправить ${users.length} чел.`, `bc:go:${messageId}`).row();
   if (hasText) kb.text(`📌 На доску объявлений: ${board ? `да, ${BOARD_HOURS} ч` : "нет"}`, "bc:board").row();
   kb.text("◀️ Другая аудитория", "bc:back").text("✖️ Отмена", "bc:cancel");
-  const note = hasText ? "\n\nДоска объявлений висит в «🔔 Изменения» и видна всем, кто откроет этот экран. Вешай туда только важное." : "";
+  const note = hasText ? "\n\nДоска объявлений висит в «☰ Ещё → 🔔 Изменения» и видна всем, кто откроет этот экран. Вешай туда только важное." : "";
   await ctx.editMessageText(`Отправить ${label}: <b>${users.length}</b> чел.?${note}\n\nЭто нельзя отменить после нажатия.`, { parse_mode: "HTML", reply_markup: kb });
 }
 
@@ -617,7 +620,7 @@ adminOnly.callbackQuery("bc:back", async (ctx) => {
  * клиенты Telegram вместе с сообщением могут убрать и меню.
  */
 export const MENU_REFRESH_TEXT =
-  "🆕 Обновили меню: теперь его можно свернуть значком ▦ в поле ввода и развернуть им же, а «👨‍🏫 Преподаватели» стали «👨‍🏫 Преподы». В ⚙️ Настройках → «⌨️ Нижнее меню» можно сделать, чтобы меню сворачивалось само после каждого нажатия, или скрыть его совсем.";
+  "🆕 Новое меню: внизу только главное — 📅 Сегодня, 📅 Завтра, 🗓 Неделя. Группы, поток, преподаватели и вопрос ИИ — в «🔍 Найти» (а можно просто написать в чат номер группы, фамилию или дату). Изменения, календарь и настройки — в «☰ Ещё». Жалоба, ошибка в расписании или идея — «🏛 Жалоба», можно анонимно.";
 
 export function menuRefreshTargets(users: User[]): User[] {
   return users.filter((u) => !u.blocked && u.menuMode !== "hidden" && (u.groupKey || u.teacherMode) && u.menuSent !== menuStampFor(u));

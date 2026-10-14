@@ -23,6 +23,10 @@ export const BTN = {
   settings: "⚙️ Настройки",
   ask: "💬 Спросить",
   suggest: "📨 Отправить новость",
+  // Новое нижнее меню (2 × 3): «Найти» и «Ещё» открывают панели под сообщением.
+  find: "🔍 Найти",
+  more: "☰ Ещё",
+  complaint: "🏛 Жалоба",
   // stream mode
   streamYesterday: "Поток: вчера",
   streamToday: "Поток: сегодня",
@@ -66,49 +70,30 @@ function menuBehaviour(kb: Keyboard, mode: MenuMode): Keyboard {
   return mode === "once" ? kb.oneTime() : kb;
 }
 
-/** 4 × 3 main menu, order agreed with the customer. */
+/**
+ * Подсказка в поле ввода: бот понимает текст и без кнопок — номер группы,
+ * фамилию, предмет, дату. Telegram пускает до 64 символов.
+ */
+export const INPUT_HINT = "14-24, Иванова, матан, 15.10";
+
+/**
+ * Главное меню 2 × 3. Внизу — только то, что жмут каждый день; всё остальное
+ * за «🔍 Найти» (группы, поток, преподаватели, вопрос ИИ) и «☰ Ещё»
+ * (изменения, календарь, настройки, справка) — панелями под сообщением,
+ * которые меняются на месте и не засоряют чат. Старые кнопки 4 × 3 у кого-то
+ * ещё висят в чате — их подписи по-прежнему работают (см. hears в обработчиках).
+ */
 export function mainKeyboard(mode: MenuMode = "collapsible"): Keyboard {
-  const kb = new Keyboard()
-    .text(BTN.today)
-    .text(BTN.tomorrow)
-    .text(BTN.otherGroups)
-    .row()
-    .text(BTN.week)
-    .text(BTN.nextWeek)
-    .text(BTN.stream)
-    .row()
-    .text(BTN.changes)
-    .text(BTN.calendar)
-    .text(BTN.teachers)
-    .row()
-    .text(BTN.features)
-    .text(BTN.search)
-    .text(BTN.settings);
+  const kb = new Keyboard().text(BTN.today).text(BTN.tomorrow).text(BTN.week).row().text(BTN.find).text(BTN.more).text(BTN.complaint).placeholder(INPUT_HINT);
   return menuBehaviour(kb, mode);
 }
 
 /**
- * Меню режима преподавателя: то же самое, только третья кнопка — «Студенты»
- * (расписание любой группы), а «Сегодня / Завтра / Неделя» — его собственные пары.
+ * Меню режима преподавателя — те же кнопки: «Сегодня / Неделя» — его
+ * собственные пары, а «🔍 Найти» начинается с «👥 Студенты» (расписание любой группы).
  */
 export function teacherKeyboard(mode: MenuMode = "collapsible"): Keyboard {
-  const kb = new Keyboard()
-    .text(BTN.today)
-    .text(BTN.tomorrow)
-    .text(BTN.students)
-    .row()
-    .text(BTN.week)
-    .text(BTN.nextWeek)
-    .text(BTN.stream)
-    .row()
-    .text(BTN.changes)
-    .text(BTN.calendar)
-    .text(BTN.teachers)
-    .row()
-    .text(BTN.features)
-    .text(BTN.search)
-    .text(BTN.settings);
-  return menuBehaviour(kb, mode);
+  return mainKeyboard(mode);
 }
 
 export type MenuMarkup = Keyboard | ReplyKeyboardRemove;
@@ -142,6 +127,14 @@ export function menuHint(user: Pick<User, "menuMode"> | null | undefined): strin
 /** Как сослаться на кнопку в тексте: «📅 Сегодня», а если меню скрыто — командой. */
 export function btnRef(user: Pick<User, "menuMode"> | null | undefined, label: string, command: string): string {
   return user?.menuMode === "hidden" ? command : `«${label}»`;
+}
+
+/**
+ * Как сослаться на пункт панели «🔍 Найти» или «☰ Ещё»: «🔍 Найти → 👨‍🏫 Преподы»,
+ * а если нижнее меню скрыто — командой.
+ */
+export function panelRef(user: Pick<User, "menuMode"> | null | undefined, panel: string, item: string, command: string): string {
+  return user?.menuMode === "hidden" ? command : `«${panel} → ${item}»`;
 }
 
 /**

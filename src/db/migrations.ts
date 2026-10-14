@@ -410,4 +410,27 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE users ADD COLUMN menu_mode TEXT;
   ALTER TABLE users ADD COLUMN menu_sent TEXT;
   `,
+  // Счётчики нажатий: какая кнопка и сколько раз за день — без id людей.
+  // «Министерство Жалоб»: номер обращения и кому отвечать; текста здесь нет —
+  // он только в чате админа. anon — админ не видит, кто это; blocked — от
+  // этого отправителя обращения больше не принимаются.
+  `
+  CREATE TABLE ui_counters (
+    day TEXT NOT NULL,
+    key TEXT NOT NULL,
+    n INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, key)
+  );
+  CREATE TABLE support_tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    anon INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX support_tickets_user ON support_tickets (user_id, created_at);
+  CREATE TABLE support_blocks (
+    user_id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];

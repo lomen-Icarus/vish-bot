@@ -18,7 +18,8 @@ describe("нижнее меню: сворачивается, сворачива�
     expect(plain(menuFor({ teacherMode: false, menuMode: "once" })).one_time_keyboard).toBe(true);
     expect(plain(menuFor({ teacherMode: false, menuMode: "once" })).is_persistent).toBeUndefined();
     expect(menuFor({ teacherMode: true, menuMode: "hidden" })).toEqual({ remove_keyboard: true });
-    expect(JSON.stringify(menuFor({ teacherMode: true, menuMode: "collapsible" }))).toContain("Студенты");
+    // Новое меню 2 × 3, одно на всех; «Студенты» у преподавателя — в «🔍 Найти».
+    expect(plain(menuFor({ teacherMode: true, menuMode: "collapsible" })).keyboard).toEqual(plain(mainKeyboard()).keyboard);
     // Меню потока открывают сами — оно приходит и тем, кто скрыл основное.
     expect(plain(streamKeyboard({ mode: "hidden" })).keyboard).toBeTruthy();
     expect(plain(streamKeyboard({ mode: "once" })).one_time_keyboard).toBe(true);
@@ -33,10 +34,11 @@ describe("нижнее меню: сворачивается, сворачива�
     expect(repo.getUser(1)!.menuMode).toBe("collapsible");
   });
 
-  it("кнопка «👨‍🏫 Преподы»; старая подпись «👨‍🏫 Преподаватели» у тех, кому меню ещё не обновилось, тоже работает", () => {
-    expect(JSON.stringify(mainKeyboard())).toContain("👨‍🏫 Преподы");
-    expect(JSON.stringify(mainKeyboard())).not.toContain("Преподаватели");
-    expect(isMenuText("👨‍🏫 Преподаватели")).toBe(true);
+  it("меню 2 × 3: «Сегодня · Завтра · Неделя» / «Найти · Ещё · Жалоба»; подсказка в поле ввода; старые кнопки 4 × 3 ещё работают", () => {
+    expect(plain(mainKeyboard()).keyboard).toEqual([[{ text: "📅 Сегодня" }, { text: "📅 Завтра" }, { text: "🗓 Неделя" }], [{ text: "🔍 Найти" }, { text: "☰ Ещё" }, { text: "🏛 Жалоба" }]]);
+    expect(plain(mainKeyboard()).input_field_placeholder).toBe("14-24, Иванова, матан, 15.10");
+    // У кого в чате ещё висит старое меню — его кнопки понимаются как раньше.
+    for (const old of ["👥 Др. группы", "🗓 Следующая", "🎓 Поток", "🔔 Изменения", "📆 Календарь", "👨‍🏫 Преподы", "👨‍🏫 Преподаватели", "🧭 Функции", "🔍 ИИ поисковик", "⚙️ Настройки"]) expect(isMenuText(old)).toBe(true);
   });
 
   it("заблокировал бота или вернулся после блокировки — отпечаток меню забыт: меню придёт снова", () => {
@@ -233,6 +235,6 @@ describe("/menu_refresh: предпросмотр, подтверждение, �
     const sent = go.find((c) => c.method === "sendMessage" && c.payload.chat_id === 8)!;
     expect(sent.payload.disable_notification).toBe(true);
     expect(plain(sent.payload.reply_markup).one_time_keyboard).toBe(true);
-    expect(String(sent.payload.text)).toContain("👨‍🏫 Преподы");
+    expect(String(sent.payload.text)).toContain("🔍 Найти");
   });
 });
