@@ -91,7 +91,7 @@ scheduleHandlers.callbackQuery(/^wimg:(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
 scheduleHandlers.callbackQuery("noop", (ctx) => ctx.answerCallbackQuery());
 
 // ---- other groups ("peek") ----
-async function showOtherGroups(ctx: BotContext): Promise<void> {
+export async function showOtherGroups(ctx: BotContext): Promise<void> {
   const groups = ctx.deps.service.groups();
   if (!groups.length) return void (await ctx.reply("Список групп ещё не загружен с портала, попробуй через минуту."));
   const kb = groupPicker(groups, { prefix: "pk", selected: ctx.user.groupKey });
@@ -340,7 +340,7 @@ async function changePosters(ctx: BotContext, events: ChangeEvent[]): Promise<Bu
   return drawn.flatMap((png) => (png ? [png] : []));
 }
 
-async function showChanges(ctx: BotContext): Promise<void> {
+export async function showChanges(ctx: BotContext): Promise<void> {
   const { text, hasEvents, events } = changesText(ctx);
   const kb = new InlineKeyboard();
   if (hasEvents && ctx.user.groupKey) kb.text("📆 Файл изменений в календарь", `cics:${ctx.user.groupKey}`);

@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, btnRef, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor } from "../keyboards.js";
+import { BTN, btnRef, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor, panelRef } from "../keyboards.js";
 import { autoTeacherStart, nameAndPatronymic } from "../teacherMode.js";
 import { knownFirstName } from "../social.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
@@ -117,7 +117,7 @@ miscHandlers.command("start", async (ctx) => {
   if (ctx.user.teacherMode) {
     const name = ctx.user.teacherName ? nameAndPatronymic(ctx.user.teacherName) : null;
     const u = ctx.user;
-    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} ${btnRef(u, BTN.today, "/today")} и ${btnRef(u, BTN.week, "/week")} — ваши пары, ${btnRef(u, BTN.students, "/groups")} — расписание любой группы.`, { parse_mode: "HTML", reply_markup: menuFor(u) });
+    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} ${btnRef(u, BTN.today, "/today")} и ${btnRef(u, BTN.week, "/week")} — ваши пары, ${panelRef(u, BTN.find, BTN.students, "/groups")} — расписание любой группы.`, { parse_mode: "HTML", reply_markup: menuFor(u) });
     await askOffer();
     return;
   }
@@ -142,7 +142,7 @@ miscHandlers.command("start", async (ctx) => {
 });
 
 /** Карта функций приходит двумя сообщениями: одним она не влезает в лимит Telegram. */
-async function showFeatures(ctx: BotContext): Promise<void> {
+export async function showFeatures(ctx: BotContext): Promise<void> {
   for (const part of featuresSections(ctx.deps, { admin: ctx.isAdmin, menuHidden: ctx.user.menuMode === "hidden" })) {
     await ctx.reply(clampHtml(part), { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
   }
@@ -233,7 +233,7 @@ miscHandlers.on("message", async (ctx, next) => {
 });
 
 // ---- search: groups, subjects, teachers ----
-async function startSearch(ctx: BotContext): Promise<void> {
+export async function startSearch(ctx: BotContext): Promise<void> {
   setPending(ctx.deps, ctx.user.id, { kind: "search" }, 3 * 60_000);
   const smart = !!ctx.deps.ask;
   await ctx.reply(
@@ -297,7 +297,12 @@ function looksLikeName(query: string): boolean {
   return words.length > 0 && words.length <= 3 && words.every((w) => /^[\p{L}-]+$/u.test(w) && !QUESTION_WORDS.test(w));
 }
 
-async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
+/**
+ * people: "teacher" — студентов не искать. Так ищет свободный текст: «спасибо»
+ * похоже на фамилию, и поиск студентов писал бы в журнал «сыска» и тратил
+ * его лимит на каждую реплику.
+ */
+async function localSearch(ctx: BotContext, query: string, opts: { people?: "teacher" } = {}): Promise<LocalHits> {
   const deps = ctx.deps;
   const today = todayMsk();
   const parts: string[] = [];
@@ -354,7 +359,7 @@ async function localSearch(ctx: BotContext, query: string): Promise<LocalHits> {
       // студентов ищем, только когда запрос похож на имя: «матан», «кто ведёт
       // БЖД» или «что у 14-24» не должны тратить лимит поиска людей и попадать
       // в журнал как поиск человека. Преподаватели ищутся всегда.
-      const scope = looksLikeName(query) && !parts.length ? "all" : "teacher";
+      const scope = opts.people !== "teacher" && looksLikeName(query) && !parts.length ? "all" : "teacher";
       people = (await searchPeople(deps, query, { scope, viewerId: ctx.user.id, isAdmin: ctx.isAdmin, source: "поиск", limit: 6 })).hits;
     } catch (err) {
       logger.warn({ err: String(err) }, "search: people failed");
@@ -415,6 +420,47 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   const kb = new InlineKeyboard(hits.kb.inline_keyboard.filter((row) => row.length).map((row) => [...row]));
   await ctx.reply(`🔍 <b>Поиск: ${esc(query)}</b>\n\n${hits.parts.join("\n\n")}`, { parse_mode: "HTML", reply_markup: hits.buttons ? kb : undefined });
 }
+
+/** Что свободный поиск не нашёл — для кнопки «💬 Спросить ИИ» (callback_data на текст не хватит). */
+const lastFreeText = new Map<number, { q: string; at: number }>();
+const FREE_TEXT_TTL_MS = 15 * 60_000;
+
+/**
+ * Текст без команды и без открытого диалога: ищем по своей базе — группы,
+ * предметы, преподаватели. ИИ сам не зовём: «ок» и «спасибо» не должны тратить
+ * дневной лимит вопросов; спросить ИИ — кнопкой под ответом.
+ */
+export async function freeTextSearch(ctx: BotContext, text: string): Promise<void> {
+  const q = text.trim().slice(0, 200);
+  const hits = await localSearch(ctx, q, { people: "teacher" });
+  ctx.deps.repo.bumpCounter(todayMsk(), hits.parts.length ? "text:found" : "text:miss");
+  const person = hits.onlyPeople ? clearHit(hits.people) : null;
+  if (person) return void (await showPerson(ctx, person.ref, todayMsk(), { others: tiedWith(hits.people, person), self: person }));
+  const kb = new InlineKeyboard(hits.kb.inline_keyboard.filter((row) => row.length).map((row) => [...row]));
+  if (ctx.deps.ask) {
+    for (const [k, v] of lastFreeText) if (Date.now() - v.at > FREE_TEXT_TTL_MS) lastFreeText.delete(k);
+    lastFreeText.set(ctx.user.id, { q, at: Date.now() });
+    kb.row().text("💬 Спросить ИИ", "fx:ai");
+  }
+  const markup = kb.inline_keyboard.some((row) => row.length) ? kb : undefined;
+  if (!hits.parts.length) {
+    await ctx.reply(`Не нашёл «${esc(q.slice(0, 60))}». Напиши номер группы (<code>14-24</code>), фамилию преподавателя, предмет или дату (<code>15.10</code>). Остальное — кнопками внизу.`, { parse_mode: "HTML", reply_markup: markup });
+    return;
+  }
+  await ctx.reply(clampHtml(`🔍 <b>${esc(q.slice(0, 60))}</b>\n\n${hits.parts.join("\n\n")}`), { parse_mode: "HTML", reply_markup: markup });
+}
+
+miscHandlers.callbackQuery("fx:ai", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const last = lastFreeText.get(ctx.user.id);
+  if (!last || Date.now() - last.at > FREE_TEXT_TTL_MS) return startSearch(ctx);
+  lastFreeText.delete(ctx.user.id);
+  const outcome = await askAi(ctx, last.q);
+  if (outcome === "limit-user") await ctx.reply(`На сегодня твой лимит вопросов к ИИ исчерпан (${aiLimits(ctx.deps.repo, ctx.deps.config, todayMsk()).perUser} в день).`);
+  else if (outcome === "limit-global") await ctx.reply("Сегодня бот уже много отвечал, общий дневной бюджет вопросов закончился.");
+  else if (outcome === "disabled") await ctx.reply("Вопросы ИИ сейчас выключены.");
+  else if (outcome === "failed") await ctx.reply("ИИ сейчас не ответил, попробуй чуть позже.");
+});
 
 miscHandlers.on("message:text", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
