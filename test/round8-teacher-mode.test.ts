@@ -108,8 +108,10 @@ describe("режим преподавателя", () => {
     const on = await run(text("/prepod"), deps, { username: "petrova_as" });
     expect(all(on)).toMatch(/Режим преподавателя/);
     const menu = JSON.stringify(on.map((c) => c.payload.reply_markup));
-    expect(menu).toContain(BTN.students);
+    // Меню у преподавателя то же, что у всех: «Студенты» — в «🔍 Найти».
+    expect(menu).toContain(BTN.find);
     expect(menu).not.toContain(BTN.otherGroups);
+    expect(all(on)).toContain("🔍 Найти → 👥 Студенты");
     const u = deps.repo.getUser(7)!;
     expect(u.teacherMode).toBe(true);
     expect(u.teacherName).toBe("Петрова Анна Сергеевна");
@@ -130,7 +132,8 @@ describe("режим преподавателя", () => {
     const off = await run(text("/prepod"), deps, { username: "petrova_as" });
     expect(all(off)).toMatch(/выключен/);
     expect(deps.repo.getUser(7)!.teacherMode).toBe(false);
-    expect(JSON.stringify(off.map((c) => c.payload.reply_markup))).toContain(BTN.otherGroups);
+    // Выключил — снова обычное меню (то же 2 × 3: оно одно на всех).
+    expect(JSON.stringify(off.map((c) => c.payload.reply_markup))).toContain(BTN.find);
   });
 
   it("админ может проверить режим на любом преподавателе", async () => {

@@ -36,7 +36,7 @@ function ownKeyIn(ctx: BotContext, intake: number): string | null {
   return own && own.intake === intake ? own.key : null;
 }
 
-async function enterStream(ctx: BotContext): Promise<void> {
+export async function enterStream(ctx: BotContext): Promise<void> {
   const intake = currentIntake(ctx);
   if (intake === null) return void (await ctx.reply("Группы ещё не загружены с портала, попробуй через минуту."));
   const groups = ctx.deps.service.stream(intake);

@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, btnRef, groupPicker, menuFor, MENU_MODE_LABELS, MENU_MODES, REMINDER_KINDS, reminderOff, REMINDERS, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL, type ReminderKind } from "../keyboards.js";
+import { BTN, groupPicker, menuFor, panelRef, MENU_MODE_LABELS, MENU_MODES, REMINDER_KINDS, reminderOff, REMINDERS, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL, type ReminderKind } from "../keyboards.js";
 import { THEMES, THEME_LABELS } from "../../render/themes.js";
 import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
@@ -57,7 +57,7 @@ function settingsText(ctx: BotContext): string {
   return lines.join("\n");
 }
 
-async function renderSettings(ctx: BotContext, edit: boolean): Promise<void> {
+export async function renderSettings(ctx: BotContext, edit: boolean): Promise<void> {
   const user = ctx.deps.repo.getUser(ctx.user.id) ?? ctx.user;
   const group = user.groupKey ? ctx.deps.service.group(user.groupKey) : null;
   const kb = settingsKeyboard(user, group, {
@@ -115,7 +115,7 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "group":
       await ctx.answerCallbackQuery();
       if (user.teacherMode) {
-        await ctx.reply("Сейчас включён режим преподавателя: «Сегодня», «Неделя» и напоминания — по твоим парам, «👥 Студенты» — расписание любой группы. Выключить: /prepod");
+        await ctx.reply("Сейчас включён режим преподавателя: «Сегодня», «Неделя» и напоминания — по твоим парам, «🔍 Найти → 👥 Студенты» — расписание любой группы. Выключить: /prepod");
         return;
       }
       await showGroupPicker(ctx);
@@ -208,7 +208,7 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "teachers": {
       await ctx.answerCallbackQuery();
       const list = ctx.deps.repo.watchedTeachers(ctx.user.id);
-      if (!list.length) return void (await ctx.reply(`Ты пока ни за кем не следишь. Открой ${btnRef(user, BTN.teachers, "/teachers")}, найди человека и нажми «Следить за преподом».`));
+      if (!list.length) return void (await ctx.reply(`Ты пока ни за кем не следишь. Открой ${panelRef(user, BTN.find, BTN.teachers, "/teachers")}, найди человека и нажми «Следить за преподом».`));
       const kb = new InlineKeyboard();
       for (const t of list) kb.text(`🔕 ${t.name}`, `twx:${t.teacherId}`).row();
       await ctx.reply(

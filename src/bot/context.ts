@@ -14,7 +14,7 @@ import type { ChatService } from "../chat/service.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
-  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "menu-refresh" | "ask" | "teacher" | "search" | "poisk" | "people" | "qa-import";
+  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "menu-refresh" | "ask" | "teacher" | "search" | "poisk" | "people" | "qa-import" | "support" | "support-reply";
   /** For broadcast: captured message to forward. */
   chatId?: number;
   messageId?: number;
@@ -24,6 +24,9 @@ export interface PendingState {
   text?: string;
   /** For broadcast: whether the admin asked to pin it to the board. */
   board?: boolean;
+  /** «Министерство Жалоб»: отправить анонимно; ticket — на какое обращение отвечает админ. */
+  anon?: boolean;
+  ticket?: number;
   expiresAt: number;
 }
 
