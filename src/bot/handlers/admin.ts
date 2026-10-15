@@ -585,7 +585,7 @@ async function showConfirm(ctx: BotContext, target: string, board: boolean, hasT
   const kb = new InlineKeyboard().text(`✅ Отправить ${users.length} чел.`, `bc:go:${messageId}`).row();
   if (hasText) kb.text(`📌 На доску объявлений: ${board ? `да, ${BOARD_HOURS} ч` : "нет"}`, "bc:board").row();
   kb.text("◀️ Другая аудитория", "bc:back").text("✖️ Отмена", "bc:cancel");
-  const note = hasText ? "\n\nДоска объявлений висит в «☰ Ещё → 🔔 Изменения» и видна всем, кто откроет этот экран. Вешай туда только важное." : "";
+  const note = hasText ? "\n\nДоска объявлений висит в «🗂 Ещё → 🔔 Изменения» и видна всем, кто откроет этот экран. Вешай туда только важное." : "";
   await ctx.editMessageText(`Отправить ${label}: <b>${users.length}</b> чел.?${note}\n\nЭто нельзя отменить после нажатия.`, { parse_mode: "HTML", reply_markup: kb });
 }
 
@@ -620,7 +620,7 @@ adminOnly.callbackQuery("bc:back", async (ctx) => {
  * клиенты Telegram вместе с сообщением могут убрать и меню.
  */
 export const MENU_REFRESH_TEXT =
-  "🆕 Новое меню: внизу только главное — 📅 Сегодня, 📅 Завтра, 🗓 Неделя. Группы, поток, преподаватели и вопрос ИИ — в «🔍 Найти» (а можно просто написать в чат номер группы, фамилию или дату). Изменения, календарь и настройки — в «☰ Ещё». Жалоба, ошибка в расписании или идея — «👥 Поддержка», можно анонимно.";
+  "🆕 Новое меню: внизу только главное — 📅 Сегодня, 📅 Завтра, 🗓 Неделя. Группы, поток, преподаватели и вопрос ИИ — в «🔍 Найти» (а можно просто написать в чат номер группы, фамилию или дату). Изменения, календарь и настройки — в «🗂 Ещё». Жалоба, ошибка в расписании или идея — «💬 Поддержка», можно анонимно.";
 
 export function menuRefreshTargets(users: User[]): User[] {
   return users.filter((u) => !u.blocked && u.menuMode !== "hidden" && (u.groupKey || u.teacherMode) && u.menuSent !== menuStampFor(u));
