@@ -15,7 +15,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext, Deps } from "./context.js";
 import type { User } from "../db/repo.js";
-import { BTN, btnRef, dayNav, menuFor, onboardingKeyboard, panelRef, weekNav } from "./keyboards.js";
+import { BTN, btnRef, dayNav, FIND_BTN, menuFor, onboardingKeyboard, panelRef, weekNav } from "./keyboards.js";
 import { esc } from "../schedule/format.js";
 import { samePerson } from "../text/match.js";
 import { mondayOf, todayMsk, type LocalDate } from "../time.js";
@@ -99,7 +99,7 @@ const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 async function announce(ctx: BotContext, fio: string, ref: PersonRef | null): Promise<void> {
   const found = ref ? "" : "\n\n<i>В справочнике портала тебя найти не получилось, поэтому расписание пока пустое. Напиши админу — он проверит, как ты записан на портале.</i>";
   await ctx.reply(
-    `👨‍🏫 <b>Режим преподавателя</b> — ${esc(fio)}\n\n${dayRefs(ctx)} — твои пары. ${cap(panelRef(ctx.user, BTN.find, BTN.students, "/groups"))} — расписание любой группы. Напоминания и календарь теперь тоже по твоему расписанию.\n\nВыключить: /prepod${found}`,
+    `👨‍🏫 <b>Режим преподавателя</b> — ${esc(fio)}\n\n${dayRefs(ctx)} — твои пары. ${cap(panelRef(ctx.user, BTN.find, FIND_BTN.students, "/groups"))} — расписание любой группы. Напоминания и календарь теперь тоже по твоему расписанию.\n\nВыключить: /prepod${found}`,
     { parse_mode: "HTML", reply_markup: menuFor(ctx.user) },
   );
   if (ref) await showOwnTeacher(ctx, todayMsk());
@@ -208,7 +208,7 @@ async function welcome(ctx: BotContext, fio: string, ref: PersonRef | null): Pro
   const name = nameAndPatronymic(fio);
   const missing = ref ? "" : "\n\n<i>В справочнике портала вас найти не получилось, поэтому расписание пока пустое. Мы проверим, как вы записаны на портале.</i>";
   await ctx.reply(
-    `Здравствуйте, ${esc(name)}! Рад вас видеть 👋\n\nЯ вас узнал, поэтому вместо группы здесь ваше собственное расписание: ${dayRefs(ctx)} — ваши пары, ${panelRef(ctx.user, BTN.find, BTN.students, "/groups")} — расписание любой группы. Спросить что угодно — ${panelRef(ctx.user, BTN.find, "💬 Спросить ИИ", "/search")}.\n\nВыключить этот режим: /prepod${missing}`,
+    `Здравствуйте, ${esc(name)}! Рад вас видеть 👋\n\nЯ вас узнал, поэтому вместо группы здесь ваше собственное расписание: ${dayRefs(ctx)} — ваши пары, ${panelRef(ctx.user, BTN.find, FIND_BTN.students, "/groups")} — расписание любой группы. Спросить что угодно — ${panelRef(ctx.user, BTN.find, FIND_BTN.ask, "/search")}.\n\nВыключить этот режим: /prepod${missing}`,
     { parse_mode: "HTML", reply_markup: menuFor(ctx.user) },
   );
   if (ref) await showOwnTeacher(ctx, todayMsk());
