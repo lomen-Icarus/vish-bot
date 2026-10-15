@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, groupPicker, menuFor, panelRef, MENU_MODE_LABELS, MENU_MODES, REMINDER_KINDS, reminderOff, REMINDERS, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL, type ReminderKind } from "../keyboards.js";
+import { BTN, FIND_BTN, groupPicker, menuFor, panelRef, MENU_MODE_LABELS, MENU_MODES, REMINDER_KINDS, reminderOff, REMINDERS, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL, type ReminderKind } from "../keyboards.js";
 import { THEMES, THEME_LABELS } from "../../render/themes.js";
 import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
@@ -208,7 +208,7 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "teachers": {
       await ctx.answerCallbackQuery();
       const list = ctx.deps.repo.watchedTeachers(ctx.user.id);
-      if (!list.length) return void (await ctx.reply(`Ты пока ни за кем не следишь. Открой ${panelRef(user, BTN.find, BTN.teachers, "/teachers")}, найди человека и нажми «Следить за преподом».`));
+      if (!list.length) return void (await ctx.reply(`Ты пока ни за кем не следишь. Открой ${panelRef(user, BTN.find, FIND_BTN.teachers, "/teachers")}, найди человека и нажми «Следить за преподом».`));
       const kb = new InlineKeyboard();
       for (const t of list) kb.text(`🔕 ${t.name}`, `twx:${t.teacherId}`).row();
       await ctx.reply(
