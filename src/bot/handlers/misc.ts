@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, btnRef, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor, menuHint, panelRef } from "../keyboards.js";
+import { BTN, btnRef, FIND_BTN, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor, menuHint, panelRef } from "../keyboards.js";
 import { autoTeacherStart, nameAndPatronymic } from "../teacherMode.js";
 import { knownFirstName } from "../social.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
@@ -117,7 +117,7 @@ miscHandlers.command("start", async (ctx) => {
   if (ctx.user.teacherMode) {
     const name = ctx.user.teacherName ? nameAndPatronymic(ctx.user.teacherName) : null;
     const u = ctx.user;
-    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} ${btnRef(u, BTN.today, "/today")} и ${btnRef(u, BTN.week, "/week")} — ваши пары, ${panelRef(u, BTN.find, BTN.students, "/groups")} — расписание любой группы.`, { parse_mode: "HTML", reply_markup: menuFor(u) });
+    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} ${btnRef(u, BTN.today, "/today")} и ${btnRef(u, BTN.week, "/week")} — ваши пары, ${panelRef(u, BTN.find, FIND_BTN.students, "/groups")} — расписание любой группы.`, { parse_mode: "HTML", reply_markup: menuFor(u) });
     await askOffer();
     return;
   }
@@ -348,7 +348,7 @@ async function localSearch(ctx: BotContext, query: string, opts: { freeText?: bo
   }
 
   // 3. Люди: преподаватели и студенты — тем же поиском, что и кнопки
-  // «👨‍🏫 Преподы» и «Где студент», с теми же подписями и карточкой.
+  // «👨‍🏫 Где препод» и «Где студент», с теми же подписями и карточкой.
   // Только для запроса, похожего на имя: целый вопрос разослал бы каждое своё
   // слово в поиск портала по очереди.
   const nameWords = query.trim().split(/\s+/).filter((w) => /\p{L}{3,}/u.test(w));

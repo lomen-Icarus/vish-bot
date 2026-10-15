@@ -56,28 +56,45 @@ const photo = (from = USER): Update => ({ update_id: mid, message: { message_id:
 const press = (data: string, from = USER): Update => ({ update_id: mid++, callback_query: { id: "1", from: { id: from, is_bot: false, first_name: "U" }, chat_instance: "1", data, message: { message_id: 3, date: 0, chat: { id: from, type: "private", first_name: "U" }, text: "x" } as never } });
 const markup = (c: Call | undefined): string => JSON.stringify(c?.payload.reply_markup ?? null);
 
-describe("панели «🔍 Найти» и «☰ Ещё»", () => {
+describe("панели «🔍 Найти» и «🗂 Ещё»", () => {
   it("«Найти»: группы, поток, преподы и вопрос ИИ; у преподавателя первая кнопка — «Студенты»", async () => {
     const deps = makeDeps({ ask: true });
     const calls = await run(deps, text("🔍 Найти"));
     const msg = calls.find((c) => c.method === "sendMessage")!;
     expect(String(msg.payload.text)).toContain("Просто напиши");
     for (const cb of ["hub:groups", "hub:stream", "hub:teachers", "hub:ask"]) expect(markup(msg)).toContain(cb);
-    expect(markup(msg)).toContain("📋 Группы");
+    expect(markup(msg)).toContain("👥 Группы");
+    expect(markup(msg)).toContain("👨‍🏫 Где препод");
     deps.repo.updateUser(USER, { teacherMode: true });
     expect(markup((await run(deps, text("🔍 Найти"))).find((c) => c.method === "sendMessage"))).toContain("👥 Студенты");
   });
 
-  it("«Ещё»: изменения, календарь, настройки, справка", async () => {
-    const msg = (await run(makeDeps(), text("☰ Ещё"))).find((c) => c.method === "sendMessage")!;
-    for (const cb of ["more:changes", "more:calendar", "more:settings", "more:help"]) expect(markup(msg)).toContain(cb);
+  it("«Найти» с поиском студента: «Где препод» и «Где студент» в одном ряду, «Спросить ИИ» — отдельным рядом ниже", async () => {
+    const deps = makeDeps({ ask: true });
+    (deps.config as { POISK: boolean }).POISK = true;
+    (deps as { students?: unknown }).students = {};
+    const msg = (await run(deps, text("🔍 Найти"))).find((c) => c.method === "sendMessage")!;
+    const rows = (msg.payload.reply_markup as { inline_keyboard: { text: string }[][] }).inline_keyboard.map((r) => r.map((b) => b.text));
+    expect(rows).toEqual([["👥 Группы", "🎓 Поток"], ["👨‍🏫 Где препод", "🕵️ Где студент"], ["💬 Спросить ИИ"]]);
+  });
+
+  it("«Ещё»: изменения, календарь, настройки, справка; старая подпись «☰ Ещё» тоже открывает", async () => {
+    for (const label of ["🗂 Ещё", "☰ Ещё"]) {
+      const msg = (await run(makeDeps(), text(label))).find((c) => c.method === "sendMessage")!;
+      for (const cb of ["more:changes", "more:calendar", "more:settings", "more:help"]) expect(markup(msg)).toContain(cb);
+    }
+  });
+
+  it("старая подпись «👥 Поддержка» открывает Министерство Жалоб", async () => {
+    const msg = (await run(makeDeps(), text("👥 Поддержка"))).find((c) => c.method === "sendMessage")!;
+    expect(String(msg.payload.text)).toContain("Министерство Жалоб");
   });
 });
 
 describe("🏛 Министерство Жалоб", () => {
   it("с ником: админ видит, от кого, и получает копию сообщения с кнопками «Ответить» / «Не принимать»", async () => {
     const deps = makeDeps();
-    const open = await run(deps, text("👥 Поддержка"));
+    const open = await run(deps, text("💬 Поддержка"));
     const panel = open.find((c) => c.method === "sendMessage")!;
     expect(String(panel.payload.text)).toContain("Министерство Жалоб");
     expect(String(panel.payload.text)).toContain("@lomen_Icarus");
@@ -255,9 +272,9 @@ describe("весь бот (createBot): порядок обработчиков, 
     calls.length = 0;
     await bot.handleUpdate(text("/foo"));
     expect(String(calls.find((c) => c.method === "sendMessage")!.payload.text)).toContain("Не знаю такой команды");
-    await bot.handleUpdate(text("☰ Ещё"));
+    await bot.handleUpdate(text("🗂 Ещё"));
     const keys = deps.repo.countersSince("2000-01-01").map((c) => c.key);
-    expect(keys).toContain("btn:☰ Ещё");
+    expect(keys).toContain("btn:🗂 Ещё");
     expect(keys).toContain("cmd:/foo");
     expect(keys).toContain("text:miss");
   });
