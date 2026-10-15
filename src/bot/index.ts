@@ -105,7 +105,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
   // Пасхалка: секретная /ershov (ни в одном меню её нет).
   bot.use(easterHandlers);
   bot.use(sourceHandlers);
-  // «🔍 Найти», «☰ Ещё», «🏛 Жалоба»: до misc — обращение в Министерство
+  // «🔍 Найти», «☰ Ещё», «👥 Поддержка»: до misc — обращение в Министерство
   // Жалоб может быть фото или документом, не только текстом.
   bot.use(hubHandlers);
   bot.use(miscHandlers);

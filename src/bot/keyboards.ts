@@ -26,7 +26,7 @@ export const BTN = {
   // Новое нижнее меню (2 × 3): «Найти» и «Ещё» открывают панели под сообщением.
   find: "🔍 Найти",
   more: "☰ Ещё",
-  complaint: "🏛 Жалоба",
+  complaint: "👥 Поддержка",
   // stream mode
   streamYesterday: "Поток: вчера",
   streamToday: "Поток: сегодня",
@@ -44,6 +44,7 @@ export const BTN = {
 export const LEGACY_BTN = {
   search: "🔍 Поиск",
   teachers: "👨‍🏫 Преподаватели",
+  complaint: "🏛 Жалоба",
 } as const;
 
 /** Every label of the reply keyboards; a pending flow must never swallow one. */

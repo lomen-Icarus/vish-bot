@@ -1,5 +1,5 @@
 /**
- * Новое нижнее меню 2 × 3: «🔍 Найти», «☰ Ещё» и «🏛 Жалоба» открывают панели
+ * Новое нижнее меню 2 × 3: «🔍 Найти», «☰ Ещё» и «👥 Поддержка» открывают панели
  * под сообщением. Кнопки панели ведут в те же разделы, что раньше были внизу
  * (группы, поток, преподаватели, изменения, календарь, настройки, справка),
  * поэтому сами разделы не менялись — изменился только вход в них.
@@ -13,7 +13,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, isMenuText } from "../keyboards.js";
+import { BTN, isMenuText, LEGACY_BTN } from "../keyboards.js";
 import { needGroup } from "../views.js";
 import { esc } from "../../schedule/format.js";
 import { logger } from "../../logger.js";
@@ -126,7 +126,7 @@ async function openSupport(ctx: BotContext): Promise<void> {
   setPending(ctx.deps, ctx.user.id, { kind: "support", anon: false }, SUPPORT_TTL_MS);
   await ctx.reply(supportText(ctx, false), { parse_mode: "HTML", reply_markup: supportKeyboard(false), link_preview_options: { is_disabled: true } });
 }
-hubHandlers.hears(BTN.complaint, openSupport);
+hubHandlers.hears([BTN.complaint, LEGACY_BTN.complaint], openSupport);
 hubHandlers.command("support", openSupport);
 
 hubHandlers.callbackQuery(/^sup:(anon|named|back)$/, async (ctx) => {
@@ -154,7 +154,7 @@ function confirmKeyboard(anon: boolean): InlineKeyboard {
 
 /**
  * Обращение: любое сообщение — текст, фото, документ, голосовое. Сразу не
- * уходит: «🏛 Жалоба» — постоянная кнопка, её жмут из любопытства, и
+ * уходит: «👥 Поддержка» — постоянная кнопка, её жмут из любопытства, и
  * набранное потом «14-24» иначе улетело бы админу. Поэтому — «Отправить?».
  */
 hubHandlers.on("message", async (ctx, next) => {

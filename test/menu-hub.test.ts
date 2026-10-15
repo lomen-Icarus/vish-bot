@@ -77,7 +77,7 @@ describe("панели «🔍 Найти» и «☰ Ещё»", () => {
 describe("🏛 Министерство Жалоб", () => {
   it("с ником: админ видит, от кого, и получает копию сообщения с кнопками «Ответить» / «Не принимать»", async () => {
     const deps = makeDeps();
-    const open = await run(deps, text("🏛 Жалоба"));
+    const open = await run(deps, text("👥 Поддержка"));
     const panel = open.find((c) => c.method === "sendMessage")!;
     expect(String(panel.payload.text)).toContain("Министерство Жалоб");
     expect(String(panel.payload.text)).toContain("@lomen_Icarus");
