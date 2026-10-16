@@ -24,12 +24,16 @@ export interface LoginCheck {
   groupId?: number | null;
 }
 
-let shared: Dispatcher | null = null;
+const dispatchers = new Map<string, Dispatcher>();
 function dispatcherFor(proxyUrl?: string): Dispatcher {
-  const tls = { ca: PORTAL_CA_CERTS };
-  if (proxyUrl) return new ProxyAgent({ uri: proxyUrl, requestTls: tls, connectTimeout: 15_000 });
-  shared ??= new Agent({ connect: { ...tls, timeout: 15_000 } });
-  return shared;
+  const key = proxyUrl ?? "";
+  let d = dispatchers.get(key);
+  if (!d) {
+    const tls = { ca: PORTAL_CA_CERTS };
+    d = proxyUrl ? new ProxyAgent({ uri: proxyUrl, requestTls: tls, connectTimeout: 15_000 }) : new Agent({ connect: { ...tls, timeout: 15_000 } });
+    dispatchers.set(key, d);
+  }
+  return d;
 }
 
 /** Разбор ответа на вход — отдельно, чтобы проверить его без сети. */
