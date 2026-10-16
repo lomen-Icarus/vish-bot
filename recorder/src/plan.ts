@@ -15,11 +15,13 @@ export function mskNow(at = new Date()): { date: string; minutes: number } {
 export const norm = (s: string): string => s.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
 
 /** Подходит ли эта пара под фильтры записи. */
-export function wanted(row: WebinarRow, cfg: Pick<RecorderConfig, "subjects" | "groups">): boolean {
+export function wanted(row: WebinarRow, cfg: Pick<RecorderConfig, "subjects" | "groups"> & Partial<Pick<RecorderConfig, "skipSubjects">>): boolean {
   // Вне расписания бывают закрытые встречи — их записывать нельзя.
   if (!row.scheduled) return false;
   if (!row.groups.length) return false;
   if (cfg.subjects.length && !cfg.subjects.some((s) => norm(row.subject).includes(norm(s)))) return false;
+  // Пары без слайдов (физкультура и т. п.) не занимают место для записи.
+  if (cfg.skipSubjects?.some((s) => norm(s) && norm(row.subject).includes(norm(s)))) return false;
   if (cfg.groups.length && !matchesGroups(cfg.groups, row.groups)) return false;
   return true;
 }
@@ -93,7 +95,7 @@ export interface DuePlan {
 export function planRecording(
   rows: WebinarRow[],
   now: { date: string; minutes: number },
-  cfg: Pick<RecorderConfig, "subjects" | "groups" | "leadMinutes" | "maxParallel">,
+  cfg: Pick<RecorderConfig, "subjects" | "groups" | "leadMinutes" | "maxParallel"> & Partial<Pick<RecorderConfig, "skipSubjects" | "profiles">>,
   state: RecordState,
   nowMs: number,
 ): DuePlan {
@@ -102,7 +104,13 @@ export function planRecording(
     const key = keyOf(now.date, r);
     return !state.done.has(key) && !state.active.has(key);
   });
-  const ready = open.filter((r) => r.joinId && (state.retryAt.get(keyOf(now.date, r)) ?? 0) <= nowMs).sort((a, b) => (a.startMinutes ?? 0) - (b.startMinutes ?? 0));
+  // Сначала пары, для групп которых заведён свой профиль (поток, куда пускают
+  // только своих: иначе их не записать никак), потом остальные; внутри — по
+  // времени начала. Одновременно открыто бывает 7 комнат, а мест — 1–2.
+  const own = (r: WebinarRow): number => (cfg.profiles?.some((p) => p.groups.length && matchesGroups(p.groups, r.groups)) ? 0 : 1);
+  const ready = open
+    .filter((r) => r.joinId && (state.retryAt.get(keyOf(now.date, r)) ?? 0) <= nowMs)
+    .sort((a, b) => own(a) - own(b) || (a.startMinutes ?? 0) - (b.startMinutes ?? 0));
   const free = Math.max(0, cfg.maxParallel - state.active.size);
   return { start: ready.slice(0, free), skipped: ready.slice(free), waiting: open.filter((r) => !ready.includes(r)) };
 }
