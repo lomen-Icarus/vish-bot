@@ -1,6 +1,7 @@
 import { InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext, Deps } from "./context.js";
 import { BTN, dayNav, FIND_BTN, weekNav } from "./keyboards.js";
+import { addDeckButtons } from "./handlers/slides.js";
 import { captionFits, clampHtml, esc, filterSubgroup, formatDay, formatWeek, type TeacherView } from "../schedule/format.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
@@ -143,9 +144,10 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
     } catch (err) {
       logger.warn({ err: String(err) }, "day image render failed, falling back to text");
     }
-    if (png && (await sendPoster(ctx, png, fileName, plan.text ? text : null, dayNav(date, today, { image: false, peekKey }), plan))) return;
+    if (png && (await sendPoster(ctx, png, fileName, plan.text ? text : null, addDeckButtons(dayNav(date, today, { image: false, peekKey }), deps, group, date), plan))) return;
   }
-  const keyboard = dayNav(date, today, { image: hasImages, peekKey });
+  // Записанная пара этого дня — кнопка «📎 Слайды» прямо под расписанием.
+  const keyboard = addDeckButtons(dayNav(date, today, { image: hasImages, peekKey }), deps, group, date);
   if (plan.editingText) {
     try {
       await ctx.editMessageText(clampHtml(text), { parse_mode: "HTML", reply_markup: keyboard });
@@ -229,6 +231,7 @@ export function featuresSections(deps: Deps, opts: { admin?: boolean; menuHidden
     `• ${BTN.find} → «${FIND_BTN.groups}» — расписание любой другой группы (или просто напиши её номер); твоя при этом не меняется.`,
     `• ${BTN.find} → «🎓 Поток» — весь поток сразу: где какая группа, мини-кнопки по группам, «${BTN.streamCommon}» — лекции, на которых вы сидите вместе.`,
     "• «🖼 Картинкой» — тот же день или неделя постером. В настройках выбирается оформление: тёмное, журнальное, плакатное или лента.",
+    ...(deps.config.SLIDES_TOKEN ? ["• 📎 Слайды записанных онлайн-пар: кнопка «📎 Слайды» под расписанием дня или просто напиши <code>слайды экономика</code>, <code>слайды история 09.10</code>; <code>слайды</code> — последние записи твоей группы."] : []),
     "",
     "<b>👨‍🏫 Преподаватели</b>",
     `• ${BTN.find} → «${FIND_BTN.teachers}» или просто фамилия в чат — найди по фамилии (опечатки бот прощает и предложит похожих). Покажет день, неделю и фото, а рядом с теми, кто ведёт у нас, стоит пометка <b>(ВИШ)</b> — в университете есть полные тёзки.`,
