@@ -6,6 +6,7 @@ import { settingsHandlers } from "./handlers/settings.js";
 import { adminHandlers } from "./handlers/admin.js";
 import { freeTextSearch, miscHandlers } from "./handlers/misc.js";
 import { hubHandlers } from "./handlers/hub.js";
+import { slidesHandlers } from "./handlers/slides.js";
 import { askHandlers } from "./handlers/ask.js";
 import { teacherHandlers } from "./handlers/teachers.js";
 import { streamHandlers } from "./handlers/stream.js";
@@ -108,6 +109,8 @@ export function createBot(deps: Deps): Bot<BotContext> {
   // «🔍 Найти», «🗂 Ещё», «💬 Поддержка»: до misc — обращение в Министерство
   // Жалоб может быть фото или документом, не только текстом.
   bot.use(hubHandlers);
+  // «слайды история» в личке и кнопка «📎 Слайды» под днём: до misc, где любой текст — поиск.
+  bot.use(slidesHandlers);
   bot.use(miscHandlers);
   bot.use(askHandlers);
   // Карточка человека, кнопки под ней и ввод фамилии — общие для преподавателей
