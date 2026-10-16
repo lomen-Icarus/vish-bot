@@ -31,6 +31,13 @@ export interface CaptureOptions {
   padPx?: number;
   /** Вызывается на каждом новом слайде — удобно для логов и живого прогресса. */
   onSlide?: (index: number, file: string) => void;
+  /**
+   * Продолжение прерванной съёмки той же пары: в папке уже лежат кадры до
+   * slide-<startIndex>.png, нумеруем дальше; lastFrame — последний из них,
+   * чтобы тот же слайд после перезахода не сохранился второй раз.
+   */
+  startIndex?: number;
+  lastFrame?: Buffer;
 }
 
 export interface CaptureResult {
@@ -238,10 +245,10 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
 
     const dialogState = { hidden: false };
     const deadline = Date.now() + opts.maxMinutes * 60_000;
-    let lastHash = "";
+    let lastHash = opts.lastFrame ? createHash("sha1").update(opts.lastFrame).digest("hex") : "";
     let pendingHash = "";
     let pendingShots = 0;
-    let index = 0;
+    let index = opts.startIndex ?? 0;
     let lastNumber: string | null = null;
 
     while (Date.now() < deadline) {
