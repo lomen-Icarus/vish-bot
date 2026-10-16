@@ -49,7 +49,7 @@ export interface TaskResult {
 }
 
 export interface SyncDeps {
-  botUrl: string;
+  botUrls: string[];
   token: string;
   store: AccountStore;
   privatePem: string;
@@ -128,27 +128,36 @@ let missingLogged = false;
 
 /** Один цикл обмена: забрать задания, выполнить, доложить (+ открытый ключ и состояние слотов). */
 export async function syncOnce(deps: SyncDeps): Promise<{ done: number } | null> {
-  const url = syncBase(deps.botUrl);
+  const bases = deps.botUrls.filter(Boolean).map(syncBase);
+  if (!bases.length) return null;
+  // По очереди: основной адрес, затем резерв — но только если до адреса не
+  // достучались (DNS, обрыв). Ответ бота (в т. ч. 404) — повод остановиться:
+  // резерв — тот же бот, другой ответ он не даст.
+  let base: string | null = null;
   let tasks: Task[] = [];
-  try {
-    const res = await undiciFetch(`${url}/rec/sync`, { headers: { Authorization: `Bearer ${deps.token}` }, signal: AbortSignal.timeout(30_000) });
-    if (res.status === 404) {
-      if (!missingLogged) log.debug({}, "у бота ещё нет ручки /rec/sync — жду следующего обновления бота");
-      missingLogged = true;
-      await res.text();
-      return null;
+  for (let i = 0; i < bases.length; i++) {
+    try {
+      const res = await undiciFetch(`${bases[i]}/rec/sync`, { headers: { Authorization: `Bearer ${deps.token}` }, signal: AbortSignal.timeout(30_000) });
+      base = bases[i]!;
+      if (res.status === 404) {
+        if (!missingLogged) log.debug({}, "у бота ещё нет ручки /rec/sync — жду следующего обновления бота");
+        missingLogged = true;
+        await res.text();
+        return null;
+      }
+      missingLogged = false;
+      if (res.status < 200 || res.status >= 300) {
+        log.warn({ status: res.status }, "бот не отдал заявки");
+        await res.text();
+        return null;
+      }
+      tasks = ((await res.json()) as { tasks?: Task[] }).tasks ?? [];
+      break;
+    } catch (err) {
+      log.debug({ err: String(err).slice(0, 150), via: i }, "не достучался до бота за заявками");
     }
-    missingLogged = false;
-    if (res.status < 200 || res.status >= 300) {
-      log.warn({ status: res.status }, "бот не отдал заявки");
-      await res.text();
-      return null;
-    }
-    tasks = ((await res.json()) as { tasks?: Task[] }).tasks ?? [];
-  } catch (err) {
-    log.debug({ err: String(err).slice(0, 150) }, "не достучался до бота за заявками");
-    return null;
   }
+  if (base === null) return null;
   const results: TaskResult[] = [];
   for (const task of tasks) {
     try {
@@ -159,7 +168,7 @@ export async function syncOnce(deps: SyncDeps): Promise<{ done: number } | null>
   }
   const portal = results.some((r) => r.code === "portal_down") ? "down" : "ok";
   try {
-    await undiciFetch(`${url}/rec/report`, {
+    await undiciFetch(`${base}/rec/report`, {
       method: "POST",
       headers: { Authorization: `Bearer ${deps.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ publicKey: deps.publicSpki, results, slots: deps.store.list().map(slotSummary), portal }),

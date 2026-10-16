@@ -104,6 +104,8 @@ export interface RecorderConfig {
   maxParallel: number;
   /** Куда отдавать готовую пачку слайдов: <PUBLIC_URL бота>/slides */
   botUrl: string;
+  /** Запасной адрес бота: если основной домен лёг (DNS), слайды и заявки идут сюда. */
+  botFallbackUrl: string;
   botToken: string;
   /** Куда складывать PDF и кадры. */
   outDir: string;
@@ -148,6 +150,7 @@ export function loadConfig(): RecorderConfig {
     maxMinutes: Math.max(5, num("MAX_MINUTES", 110)),
     maxParallel: Math.max(1, Math.floor(num("MAX_PARALLEL", 1))),
     botUrl: str("BOT_SLIDES_URL"),
+    botFallbackUrl: str("BOT_SLIDES_FALLBACK_URL"),
     botToken: str("SLIDES_TOKEN"),
     outDir: str("OUT_DIR", "./data/slides"),
     headless: str("HEADLESS", "1") !== "0",

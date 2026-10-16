@@ -84,7 +84,7 @@ describe("слайды: PDF больше лимита бота", () => {
     const pdfPath = path.join(out, "2026-10-09-1810-Экономика.pdf");
     writeFileSync(pdfPath, pdf);
     // Адрес без /slides — как был на VPS.
-    const sent = await deliverDeck({ url: `http://127.0.0.1:${port}`, token: TOKEN, pdfPath, pdf, meta, slides: 6, limit: Math.ceil(pdf.length / 2.5) });
+    const sent = await deliverDeck({ urls: [`http://127.0.0.1:${port}`], token: TOKEN, pdfPath, pdf, meta, slides: 6, limit: Math.ceil(pdf.length / 2.5) });
     expect(sent).toBe(got.length);
     expect(got.length).toBeGreaterThan(1);
     expect(got.map((d) => d.title)).toEqual(got.map((_, i) => `Лекция 5 · часть ${i + 1} из ${got.length}`));
@@ -101,12 +101,25 @@ describe("слайды: PDF больше лимита бота", () => {
     const pdfPath = path.join(out, "2026-10-09-1810-Экономика.pdf");
     writeFileSync(pdfPath, pdf);
     writeFileSync(`${pdfPath}.pending.json`, JSON.stringify({ meta, slides: 6 }));
-    expect(await deliverDeck({ url: `http://127.0.0.1:${port}/slides`, token: "wrong-token-wrong-token", pdfPath, pdf, meta, slides: 6, limit: Math.ceil(pdf.length / 2.5) })).toBe(0);
+    expect(await deliverDeck({ urls: [`http://127.0.0.1:${port}/slides`], token: "wrong-token-wrong-token", pdfPath, pdf, meta, slides: 6, limit: Math.ceil(pdf.length / 2.5) })).toBe(0);
     const pending = readdirSync(out).filter((f) => f.endsWith(".pending.json"));
     expect(pending.length).toBeGreaterThan(1);
     expect(pending.every((f) => f.includes("-часть-"))).toBe(true);
-    expect(await retryPending(out, `http://127.0.0.1:${port}/slides`, TOKEN)).toBe(pending.length);
+    expect(await retryPending(out, [`http://127.0.0.1:${port}/slides`], TOKEN)).toBe(pending.length);
     expect(got.length).toBe(pending.length);
+    expect(readdirSync(out).filter((f) => f.endsWith(".pending.json"))).toEqual([]);
+  });
+
+  it("основной адрес недоступен — PDF уходит на резервный", async () => {
+    const { got, port } = await bot();
+    const out = mkdtempSync(path.join(tmpdir(), "vish-rec-"));
+    const pdf = await makePdf(2);
+    const pdfPath = path.join(out, "2026-10-16-0950-Экономика.pdf");
+    writeFileSync(pdfPath, pdf);
+    // Первый адрес — порт, где никто не слушает (как лёгший домен); второй — живой бот.
+    const sent = await deliverDeck({ urls: [`http://127.0.0.1:1/slides`, `http://127.0.0.1:${port}/slides`], token: TOKEN, pdfPath, pdf, meta, slides: 2 });
+    expect(sent).toBe(1);
+    expect(got.length).toBe(1);
     expect(readdirSync(out).filter((f) => f.endsWith(".pending.json"))).toEqual([]);
   });
 });
