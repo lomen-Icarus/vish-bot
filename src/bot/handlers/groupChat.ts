@@ -14,21 +14,20 @@
  * («@ник это Фамилия Имя 12-23»); подписывает тему чата на слайды вебинаров;
  * ночью, если его долго не трогали, сначала сонно ворчит.
  */
-import { Composer, InlineKeyboard, InputFile, type Api } from "grammy";
+import { Composer, InlineKeyboard, type Api } from "grammy";
 import type { Message, UserFromGetMe } from "grammy/types";
 import { randomInt } from "node:crypto";
-import { readFileSync } from "node:fs";
 import type { BotContext, Deps } from "../context.js";
 import { chatAllowance, type ChatVerdict } from "../../chat/limits.js";
 import { featuresText, needGroup } from "../views.js";
-import { esc, plural } from "../../schedule/format.js";
-import { fmtDDMM, todayMsk, wallClock, type WallClock } from "../../time.js";
-import { deckFileName } from "../../notify/deckName.js";
+import { esc } from "../../schedule/format.js";
+import { todayMsk, wallClock, type WallClock } from "../../time.js";
 import { logger } from "../../logger.js";
 import type { ChatTool } from "../../chat/service.js";
 import type { QaMedia } from "../../chat/qa.js";
 import { featureReply, isNight, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, SLEEPY_IDLE_MS, sleepyLine } from "../../chat/social.js";
-import { confirmSlideSub, forgetIntro, handleIntro, handleSlidesRequest, introGroup, introTargets, introTool, knownFirstName, slidesTool, type DeckToSend, type SlidesReply, type SlidesToolState } from "../social.js";
+import { confirmSlideSub, forgetIntro, handleIntro, handleSlidesRequest, introGroup, introTargets, introTool, knownFirstName, slidesTool, type SlidesReply, type SlidesToolState } from "../social.js";
+import { sendDeck } from "../deck.js";
 
 export const groupChatHandlers = new Composer<BotContext>();
 
@@ -443,29 +442,6 @@ async function sendMedia(ctx: BotContext, media: QaMedia, caption: string): Prom
     // file_id умер (сменили токен бота) или гифку удалили — отвечаем хотя бы текстом.
     logger.warn({ err: String(err).slice(0, 200), kind: media.kind }, "group chat: media reply failed");
     await ctx.reply(text || "Тут должна была быть гифка, но она потерялась 😔", reply).catch(() => undefined);
-  }
-}
-
-/**
- * Прислать готовый PDF в чат (в ту же тему): по file_id, если он уже уходил
- * в Telegram, иначе файлом с диска — и запомнить file_id на будущее.
- */
-async function sendDeck(ctx: BotContext, deck: DeckToSend): Promise<void> {
-  let doc: string | InputFile;
-  try {
-    doc = deck.fileId ?? new InputFile(readFileSync(deck.file), deckFileName(deck));
-  } catch (err) {
-    logger.warn({ err: String(err).slice(0, 200), deck: deck.id }, "group chat: deck file unreadable");
-    await ctx.reply("Файл этой записи у меня потерялся 😔").catch(() => undefined);
-    return;
-  }
-  try {
-    const sent = await ctx.replyWithDocument(doc, { caption: `📎 ${deck.subject} · ${fmtDDMM(deck.date)} · ${deck.slides} ${plural(deck.slides, "слайд", "слайда", "слайдов")}` });
-    // Только file_id: отметку «разослано» и число получателей ставит рассылка.
-    if (!deck.fileId && sent.document?.file_id) ctx.deps.repo.setDeckFileId(deck.id, sent.document.file_id);
-  } catch (err) {
-    logger.warn({ err: String(err).slice(0, 200), deck: deck.id }, "group chat: deck send failed");
-    await ctx.reply("Не смог отправить файл, попробуй позже 🙂").catch(() => undefined);
   }
 }
 
