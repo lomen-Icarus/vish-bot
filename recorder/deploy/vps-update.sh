@@ -51,8 +51,14 @@ rm -rf "$DIR/app"
 mv "$DIR/app.new" "$DIR/app"
 rm -f "$ARCHIVE"
 
+# Свои флаги docker run (например, --add-host, пока у домена бота лежит DNS) —
+# в $DIR/docker.extra одной строкой: так они переживают каждый деплой.
+EXTRA=()
+[ -f "$DIR/docker.extra" ] && read -r -a EXTRA < "$DIR/docker.extra"
+
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --restart unless-stopped --init \
+  ${EXTRA[@]+"${EXTRA[@]}"} \
   --env-file "$DIR/.env" \
   -v "$DIR/data:/app/data" \
   --log-opt max-size=10m --log-opt max-file=3 \
