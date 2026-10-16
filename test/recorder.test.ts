@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import { earlierSlides } from "../recorder/src/deliver.js";
 import path from "node:path";
 import { joinWithProfiles, looksLikeLoginPage, parseWebinarRows } from "../recorder/src/portal.js";
 import { deckBaseName, keyOf, matchesGroups, mskNow, planRecording, profileSummary, profilesFor, wanted, type RecordState } from "../recorder/src/plan.js";
@@ -211,6 +213,14 @@ describe("записывалка: второй профиль для групп 
     expect((await joinWithProfiles(portal, { ...row, groups: ["ВИШ-12-23"] }, [{ ...p1, groups: ["11-24"] }])).errors[0]).toMatch(/ни один профиль/);
   });
 
+  it("профиль 3 — поток 4 курса: подходит ко всем названиям групп -23 с портала и ни к одному другому курсу", () => {
+    const p3 = { name: "3", authMode: "1" as const, login: "c-login", password: "c-secret", groups: ["11-23", "12-23", "13-23", "14-23"] };
+    for (const g of ["ВИШ-11-23(РЗиАЭС)", "ВИШ-11-23 (ЭиЭА)", "ВИШ-12-23", "ВИШ-12-23иот (11.03.04)", "ВИШ-13-23иот", "ВИШ-14-23"]) {
+      expect(profilesFor({ groups: [g] }, [p1, p2, p3]).map((p) => p.name)).toEqual(["3", "1"]);
+    }
+    for (const g of ["ВИШ-11-24иот (13.03.02)", "ВИШ-13-24иот (09.03.01)-2", "ВИШ-15-25иот (11.03.04)", "ОЗВИШ-12-25"]) expect(matchesGroups(p3.groups, [g])).toBe(false);
+  });
+
   it("в лог уходят только номера и группы профилей", () => {
     const summary = profileSummary([p1, p2]);
     expect(summary).toEqual(["1", "2 (11-25, 12-25, 13-25, 14-25, 15-25)"]);
@@ -229,6 +239,11 @@ describe("записывалка: второй профиль для групп 
         { name: "2", authMode: "1", login: "two", password: "p2", groups: ["11-25", "12-25", "13-25"] },
       ]);
       expect(cfg.warnings).toEqual([]);
+      Object.assign(process.env, { WEBINAR_LOGIN_3: "three", WEBINAR_PASSWORD_3: "p3", WEBINAR_GROUPS_3: "11-23,12-23,13-23,14-23" });
+      expect(loadConfig().profiles.map((p) => [p.name, p.authMode, p.groups.join(",")])).toEqual([["1", "2", ""], ["2", "1", "11-25,12-25,13-25"], ["3", "1", "11-23,12-23,13-23,14-23"]]);
+      delete process.env.WEBINAR_LOGIN_3;
+      delete process.env.WEBINAR_PASSWORD_3;
+      delete process.env.WEBINAR_GROUPS_3;
       process.env.WEBINAR_AUTH_2 = "4";
       expect(loadConfig().profiles[1]!.authMode).toBe("4");
       process.env.WEBINAR_PASSWORD_2 = "";
@@ -243,5 +258,20 @@ describe("записывалка: второй профиль для групп 
       for (const k of Object.keys(process.env).filter((k) => k.startsWith("WEBINAR_"))) delete process.env[k];
       Object.assign(process.env, saved);
     }
+  });
+});
+
+describe("записывалка: перезапуск посреди пары не стирает снятое", () => {
+  it("PDF пары ещё нет — кадры остаются и идут по номерам; PDF уже есть — папка чистится", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "rec-resume-"));
+    const dir = path.join(root, "2026-10-16-0950-Экономика");
+    const pdf = `${dir}.pdf`;
+    mkdirSync(dir);
+    for (const f of ["slide-002.png", "slide-010.png", "slide-001.png", "notes.txt"]) writeFileSync(path.join(dir, f), f);
+    expect(earlierSlides(dir, pdf).map((f) => path.basename(f))).toEqual(["slide-001.png", "slide-002.png", "slide-010.png"]);
+    expect(earlierSlides(path.join(root, "нет-такой"), `${root}/нет-такой.pdf`)).toEqual([]);
+    writeFileSync(pdf, "pdf");
+    expect(earlierSlides(dir, pdf)).toEqual([]);
+    expect(existsSync(dir)).toBe(false);
   });
 });
