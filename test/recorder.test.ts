@@ -303,3 +303,24 @@ describe("записывалка: перезапуск посреди пары �
     expect(existsSync(dir)).toBe(false);
   });
 });
+
+describe("записывалка: проверка учётки через личный кабинет", () => {
+  it("ответ на вход: 302 в кабинет — вошли; «Неверн…» — пароль не тот; остальное — кабинет недоступен, а не плохой пароль", async () => {
+    const { loginVerdict, groupIdFromTtPage } = await import("../recorder/src/lk.js");
+    expect(loginVerdict(302, "/student/index.php", "")).toBe("ok");
+    expect(loginVerdict(200, null, "<b>Неверный логин или пароль</b>")).toBe("bad");
+    expect(loginVerdict(502, null, "Bad gateway")).toBe("down");
+    expect(loginVerdict(200, null, "<html>техработы</html>")).toBe("down");
+    expect(loginVerdict(302, "/info/login.php", "")).toBe("down");
+    expect(groupIdFromTtPage('<a href="https://tt.chuvsu.ru/index/grouptt/gr/8526">Расписание</a>')).toBe(8526);
+    expect(groupIdFromTtPage("<html></html>")).toBeNull();
+  });
+
+  it("11-23: код «11-23(эиэа)» различает две группы, хотя портал пишет одну со пробелом, другую без; голый «11-23» — обе", () => {
+    expect(matchesGroups(["11-23(эиэа)"], ["ВИШ-11-23 (ЭиЭА)"])).toBe(true);
+    expect(matchesGroups(["11-23(эиэа)"], ["ВИШ-11-23(РЗиАЭС)"])).toBe(false);
+    expect(matchesGroups(["11-23 (рзиаэс)"], ["ВИШ-11-23(РЗиАЭС)"])).toBe(true);
+    expect(matchesGroups(["11-23"], ["ВИШ-11-23 (ЭиЭА)"])).toBe(true);
+    expect(matchesGroups(["11-23"], ["ВИШ-11-23(РЗиАЭС)"])).toBe(true);
+  });
+});

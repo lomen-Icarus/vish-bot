@@ -84,7 +84,7 @@
 4. Запустить Actions → «CI & Deploy» → Run workflow (или дождаться следующего мёржа). Шаг «Deploy recorder to the VPS» покажет последние строки лога записывалки; упавший контейнер делает шаг красным.
 5. Руками на VPS: `docker logs -f vish-recorder` — лог, `docker restart vish-recorder` — перезапуск, слайды и кадры — в `/opt/vish-recorder/data`. **После правки `.env` restart не помогает**: Docker читает `--env-file` только при создании контейнера. Пересоздать (записи на диске не пропадут):
    ```
-   docker rm -f vish-recorder && docker run -d --name vish-recorder --restart unless-stopped --init --env-file /opt/vish-recorder/.env -v /opt/vish-recorder/data:/app/data --log-opt max-size=10m --log-opt max-file=3 vish-recorder:latest
+   docker rm -f vish-recorder && docker run -d --name vish-recorder --restart unless-stopped --init $(cat /opt/vish-recorder/docker.extra 2>/dev/null) --env-file /opt/vish-recorder/.env -v /opt/vish-recorder/data:/app/data --log-opt max-size=10m --log-opt max-file=3 vish-recorder:latest
    ```
    Или просто запустить деплой (Actions → «CI & Deploy» → Run workflow) — он пересоздаёт контейнер сам.
 
@@ -102,6 +102,18 @@
 5. Проверить: `docker logs vish-recorder --tail 20`. В строке «записывалка вебинаров запущена» в `profiles` должно появиться `3 (11-23, 12-23, 13-23, 14-23)` — там только номера и группы, без логинов. Ошибка «Профиль 3: нужны оба…» — не хватает логина или пароля. Когда начнётся пара этих групп, в строке «захожу на вебинар» будет `profile: "3"`.
 
 `.env` деплой не трогает (в архив он не попадает), поэтому правка переживает все следующие обновления.
+
+**Свои флаги `docker run` (`docker.extra`).** Если контейнеру нужен лишний флаг — например, адрес бота вручную, пока у его домена лежит DNS, — его пишут одной строкой в `/opt/vish-recorder/docker.extra`, и деплой добавляет его при каждом пересоздании:
+```
+echo "--add-host slides.secretvish.ru:135.125.188.210" > /opt/vish-recorder/docker.extra
+```
+DNS починили — файл удалить (`rm /opt/vish-recorder/docker.extra`) и пересоздать контейнер.
+
+**Проверить учётку студента без вебинара.** Вход в личный кабинет lk.chuvsu.ru тем же логином и паролем, что у профиля в `.env`, и группа студента по расписанию. Печатает только «вход прошёл / не прошёл» и группу:
+```
+docker exec vish-recorder node dist/probe-account.js 3
+```
+(3 — номер профиля: `WEBINAR_LOGIN_3`). «Кабинет не ответил как обычно» — это сбой портала, а не неверный пароль.
 
 **Вариант Б — сервер в панели Pterodactyl.** Обычный Node-egg не годится: Chromium нужны системные библиотеки, а `npx playwright install --with-deps` ставит их через `apt` от root, которого в контейнере панели нет; к тому же yolks `nodejs_21` — это Node 21 (записывалке нужен ≥ 22.19), а `npx playwright` тянет чужую версию, не совпадающую с закреплённым `playwright-core`. Поэтому для панели есть свой образ — `ghcr.io/lomen-icarus/vish-recorder:latest` (`recorder/Dockerfile.ptero`: образ Playwright с Chromium и Node 24 плюс точка входа под Wings; кода в нём нет, код заливает workflow). Его собирает workflow «Recorder image» при изменении Dockerfile, точки входа или версии `playwright-core` (и вручную: Actions → Recorder image → Run workflow). Настройка:
 

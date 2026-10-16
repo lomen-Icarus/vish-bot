@@ -8,6 +8,7 @@
  * отдаём боту, а он рассылает его тем, у кого эта пара в расписании.
  */
 import { mkdirSync, readFileSync } from "node:fs";
+import { totalmem } from "node:os";
 import path from "node:path";
 import { loadConfig, loadDotEnv, type RecorderConfig } from "./config.js";
 import { joinWithProfiles, Portal, parseWebinarRows, type WebinarRow } from "./portal.js";
@@ -92,6 +93,10 @@ async function main(): Promise<void> {
   const portal = new Portal({ proxyUrl: process.env.HTTPS_PROXY });
   await portal.loginAsGuest();
   // Профили — только номер и группы: логины и пароли в лог не попадают.
+  // Каждая запись — свой Chromium, ~0,5–1 ГБ: честно предупреждаем, если места на столько не хватит.
+  const needMb = cfg.maxParallel * 700;
+  const haveMb = Math.round(totalmem() / 1024 / 1024);
+  if (needMb > haveMb) log.warn({ maxParallel: cfg.maxParallel, needMb, haveMb }, "MAX_PARALLEL больше, чем потянет память: при стольких парах сразу браузеры будут падать");
   log.info({ faculty: cfg.facultyId, subjects: cfg.subjects, skip: cfg.skipSubjects, groups: cfg.groups, maxParallel: cfg.maxParallel, lead: cfg.leadMinutes, profiles: profileSummary(cfg.profiles) }, "записывалка вебинаров запущена");
   for (const w of cfg.warnings) log.warn(w);
 
