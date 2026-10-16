@@ -20,8 +20,8 @@
  * В логах — только номер заявки, группа и результат.
  */
 import { fetch as undiciFetch } from "undici";
-import { AccountStore, type Slot } from "./accounts.js";
-import { openEnvelope, type Envelope } from "./crypto.js";
+import { AccountStore, CHECK_EVERY_MS, type Slot } from "./accounts.js";
+import { envelopeAad, openEnvelope, type Envelope } from "./crypto.js";
 import { checkStudentLogin, lkAlive } from "./lk.js";
 import { log } from "./log.js";
 
@@ -59,7 +59,7 @@ export interface SyncDeps {
   groupName?: (groupId: number) => Promise<string | null>;
 }
 
-function base(botUrl: string): string {
+export function syncBase(botUrl: string): string {
   const trimmed = botUrl.replace(/\/+$/, "");
   try {
     const u = new URL(trimmed);
@@ -75,7 +75,7 @@ async function verifyLogin(task: Task, deps: SyncDeps): Promise<TaskResult> {
   if (!task.envelope) return { id: task.id, requestId: task.requestId, code: "bad_envelope" };
   let creds: { login: string; password: string };
   try {
-    creds = await openEnvelope(deps.privatePem, task.envelope, `vish-rec|${task.userId}|${task.group}`);
+    creds = await openEnvelope(deps.privatePem, task.envelope, envelopeAad(task.userId, task.group));
   } catch {
     return { id: task.id, requestId: task.requestId, code: "bad_envelope" };
   }
@@ -90,7 +90,7 @@ async function installSlot(task: Task, deps: SyncDeps): Promise<TaskResult> {
   if (!task.envelope) return { id: task.id, requestId: task.requestId, code: "bad_envelope" };
   let creds: { login: string; password: string };
   try {
-    creds = await openEnvelope(deps.privatePem, task.envelope, `vish-rec|${task.userId}|${task.group}`);
+    creds = await openEnvelope(deps.privatePem, task.envelope, envelopeAad(task.userId, task.group));
   } catch {
     return { id: task.id, requestId: task.requestId, code: "bad_envelope" };
   }
@@ -112,7 +112,7 @@ export async function runTask(task: Task, deps: SyncDeps): Promise<TaskResult> {
       if (!slot) return { id: task.id, requestId: task.requestId, code: "removed" };
       const check = await checkStudentLogin(slot.login, slot.password, { proxyUrl: deps.proxyUrl });
       if (check.verdict === "ok") {
-        deps.store.update(task.group, { status: "ok", failures: 0, lastOkAt: new Date().toISOString(), nextCheckAt: Date.now() + 6 * 60 * 60 * 1000 });
+        deps.store.update(task.group, { status: "ok", failures: 0, lastOkAt: new Date().toISOString(), nextCheckAt: Date.now() + CHECK_EVERY_MS });
         return { id: task.id, requestId: task.requestId, code: "login_ok" };
       }
       return { id: task.id, requestId: task.requestId, code: check.verdict === "down" ? "portal_down" : "login_failed" };
@@ -128,7 +128,7 @@ let missingLogged = false;
 
 /** Один цикл обмена: забрать задания, выполнить, доложить (+ открытый ключ и состояние слотов). */
 export async function syncOnce(deps: SyncDeps): Promise<{ done: number } | null> {
-  const url = base(deps.botUrl);
+  const url = syncBase(deps.botUrl);
   let tasks: Task[] = [];
   try {
     const res = await undiciFetch(`${url}/rec/sync`, { headers: { Authorization: `Bearer ${deps.token}` }, signal: AbortSignal.timeout(30_000) });

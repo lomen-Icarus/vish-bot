@@ -117,6 +117,7 @@ async function main(): Promise<void> {
   const dataDir = dirname(cfg.outDir);
   const keys = loadOrCreateKeys(`${dataDir}/keys`);
   const store = AccountStore.inDir(dataDir);
+  log.info({ keys: `${dataDir}/keys/accounts.key`, accounts: `${dataDir}/accounts.json`, slots: store.list().length }, "слоты студентов и ключ шифрования");
   // Профили — только номер и группы: логины и пароли в лог не попадают.
   // Каждая запись — свой Chromium, ~0,5–1 ГБ: честно предупреждаем, если места на столько не хватит.
   const needMb = cfg.maxParallel * 700;
@@ -129,6 +130,8 @@ async function main(): Promise<void> {
   const skippedLogged = new Set<string>();
   let pendingAt = 0;
   let syncAt = 0;
+  let syncing = false;
+  let checking = false;
   for (;;) {
     try {
       const now = mskNow();
@@ -141,11 +144,20 @@ async function main(): Promise<void> {
         const resent = await retryPending(cfg.outDir, cfg.botUrl, cfg.botToken);
         if (resent) log.info({ resent }, "непринятые пачки слайдов отданы боту");
       }
-      if (Date.now() - syncAt > SYNC_EVERY_MS) {
+      // Заявки на запись и проверка «аккаунт жив» — параллельно записи, не мешая
+      // ей; каждая со своим «уже идёт», чтобы долгий проход не наложился на новый.
+      if (Date.now() - syncAt > SYNC_EVERY_MS && !syncing) {
         syncAt = Date.now();
-        // Заявки на запись и проверка «аккаунт жив» — параллельно записи, не мешая ей.
-        void syncOnce({ botUrl: cfg.botUrl, token: cfg.botToken, store, privatePem: keys.privatePem, publicSpki: keys.publicSpki, proxyUrl: process.env.HTTPS_PROXY, groupName: (id) => portal.groupName(id) }).catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "обмен заявками споткнулся"));
-        void checkSlotLiveness(store, process.env.HTTPS_PROXY).catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "проверка аккаунтов споткнулась"));
+        syncing = true;
+        void syncOnce({ botUrl: cfg.botUrl, token: cfg.botToken, store, privatePem: keys.privatePem, publicSpki: keys.publicSpki, proxyUrl: process.env.HTTPS_PROXY, groupName: (id) => portal.groupName(id) })
+          .catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "обмен заявками споткнулся"))
+          .finally(() => (syncing = false));
+      }
+      if (!checking) {
+        checking = true;
+        void checkSlotLiveness(store, process.env.HTTPS_PROXY)
+          .catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "проверка аккаунтов споткнулась"))
+          .finally(() => (checking = false));
       }
       const html = await portal.webinarPage(now.date, cfg.facultyId);
       const plan = planRecording(parseWebinarRows(html), now, { ...cfg, profiles: [...cfg.profiles, ...store.profiles()] }, state, Date.now());
