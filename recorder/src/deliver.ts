@@ -44,24 +44,25 @@ export async function buildPdf(files: string[], outFile: string, meta: DeckMeta)
  * Отдаёт PDF боту: маленький — одним запросом, большой — кусками меньше 1 МБ
  * (прокси перед ботом больше не пропускает), см. upload.ts.
  */
-export async function deliver(opts: { url: string; token: string; pdf: Buffer; meta: DeckMeta; slides: number }): Promise<boolean> {
-  if (!opts.url || !opts.token) {
+export async function deliver(opts: { urls: string[]; token: string; pdf: Buffer; meta: DeckMeta; slides: number }): Promise<boolean> {
+  const urls = opts.urls.filter(Boolean);
+  if (!urls.length || !opts.token) {
     log.warn({}, "BOT_SLIDES_URL/SLIDES_TOKEN не заданы: PDF остаётся только на диске");
     return false;
   }
-  try {
-    const ok = await uploadDeck({
-      url: opts.url,
-      token: opts.token,
-      pdf: opts.pdf,
-      meta: Buffer.from(JSON.stringify({ ...opts.meta, slides: opts.slides }), "utf8").toString("base64"),
-    });
-    if (ok) log.info({ slides: opts.slides, bytes: opts.pdf.length }, "слайды отданы боту");
-    return ok;
-  } catch (err) {
-    log.warn({ err: String(err) }, "не получилось отдать слайды боту");
-    return false;
+  const meta = Buffer.from(JSON.stringify({ ...opts.meta, slides: opts.slides }), "utf8").toString("base64");
+  // Основной адрес и резервный: домен бота мог лечь (DNS), тогда пробуем запасной.
+  for (let i = 0; i < urls.length; i++) {
+    try {
+      if (await uploadDeck({ url: urls[i]!, token: opts.token, pdf: opts.pdf, meta })) {
+        log.info({ slides: opts.slides, bytes: opts.pdf.length, via: i === 0 ? "основной" : "резерв" }, "слайды отданы боту");
+        return true;
+      }
+    } catch (err) {
+      log.warn({ err: String(err), via: i }, "не получилось отдать слайды боту");
+    }
   }
+  return false;
 }
 
 /**
@@ -116,10 +117,10 @@ export async function splitDeckFile(pdfPath: string, pdf: Buffer, meta: DeckMeta
 }
 
 /** Отдать боту PDF с диска (большой — частями); что не принято — останется в очереди. */
-export async function deliverDeck(opts: { url: string; token: string; pdfPath: string; pdf: Buffer; meta: DeckMeta; slides: number; limit?: number }): Promise<number> {
+export async function deliverDeck(opts: { urls: string[]; token: string; pdfPath: string; pdf: Buffer; meta: DeckMeta; slides: number; limit?: number }): Promise<number> {
   let sent = 0;
   for (const part of await splitDeckFile(opts.pdfPath, opts.pdf, opts.meta, opts.slides, opts.limit)) {
-    if (await deliver({ url: opts.url, token: opts.token, pdf: part.pdf, meta: part.meta, slides: part.slides })) {
+    if (await deliver({ urls: opts.urls, token: opts.token, pdf: part.pdf, meta: part.meta, slides: part.slides })) {
       rmSync(`${part.pdfPath}${PENDING}`, { force: true });
       sent++;
     } else {
@@ -165,8 +166,8 @@ export function savePending(pdfPath: string, meta: DeckMeta, slides: number): vo
  * Повторно отдать боту всё, что он не принял (бот перезапускался, сеть
  * моргнула). Возвращает, сколько пачек ушло.
  */
-export async function retryPending(outDir: string, url: string, token: string): Promise<number> {
-  if (!url || !token || !existsSync(outDir)) return 0;
+export async function retryPending(outDir: string, urls: string[], token: string): Promise<number> {
+  if (!urls.filter(Boolean).length || !token || !existsSync(outDir)) return 0;
   let sent = 0;
   for (const name of readdirSync(outDir)) {
     if (!name.endsWith(PENDING)) continue;
@@ -178,7 +179,7 @@ export async function retryPending(outDir: string, url: string, token: string): 
         continue;
       }
       const { meta, slides } = JSON.parse(readFileSync(marker, "utf8")) as { meta: DeckMeta; slides: number };
-      sent += await deliverDeck({ url, token, pdfPath, pdf: readFileSync(pdfPath), meta, slides });
+      sent += await deliverDeck({ urls, token, pdfPath, pdf: readFileSync(pdfPath), meta, slides });
     } catch (err) {
       log.warn({ err: String(err), file: name }, "повторная отправка слайдов не удалась");
     }
