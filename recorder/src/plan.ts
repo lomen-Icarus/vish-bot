@@ -12,7 +12,12 @@ export function mskNow(at = new Date()): { date: string; minutes: number } {
   return { date: shifted.toISOString().slice(0, 10), minutes: shifted.getUTCHours() * 60 + shifted.getUTCMinutes() };
 }
 
-export const norm = (s: string): string => s.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+/**
+ * Сравнимая форма: регистр, «ё», пробелы. Пробел перед скобкой убираем: портал
+ * пишет то «ВИШ-11-23(РЗиАЭС)», то «ВИШ-11-23 (ЭиЭА)», а код «11-23(эиэа)»
+ * должен находить своё и не находить чужое.
+ */
+export const norm = (s: string): string => s.toLowerCase().replace(/ё/g, "е").replace(/\s+/g, " ").replace(/\s*\(/g, "(").trim();
 
 /** Подходит ли эта пара под фильтры записи. */
 export function wanted(row: WebinarRow, cfg: Pick<RecorderConfig, "subjects" | "groups"> & Partial<Pick<RecorderConfig, "skipSubjects">>): boolean {
