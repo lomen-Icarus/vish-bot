@@ -9,12 +9,18 @@
  */
 import { mkdirSync, readFileSync } from "node:fs";
 import { totalmem } from "node:os";
+import { dirname } from "node:path";
 import path from "node:path";
 import { loadConfig, loadDotEnv, type RecorderConfig } from "./config.js";
 import { joinWithProfiles, Portal, parseWebinarRows, type WebinarRow } from "./portal.js";
 import { captureWebinar } from "./capture.js";
 import { buildPdf, deckFileName, deliverDeck, earlierSlides, retryPending, type DeckMeta } from "./deliver.js";
 import { deckBaseName, keyOf, mskNow, planRecording, profileSummary, type RecordState } from "./plan.js";
+import { AccountStore, CHECK_EVERY_MS } from "./accounts.js";
+import { loadOrCreateKeys } from "./crypto.js";
+import { lkAlive, checkStudentLogin } from "./lk.js";
+import { runLiveness, type LiveTarget } from "./liveness.js";
+import { syncOnce } from "./sync.js";
 import { log } from "./log.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -23,6 +29,8 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 const RETRY_MS = 60_000;
 /** Как часто пробовать заново отдать боту непринятые пачки. */
 const PENDING_EVERY_MS = 5 * 60_000;
+/** Как часто спрашивать у бота заявки на запись. */
+const SYNC_EVERY_MS = 60_000;
 
 /**
  * done — пару можно забыть (записали, или комнату закрыли); retry — не зашли
@@ -30,7 +38,7 @@ const PENDING_EVERY_MS = 5 * 60_000;
  */
 type Outcome = "done" | "retry";
 
-async function recordOne(cfg: RecorderConfig, portal: Portal, date: string, row: WebinarRow): Promise<Outcome> {
+async function recordOne(cfg: RecorderConfig, store: AccountStore, portal: Portal, date: string, row: WebinarRow): Promise<Outcome> {
   const meta: DeckMeta = {
     date,
     subject: row.subject,
@@ -41,13 +49,15 @@ async function recordOne(cfg: RecorderConfig, portal: Portal, date: string, row:
     endMinutes: row.endMinutes,
   };
   // Профиль для групп этой пары — первым; не пустили — общий.
-  const join = await joinWithProfiles(portal, row, cfg.profiles);
+  const join = await joinWithProfiles(portal, row, [...cfg.profiles, ...store.profiles()]);
   if (!join.url) {
     // Часто это «ведущий ещё не открыл комнату»: пара идёт — пробуем снова.
     log.warn({ subject: row.subject, groups: row.groups, err: join.errors }, "портал не дал ссылку на комнату, попробую ещё");
     return "retry";
   }
   log.info({ subject: row.subject, teacher: row.teacher, groups: row.groups, profile: join.profile }, "захожу на вебинар");
+  // Заход под учёткой студента — уже проверка «аккаунт жив»: отодвигаем плановую.
+  if (join.profile?.startsWith("slot:")) store.update(join.profile.slice(5), { status: "ok", failures: 0, lastOkAt: new Date().toISOString(), nextCheckAt: Date.now() + CHECK_EVERY_MS });
   // Папка кадров своя у каждой пары (дата + время + предмет). Если съёмку
   // этой пары прервали (перезапуск, повторный заход), снятое до этого
   // остаётся и съёмка продолжается с того же номера; уже собранную пачку
@@ -86,23 +96,39 @@ async function recordOne(cfg: RecorderConfig, portal: Portal, date: string, row:
   return "done";
 }
 
+/** Проверить слоты, которым пора; о «доступ потерян» сообщить боту (он уведомит владельца). */
+async function checkSlotLiveness(store: AccountStore, proxyUrl?: string): Promise<void> {
+  const targets: LiveTarget[] = store
+    .list()
+    .filter((s) => s.status === "ok")
+    .map((s) => ({ key: `slot:${s.group}`, login: s.login, password: s.password, state: { status: s.status, failures: s.failures, lastOkAt: s.lastOkAt, nextCheckAt: s.nextCheckAt }, save: (patch) => store.update(s.group, patch) }));
+  if (!targets.length) return;
+  const res = await runLiveness(targets, { check: (l, p) => checkStudentLogin(l, p, { proxyUrl }), alive: () => lkAlive({ proxyUrl }) });
+  for (const t of res.transitions) log.warn({ slot: t.key }, "учётка слота перестала пускать — доступ потерян");
+}
+
 async function main(): Promise<void> {
   loadDotEnv();
   const cfg = loadConfig();
   mkdirSync(cfg.outDir, { recursive: true });
   const portal = new Portal({ proxyUrl: process.env.HTTPS_PROXY });
   await portal.loginAsGuest();
+  // Слоты студентов и ключ шифрования — рядом со слайдами, в data/.
+  const dataDir = dirname(cfg.outDir);
+  const keys = loadOrCreateKeys(`${dataDir}/keys`);
+  const store = AccountStore.inDir(dataDir);
   // Профили — только номер и группы: логины и пароли в лог не попадают.
   // Каждая запись — свой Chromium, ~0,5–1 ГБ: честно предупреждаем, если места на столько не хватит.
   const needMb = cfg.maxParallel * 700;
   const haveMb = Math.round(totalmem() / 1024 / 1024);
   if (needMb > haveMb) log.warn({ maxParallel: cfg.maxParallel, needMb, haveMb }, "MAX_PARALLEL больше, чем потянет память: при стольких парах сразу браузеры будут падать");
-  log.info({ faculty: cfg.facultyId, subjects: cfg.subjects, skip: cfg.skipSubjects, groups: cfg.groups, maxParallel: cfg.maxParallel, lead: cfg.leadMinutes, profiles: profileSummary(cfg.profiles) }, "записывалка вебинаров запущена");
+  log.info({ faculty: cfg.facultyId, subjects: cfg.subjects, skip: cfg.skipSubjects, groups: cfg.groups, maxParallel: cfg.maxParallel, lead: cfg.leadMinutes, profiles: profileSummary([...cfg.profiles, ...store.profiles()]) }, "записывалка вебинаров запущена");
   for (const w of cfg.warnings) log.warn(w);
 
   const state: RecordState = { done: new Set(), active: new Set(), retryAt: new Map() };
   const skippedLogged = new Set<string>();
   let pendingAt = 0;
+  let syncAt = 0;
   for (;;) {
     try {
       const now = mskNow();
@@ -115,8 +141,14 @@ async function main(): Promise<void> {
         const resent = await retryPending(cfg.outDir, cfg.botUrl, cfg.botToken);
         if (resent) log.info({ resent }, "непринятые пачки слайдов отданы боту");
       }
+      if (Date.now() - syncAt > SYNC_EVERY_MS) {
+        syncAt = Date.now();
+        // Заявки на запись и проверка «аккаунт жив» — параллельно записи, не мешая ей.
+        void syncOnce({ botUrl: cfg.botUrl, token: cfg.botToken, store, privatePem: keys.privatePem, publicSpki: keys.publicSpki, proxyUrl: process.env.HTTPS_PROXY, groupName: (id) => portal.groupName(id) }).catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "обмен заявками споткнулся"));
+        void checkSlotLiveness(store, process.env.HTTPS_PROXY).catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "проверка аккаунтов споткнулась"));
+      }
       const html = await portal.webinarPage(now.date, cfg.facultyId);
-      const plan = planRecording(parseWebinarRows(html), now, cfg, state, Date.now());
+      const plan = planRecording(parseWebinarRows(html), now, { ...cfg, profiles: [...cfg.profiles, ...store.profiles()] }, state, Date.now());
       if (plan.waiting.length) log.debug({ waiting: plan.waiting.map((r) => r.subject) }, "пара скоро, но кнопки «Подключиться» ещё нет или ждём повтора");
       for (const r of plan.skipped) {
         const key = keyOf(now.date, r);
@@ -127,7 +159,7 @@ async function main(): Promise<void> {
       for (const row of plan.start) {
         const key = keyOf(now.date, row);
         state.active.add(key);
-        void recordOne(cfg, portal, now.date, row)
+        void recordOne(cfg, store, portal, now.date, row)
           .then((outcome) => {
             if (outcome === "done") state.done.add(key);
             else state.retryAt.set(key, Date.now() + RETRY_MS);
