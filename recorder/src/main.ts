@@ -7,12 +7,12 @@
  * адрес комнаты, заходим и снимаем слайды до конца пары. Потом собираем PDF и
  * отдаём боту, а он рассылает его тем, у кого эта пара в расписании.
  */
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { loadConfig, loadDotEnv, type RecorderConfig } from "./config.js";
 import { joinWithProfiles, Portal, parseWebinarRows, type WebinarRow } from "./portal.js";
 import { captureWebinar } from "./capture.js";
-import { buildPdf, deckFileName, deliverDeck, retryPending, type DeckMeta } from "./deliver.js";
+import { buildPdf, deckFileName, deliverDeck, earlierSlides, retryPending, type DeckMeta } from "./deliver.js";
 import { deckBaseName, keyOf, mskNow, planRecording, profileSummary, type RecordState } from "./plan.js";
 import { log } from "./log.js";
 
@@ -47,10 +47,14 @@ async function recordOne(cfg: RecorderConfig, portal: Portal, date: string, row:
     return "retry";
   }
   log.info({ subject: row.subject, teacher: row.teacher, groups: row.groups, profile: join.profile }, "захожу на вебинар");
-  // Папка кадров своя у каждой пары (дата + время + предмет) и чистая перед
-  // съёмкой: иначе вторая пара дня или повтор дописывали бы кадры в чужую пачку.
+  // Папка кадров своя у каждой пары (дата + время + предмет). Если съёмку
+  // этой пары прервали (перезапуск, повторный заход), снятое до этого
+  // остаётся и съёмка продолжается с того же номера; уже собранную пачку
+  // заново не начинаем — см. earlierSlides.
   const dir = path.join(cfg.outDir, deckBaseName(date, row.startMinutes, row.subject));
-  rmSync(dir, { recursive: true, force: true });
+  const pdfPath = path.join(cfg.outDir, deckFileName(meta));
+  const earlier = earlierSlides(dir, pdfPath);
+  if (earlier.length) log.info({ slides: earlier.length }, "продолжаю прерванную съёмку этой пары: снятое раньше остаётся");
   // Сидим до конца пары плюс небольшой запас, но не дольше общего предела.
   const now = mskNow();
   const untilEnd = row.endMinutes != null ? row.endMinutes + 5 - now.minutes : cfg.maxMinutes;
@@ -64,15 +68,20 @@ async function recordOne(cfg: RecorderConfig, portal: Portal, date: string, row:
     chromiumPath: cfg.chromiumPath || undefined,
     displayName: cfg.displayName,
     padPx: cfg.capturePad,
+    startIndex: earlier.length ? Number(path.basename(earlier[earlier.length - 1]!).match(/\d+/)![0]) : 0,
+    lastFrame: earlier.length ? readFileSync(earlier[earlier.length - 1]!) : undefined,
   });
   log.info({ slides: result.slides.length, selector: result.usedSelector, notes: result.notes }, "съёмка закончена");
-  // Ни одного слайда: не зашли (лобби, ошибка комнаты) или страница закрылась.
-  // Пока пара идёт — зайдём снова; закрытую ведущим комнату не трогаем.
-  if (!result.slides.length) return result.ended ? "done" : "retry";
-  const pdfPath = path.join(cfg.outDir, deckFileName(meta));
-  const pdf = await buildPdf(result.slides.map((s) => s.file), pdfPath, meta);
+  // Ни одного нового слайда: не зашли (лобби, ошибка комнаты) или страница
+  // закрылась. Пока пара идёт — зайдём снова; закрытую ведущим комнату не
+  // трогаем. Но если снятое раньше есть, а пара кончилась (или комнату
+  // закрыли) — собираем пачку из него, иначе оно так и не дошло бы до бота.
+  const files = [...earlier, ...result.slides.map((s) => s.file)];
+  const over = row.endMinutes != null && mskNow().minutes >= row.endMinutes;
+  if (!result.slides.length && !(earlier.length && (result.ended || over))) return result.ended ? "done" : "retry";
+  const pdf = await buildPdf(files, pdfPath, meta);
   // Бот перезапускался или сеть моргнула — непринятое остаётся в очереди, отправим позже.
-  await deliverDeck({ url: cfg.botUrl, token: cfg.botToken, pdfPath, pdf, meta, slides: result.slides.length });
+  await deliverDeck({ url: cfg.botUrl, token: cfg.botToken, pdfPath, pdf, meta, slides: files.length });
   return "done";
 }
 
