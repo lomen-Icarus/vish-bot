@@ -99,3 +99,33 @@ describe("проверка «аккаунт жив»", () => {
     expect(saved).toEqual([]);
   });
 });
+
+describe("обмен с ботом: адрес и задания без сети", () => {
+  it("syncBase убирает /slides, базовый адрес не трогает", async () => {
+    const { syncBase } = await import("../recorder/src/sync.js");
+    expect(syncBase("https://slides.secretvish.ru/slides")).toBe("https://slides.secretvish.ru");
+    expect(syncBase("https://slides.secretvish.ru/slides/")).toBe("https://slides.secretvish.ru");
+    expect(syncBase("http://host:40070/slides")).toBe("http://host:40070");
+  });
+
+  it("runTask: install ставит слот, remove убирает, битый конверт — bad_envelope (без сети)", async () => {
+    const { runTask } = await import("../recorder/src/sync.js");
+    const { loadOrCreateKeys, sealCredentials, envelopeAad } = await import("../recorder/src/crypto.js");
+    const { AccountStore } = await import("../recorder/src/accounts.js");
+    const keys = loadOrCreateKeys(tmp() + "/keys");
+    const store = new AccountStore(tmp() + "/accounts.json");
+    const deps = { botUrl: "http://x/slides", token: "t", store, privatePem: keys.privatePem, publicSpki: keys.publicSpki };
+    const env = await sealCredentials(keys.publicSpki, { login: "a@x", password: "p" }, envelopeAad(10, "ВИШ-14-25"));
+    const inst = await runTask({ id: "1", kind: "install", requestId: 5, userId: 10, group: "ВИШ-14-25", codes: ["14-25"], envelope: env }, deps);
+    expect(inst.code).toBe("installed");
+    expect(store.get("ВИШ-14-25")?.login).toBe("a@x");
+    const rm = await runTask({ id: "2", kind: "remove", requestId: 5, userId: 10, group: "ВИШ-14-25", codes: [] }, deps);
+    expect(rm.code).toBe("removed");
+    expect(store.get("ВИШ-14-25")).toBeUndefined();
+    // Конверт с чужим AAD не раскрыть — install не ставит слот.
+    const wrong = await sealCredentials(keys.publicSpki, { login: "b@x", password: "q" }, envelopeAad(99, "ВИШ-14-25"));
+    const bad = await runTask({ id: "3", kind: "install", requestId: 6, userId: 10, group: "ВИШ-14-25", codes: ["14-25"], envelope: wrong }, deps);
+    expect(bad.code).toBe("bad_envelope");
+    expect(store.get("ВИШ-14-25")).toBeUndefined();
+  });
+});
