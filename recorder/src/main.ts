@@ -92,7 +92,7 @@ async function main(): Promise<void> {
   const portal = new Portal({ proxyUrl: process.env.HTTPS_PROXY });
   await portal.loginAsGuest();
   // Профили — только номер и группы: логины и пароли в лог не попадают.
-  log.info({ faculty: cfg.facultyId, subjects: cfg.subjects, groups: cfg.groups, lead: cfg.leadMinutes, profiles: profileSummary(cfg.profiles) }, "записывалка вебинаров запущена");
+  log.info({ faculty: cfg.facultyId, subjects: cfg.subjects, skip: cfg.skipSubjects, groups: cfg.groups, maxParallel: cfg.maxParallel, lead: cfg.leadMinutes, profiles: profileSummary(cfg.profiles) }, "записывалка вебинаров запущена");
   for (const w of cfg.warnings) log.warn(w);
 
   const state: RecordState = { done: new Set(), active: new Set(), retryAt: new Map() };

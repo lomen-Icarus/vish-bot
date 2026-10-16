@@ -105,6 +105,34 @@ describe("записывалка вебинаров: планировщик", ()
     expect(planRecording(rows, at(612), cfg, busy, 0).start.map((r) => r.subject)).toEqual(["Химия"]);
   });
 
+  it("сначала пары групп со своим профилем (поток 4 курса), потом остальные; SKIP_SUBJECTS не занимает места", () => {
+    const g = (subject: string, groups: string[]) => ({ ...row(subject, 590, 670), groups });
+    // Порядок, как на портале 16.10 в 9:50.
+    const rows = [
+      g("Экономика", ["ВИШ-11-25", "ОЗВИШ-12-25"]),
+      g("Элективные дисциплины (модули) по физической культуре и спорту", ["ВИШ-15-26"]),
+      g("Иностранный язык", ["ВИШ-12-26"]),
+      g("Метрология", ["ВИШ-15-24"]),
+      g("Источники вторичного электропитания", ["ВИШ-14-23"]),
+      g("Физические основы нанотехнологий", ["ВИШ-12-23иот (13.03.02)"]),
+    ];
+    const profiles = [
+      { name: "1", authMode: "1" as const, login: "a", password: "a", groups: [] },
+      { name: "2", authMode: "1" as const, login: "b", password: "b", groups: ["11-25", "12-25"] },
+      { name: "3", authMode: "1" as const, login: "c", password: "c", groups: ["11-23", "12-23", "13-23", "14-23"] },
+    ];
+    const plan = planRecording(rows, at(612), { ...cfg, maxParallel: 2, profiles }, fresh(), 0);
+    expect(plan.start.map((r) => r.subject)).toEqual(["Экономика", "Источники вторичного электропитания"]);
+    // Экономика уже пишется — свободное место достаётся паре 4 курса, а не физкультуре.
+    const busy = fresh();
+    busy.active.add(keyOf("2026-09-21", rows[0]!));
+    expect(planRecording(rows, at(612), { ...cfg, maxParallel: 2, profiles }, busy, 0).start.map((r) => r.subject)).toEqual(["Источники вторичного электропитания"]);
+    // Без профилей — по порядку, как раньше; SKIP_SUBJECTS убирает физкультуру, но не «Физические основы…».
+    const skip = ["физической культур", "физическая культура"];
+    const free = planRecording(rows, at(612), { ...cfg, maxParallel: 9, skipSubjects: skip }, fresh(), 0);
+    expect(free.start.map((r) => r.subject)).toEqual(["Экономика", "Иностранный язык", "Метрология", "Источники вторичного электропитания", "Физические основы нанотехнологий"]);
+  });
+
   it("имя пачки: дата, время начала и предмет — две пары одного предмета в день не затирают друг друга", () => {
     expect(deckBaseName("2026-09-21", 9 * 60 + 5, "Физика")).toBe("2026-09-21-0905-Физика");
     expect(deckBaseName("2026-09-21", 13 * 60, "Физика")).not.toBe(deckBaseName("2026-09-21", 9 * 60 + 5, "Физика"));
