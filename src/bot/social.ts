@@ -21,6 +21,7 @@ import { nameWords, samePersonWords } from "../text/match.js";
 import { addDays, fmtDDMM, todayMsk, weekdayShort, type LocalDate } from "../time.js";
 import { esc } from "../schedule/format.js";
 import { logger } from "../logger.js";
+import type { DeckToSend } from "./deck.js";
 
 // ---------- кто это ----------
 
@@ -255,14 +256,7 @@ function describe(c: SlideCandidate): string {
 }
 
 /** Готовый PDF, который бот приложит к ответу. */
-export interface DeckToSend {
-  id: number;
-  subject: string;
-  date: string;
-  file: string;
-  fileId: string | null;
-  slides: number;
-}
+export type { DeckToSend } from "./deck.js";
 
 export interface SlidesReply {
   text: string;

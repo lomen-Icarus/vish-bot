@@ -996,28 +996,19 @@ export class Repo {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM slide_decks").get() as { n: number }).n;
   }
 
-  recentSlideDecks(limit = 10): Array<{ id: number; date: string; subject: string; teacher: string | null; groups: string[]; slides: number; file: string; bytes: number; fileId: string | null; sent: number; createdAt: string }> {
-    const rows = this.db.prepare("SELECT * FROM slide_decks ORDER BY id DESC LIMIT ?").all(limit) as Array<Record<string, unknown>>;
-    return rows.map((r) => ({
-      id: Number(r.id),
-      date: String(r.date),
-      subject: String(r.subject),
-      teacher: r.teacher == null ? null : String(r.teacher),
-      groups: (() => {
-        try {
-          const parsed = JSON.parse(String(r.groups_json ?? "[]")) as unknown;
-          return Array.isArray(parsed) ? parsed.map(String) : [];
-        } catch {
-          return [];
-        }
-      })(),
-      slides: Number(r.slides),
-      file: String(r.file),
-      bytes: Number(r.bytes ?? 0),
-      fileId: r.file_id == null ? null : String(r.file_id),
-      sent: Number(r.sent),
-      createdAt: String(r.created_at),
-    }));
+  recentSlideDecks(limit = 10): SlideDeckRow[] {
+    return (this.db.prepare("SELECT * FROM slide_decks ORDER BY id DESC LIMIT ?").all(limit) as Array<Record<string, unknown>>).map(slideDeckRow);
+  }
+
+  /** Записи вебинаров за этот день — для кнопки «📎 Слайды» под расписанием. */
+  slideDecksOn(date: string): SlideDeckRow[] {
+    return (this.db.prepare("SELECT * FROM slide_decks WHERE date = ? ORDER BY id").all(date) as Array<Record<string, unknown>>).map(slideDeckRow);
+  }
+
+  /** Одна запись по номеру; null — её нет (старые чистит pruneSlideDecks). */
+  slideDeck(id: number): SlideDeckRow | null {
+    const r = this.db.prepare("SELECT * FROM slide_decks WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return r ? slideDeckRow(r) : null;
   }
 
   // ---- карта преподавателей: кто из них ведёт у ВИШ ----
@@ -1548,4 +1539,41 @@ export class Repo {
   supportBlocked(userId: number): boolean {
     return !!this.db.prepare("SELECT 1 FROM support_blocks WHERE user_id = ?").get(userId);
   }
+}
+
+export interface SlideDeckRow {
+  id: number;
+  date: string;
+  subject: string;
+  teacher: string | null;
+  groups: string[];
+  slides: number;
+  file: string;
+  bytes: number;
+  fileId: string | null;
+  sent: number;
+  createdAt: string;
+}
+
+function slideDeckRow(r: Record<string, unknown>): SlideDeckRow {
+  let groups: string[] = [];
+  try {
+    const parsed = JSON.parse(String(r.groups_json ?? "[]")) as unknown;
+    if (Array.isArray(parsed)) groups = parsed.map(String);
+  } catch {
+    groups = [];
+  }
+  return {
+    id: Number(r.id),
+    date: String(r.date),
+    subject: String(r.subject),
+    teacher: r.teacher == null ? null : String(r.teacher),
+    groups,
+    slides: Number(r.slides),
+    file: String(r.file),
+    bytes: Number(r.bytes ?? 0),
+    fileId: r.file_id == null ? null : String(r.file_id),
+    sent: Number(r.sent),
+    createdAt: String(r.created_at),
+  };
 }
