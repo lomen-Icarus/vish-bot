@@ -38,6 +38,8 @@ const SYNC_EVERY_MS = 60_000;
  */
 type Outcome = "done" | "retry";
 
+const botUrls = (cfg: Pick<RecorderConfig, "botUrl" | "botFallbackUrl">): string[] => [cfg.botUrl, cfg.botFallbackUrl].filter(Boolean);
+
 async function recordOne(cfg: RecorderConfig, store: AccountStore, portal: Portal, date: string, row: WebinarRow): Promise<Outcome> {
   const meta: DeckMeta = {
     date,
@@ -92,7 +94,7 @@ async function recordOne(cfg: RecorderConfig, store: AccountStore, portal: Porta
   if (!result.slides.length && !(earlier.length && (result.ended || over))) return result.ended ? "done" : "retry";
   const pdf = await buildPdf(files, pdfPath, meta);
   // Бот перезапускался или сеть моргнула — непринятое остаётся в очереди, отправим позже.
-  await deliverDeck({ url: cfg.botUrl, token: cfg.botToken, pdfPath, pdf, meta, slides: files.length });
+  await deliverDeck({ urls: botUrls(cfg), token: cfg.botToken, pdfPath, pdf, meta, slides: files.length });
   return "done";
 }
 
@@ -141,7 +143,7 @@ async function main(): Promise<void> {
       for (const k of [...skippedLogged]) if (!k.startsWith(now.date)) skippedLogged.delete(k);
       if (Date.now() - pendingAt > PENDING_EVERY_MS) {
         pendingAt = Date.now();
-        const resent = await retryPending(cfg.outDir, cfg.botUrl, cfg.botToken);
+        const resent = await retryPending(cfg.outDir, botUrls(cfg), cfg.botToken);
         if (resent) log.info({ resent }, "непринятые пачки слайдов отданы боту");
       }
       // Заявки на запись и проверка «аккаунт жив» — параллельно записи, не мешая
@@ -149,7 +151,7 @@ async function main(): Promise<void> {
       if (Date.now() - syncAt > SYNC_EVERY_MS && !syncing) {
         syncAt = Date.now();
         syncing = true;
-        void syncOnce({ botUrl: cfg.botUrl, token: cfg.botToken, store, privatePem: keys.privatePem, publicSpki: keys.publicSpki, proxyUrl: process.env.HTTPS_PROXY, groupName: (id) => portal.groupName(id) })
+        void syncOnce({ botUrls: botUrls(cfg), token: cfg.botToken, store, privatePem: keys.privatePem, publicSpki: keys.publicSpki, proxyUrl: process.env.HTTPS_PROXY, groupName: (id) => portal.groupName(id) })
           .catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "обмен заявками споткнулся"))
           .finally(() => (syncing = false));
       }
