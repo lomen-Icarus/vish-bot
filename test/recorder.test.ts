@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import { earlierSlides } from "../recorder/src/deliver.js";
 import path from "node:path";
 import { joinWithProfiles, looksLikeLoginPage, parseWebinarRows } from "../recorder/src/portal.js";
 import { deckBaseName, keyOf, matchesGroups, mskNow, planRecording, profileSummary, profilesFor, wanted, type RecordState } from "../recorder/src/plan.js";
@@ -256,5 +258,20 @@ describe("записывалка: второй профиль для групп 
       for (const k of Object.keys(process.env).filter((k) => k.startsWith("WEBINAR_"))) delete process.env[k];
       Object.assign(process.env, saved);
     }
+  });
+});
+
+describe("записывалка: перезапуск посреди пары не стирает снятое", () => {
+  it("PDF пары ещё нет — кадры остаются и идут по номерам; PDF уже есть — папка чистится", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "rec-resume-"));
+    const dir = path.join(root, "2026-10-16-0950-Экономика");
+    const pdf = `${dir}.pdf`;
+    mkdirSync(dir);
+    for (const f of ["slide-002.png", "slide-010.png", "slide-001.png", "notes.txt"]) writeFileSync(path.join(dir, f), f);
+    expect(earlierSlides(dir, pdf).map((f) => path.basename(f))).toEqual(["slide-001.png", "slide-002.png", "slide-010.png"]);
+    expect(earlierSlides(path.join(root, "нет-такой"), `${root}/нет-такой.pdf`)).toEqual([]);
+    writeFileSync(pdf, "pdf");
+    expect(earlierSlides(dir, pdf)).toEqual([]);
+    expect(existsSync(dir)).toBe(false);
   });
 });

@@ -129,6 +129,26 @@ export async function deliverDeck(opts: { url: string; token: string; pdfPath: s
   return sent;
 }
 
+/**
+ * Кадры, снятые раньше в этой же паре. Папка кадров живёт на диске, а PDF
+ * собирается только в конце пары, поэтому перезапуск записывалки посреди пары
+ * (деплой, правка .env) раньше стирал всё снятое до него. Теперь: PDF этой
+ * пары ещё нет — значит, съёмку прервали, и кадры остаются, съёмка дописывает
+ * к ним; PDF уже есть — пачка собрана и отдана, папку чистим, как раньше
+ * (иначе повторный заход отправил бы те же слайды второй раз).
+ */
+export function earlierSlides(dir: string, pdfPath: string): string[] {
+  if (existsSync(pdfPath)) {
+    rmSync(dir, { recursive: true, force: true });
+    return [];
+  }
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => /^slide-\d+\.png$/.test(f))
+    .sort((a, b) => Number(a.match(/\d+/)![0]) - Number(b.match(/\d+/)![0]))
+    .map((f) => path.join(dir, f));
+}
+
 /** Имя PDF: дата, время начала и предмет — две пары одного предмета в день не затирают друг друга. */
 export function deckFileName(meta: DeckMeta): string {
   return `${deckBaseName(meta.date, meta.startMinutes, meta.subject)}.pdf`;
