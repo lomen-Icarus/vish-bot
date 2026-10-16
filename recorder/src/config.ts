@@ -83,6 +83,8 @@ export interface RecorderConfig {
   subjects: string[];
   /** Записывать только эти группы (пусто — все). */
   groups: string[];
+  /** Не записывать пары, в названии которых есть одно из этих слов (физкультура и т. п.). */
+  skipSubjects: string[];
   /** За сколько минут до начала начинать искать комнату. */
   leadMinutes: number;
   /** Как часто опрашивать страницу вебинаров, пока ищем комнату (секунды). */
@@ -95,8 +97,9 @@ export interface RecorderConfig {
   maxMinutes: number;
   /**
    * Сколько вебинаров записывать одновременно. Каждая запись — отдельный
-   * Chromium со своей памятью. По умолчанию 1: у ВИШ онлайн-пар одновременно
-   * не бывает больше одной (поток на 5–7 групп — это одна пара).
+   * Chromium со своей памятью. По умолчанию 1, хотя одновременно бывает
+   * открыто до 7 комнат: больше — только если хватает памяти. Первыми
+   * берутся пары групп со своим профилем (см. planRecording).
    */
   maxParallel: number;
   /** Куда отдавать готовую пачку слайдов: <PUBLIC_URL бота>/slides */
@@ -137,6 +140,7 @@ export function loadConfig(): RecorderConfig {
     facultyId: num("FACULTY_ID", 32),
     subjects: list("RECORD_SUBJECTS"),
     groups: list("RECORD_GROUPS"),
+    skipSubjects: list("SKIP_SUBJECTS"),
     leadMinutes: num("LEAD_MINUTES", 7),
     pollSeconds: num("POLL_SECONDS", 30),
     captureSeconds: Math.max(1, num("CAPTURE_SECONDS", 5)),
