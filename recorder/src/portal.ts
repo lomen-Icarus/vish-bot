@@ -11,7 +11,7 @@
  */
 import { Agent, fetch as undiciFetch, ProxyAgent, type Dispatcher } from "undici";
 import { PORTAL_CA_CERTS } from "./certs.js";
-import { parseWebinars } from "chuvsu-js/parsers";
+import { parseGroupName, parseWebinars } from "chuvsu-js/parsers";
 import type { WebinarProfile } from "./config.js";
 import { profilesFor } from "./plan.js";
 
@@ -121,6 +121,13 @@ export class Portal {
       return follow.body;
     }
     return res.body;
+  }
+
+  /** Название группы по её номеру на портале (страница расписания группы); null — не разобрали. */
+  async groupName(groupId: number): Promise<string | null> {
+    if (!this.cookies.size) await this.loginAsGuest();
+    const res = await this.request(`${PORTAL_BASE}/index/grouptt/gr/${groupId}`, { method: "GET" });
+    return parseGroupName(res.body);
   }
 
   /**
