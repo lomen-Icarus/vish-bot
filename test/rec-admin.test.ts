@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
-import { adoptSlot, applyRecorderReport, approveRecRequest, recorderTasks, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
+import { adoptSlot, applyRecorderReport, approveRecRequest, recorderTasks, VERIFY_WAIT_MS, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
 import { notifyRecorderEffect, requestCard, type SendApi } from "../src/bot/recNotify.js";
 import { myRecordingScreen, slotsScreen } from "../src/bot/handlers/recSlots.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
@@ -351,5 +351,18 @@ describe("подписать слот из .env владельцем (/slot_owne
     const r = repo();
     applyRecorderReport(r, { slots: [{ group: "Общая учётка (.env)", status: "ok" }] });
     expect(adoptSlot(r, "14-25", "@x", 99)).toEqual({ ok: false, reason: "no_slot" });
+  });
+});
+
+describe("кабинет лежит — проверку заявки не долбим", () => {
+  it("portal_down: следующее задание verify — только через 30 минут; вошло — пауза снята", () => {
+    const r = repo();
+    const id = req(r, 1);
+    expect(recorderTasks(r).map((t) => t.kind)).toEqual(["verify"]);
+    applyRecorderReport(r, { results: [{ id: `${id}:verify`, requestId: id, code: "portal_down" }] });
+    expect(recorderTasks(r)).toEqual([]);
+    expect(recorderTasks(r, Date.now() + VERIFY_WAIT_MS + 1000).map((t) => t.kind)).toEqual(["verify"]);
+    applyRecorderReport(r, { results: [{ id: `${id}:verify`, requestId: id, code: "login_ok" }] });
+    expect(r.recorderMarkKeys("vwait:")).toEqual([]);
   });
 });
