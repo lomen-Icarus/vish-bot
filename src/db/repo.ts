@@ -1578,6 +1578,20 @@ export class Repo {
     this.db.prepare("DELETE FROM recorder_state WHERE key = ?").run(key);
   }
 
+  /**
+   * Привязать слот без заявки (учётка из .env) к человеку: заявка сразу
+   * «стоит в слоте», шифровки нет. Дата подачи — 1970-й: такая заявка не
+   * съедает месячный лимит и не истекает.
+   */
+  adoptRecSlot(row: { userId: number; username: string | null; groupKey: string; groupTitle: string; adminId: number }): number {
+    const now = nowIso();
+    return Number(
+      this.db
+        .prepare("INSERT INTO rec_requests (user_id, username, group_key, group_title, envelope_json, state, created_at, updated_at, decided_at, decided_by) VALUES (?, ?, ?, ?, NULL, 'active', '1970-01-01T00:00:00.000Z', ?, ?, ?)")
+        .run(row.userId, row.username, row.groupKey, row.groupTitle, now, now, row.adminId).lastInsertRowid,
+    );
+  }
+
   /** Текущая заявка человека — та, что ещё в работе или стоит в слоте. */
   liveRecRequest(userId: number): RecRequestRow | null {
     const r = this.db.prepare("SELECT * FROM rec_requests WHERE user_id = ? AND state IN ('pending_verify','verified','approved','active','revoking') ORDER BY id DESC LIMIT 1").get(userId) as Record<string, unknown> | undefined;
