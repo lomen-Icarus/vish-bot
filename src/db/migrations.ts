@@ -433,4 +433,40 @@ export const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   `,
+  // Заявки студентов на запись своих пар (этап 2). rec_requests — заявка и её
+  // состояние; envelope_json (шифровка логина и пароля) хранится только пока
+  // расшифровка ещё законна, дальше обнуляется. rec_slots — зеркало слотов с
+  // записывалки для экрана /slots и карты. recorder_state — открытый ключ
+  // записывалки (его присылает сама записывалка в отчёте) и прочие пометки.
+  `
+  CREATE TABLE rec_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    username TEXT,
+    group_key TEXT NOT NULL,
+    group_title TEXT NOT NULL,
+    envelope_json TEXT,
+    state TEXT NOT NULL,
+    actual_group TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    decided_at TEXT,
+    decided_by INTEGER
+  );
+  CREATE INDEX rec_requests_user ON rec_requests (user_id, created_at);
+  CREATE INDEX rec_requests_state ON rec_requests (state);
+  CREATE TABLE rec_slots (
+    group_key TEXT PRIMARY KEY,
+    group_title TEXT NOT NULL,
+    request_id INTEGER,
+    status TEXT NOT NULL,
+    last_ok_at TEXT,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE recorder_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  `,
 ];

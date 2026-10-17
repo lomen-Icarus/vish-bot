@@ -920,6 +920,11 @@ export class Repo {
   /** Erase everything the bot knows about a person; /start then starts over. */
   forgetUser(userId: number): void {
     this.db.transaction(() => {
+      // Заявки на запись — данные человека. Учтённый слот (active/approved)
+      // сперва помечаем на отзыв, чтобы записывалка убрала учётку; остальное
+      // стираем сразу. Строку revoking удалит отчёт «removed».
+      this.db.prepare("UPDATE rec_requests SET state = 'revoking', updated_at = ? WHERE user_id = ? AND state IN ('active','approved')").run(nowIso(), userId);
+      this.db.prepare("DELETE FROM rec_requests WHERE user_id = ? AND state != 'revoking'").run(userId);
       // Знакомство «@ник это …» про этого человека — по id или по нику, пока
       // запись о нём ещё есть. Кого знакомил он сам — остаётся, но без него.
       this.db.prepare("DELETE FROM people_intros WHERE user_id = ? OR username = (SELECT lower(username) FROM users WHERE id = ?)").run(userId, userId);
@@ -1539,6 +1544,156 @@ export class Repo {
   supportBlocked(userId: number): boolean {
     return !!this.db.prepare("SELECT 1 FROM support_blocks WHERE user_id = ?").get(userId);
   }
+
+  // ---- заявки студентов на запись (этап 2) ----
+  /** Открытый ключ записывалки — его присылает сама записывалка в отчёте. */
+  recorderPublicKey(): string | null {
+    const r = this.db.prepare("SELECT value FROM recorder_state WHERE key = 'public_key'").get() as { value: string } | undefined;
+    return r?.value ?? null;
+  }
+
+  /** Сохранить ключ записывалки; true — ключ сменился (был другой непустой). */
+  setRecorderPublicKey(key: string): boolean {
+    const prev = this.recorderPublicKey();
+    if (prev === key) return false;
+    this.db.prepare("INSERT INTO recorder_state (key, value, updated_at) VALUES ('public_key', ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(key, nowIso());
+    return prev !== null;
+  }
+
+  recorderMark(key: string, value: string): void {
+    this.db.prepare("INSERT INTO recorder_state (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(key, value, nowIso());
+  }
+
+  recorderMarkValue(key: string): string | null {
+    const r = this.db.prepare("SELECT value FROM recorder_state WHERE key = ?").get(key) as { value: string } | undefined;
+    return r?.value ?? null;
+  }
+
+  /** Заявок за последние 30 дней от этого человека (для лимита). Считаются все, кроме снятых системой. */
+  recRequestsSince(userId: number, since: string): number {
+    return (this.db.prepare("SELECT COUNT(*) AS n FROM rec_requests WHERE user_id = ? AND created_at >= ? AND state NOT IN ('rejected_bad_envelope','expired','revoked')").get(userId, since) as { n: number }).n;
+  }
+
+  createRecRequest(row: { userId: number; username: string | null; groupKey: string; groupTitle: string; envelopeJson: string }): number {
+    const now = nowIso();
+    return Number(
+      this.db
+        .prepare("INSERT INTO rec_requests (user_id, username, group_key, group_title, envelope_json, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending_verify', ?, ?)")
+        .run(row.userId, row.username, row.groupKey, row.groupTitle, row.envelopeJson, now, now).lastInsertRowid,
+    );
+  }
+
+  recRequest(id: number): RecRequestRow | null {
+    const r = this.db.prepare("SELECT * FROM rec_requests WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return r ? recRequestRow(r) : null;
+  }
+
+  recRequestsByState(states: string[]): RecRequestRow[] {
+    if (!states.length) return [];
+    const qs = states.map(() => "?").join(",");
+    return (this.db.prepare(`SELECT * FROM rec_requests WHERE state IN (${qs}) ORDER BY id`).all(...states) as Array<Record<string, unknown>>).map(recRequestRow);
+  }
+
+  /** Активная заявка на слот этой группы, если есть. */
+  activeRecRequest(groupKey: string): RecRequestRow | null {
+    const r = this.db.prepare("SELECT * FROM rec_requests WHERE group_key = ? AND state IN ('approved','active') ORDER BY id DESC LIMIT 1").get(groupKey) as Record<string, unknown> | undefined;
+    return r ? recRequestRow(r) : null;
+  }
+
+  /**
+   * Перевести заявку в новое состояние. dropEnvelope — стереть шифровку (когда
+   * расшифровка больше не нужна). actualGroup — группа по расписанию кабинета.
+   */
+  setRecRequestState(id: number, state: string, opts: { dropEnvelope?: boolean; actualGroup?: string | null; decidedBy?: number } = {}): void {
+    const sets = ["state = ?", "updated_at = ?"];
+    const vals: unknown[] = [state, nowIso()];
+    if (opts.dropEnvelope) sets.push("envelope_json = NULL");
+    if (opts.actualGroup !== undefined) {
+      sets.push("actual_group = ?");
+      vals.push(opts.actualGroup);
+    }
+    if (opts.decidedBy !== undefined) {
+      sets.push("decided_at = ?", "decided_by = ?");
+      vals.push(nowIso(), opts.decidedBy);
+    }
+    vals.push(id);
+    this.db.prepare(`UPDATE rec_requests SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+  }
+
+  /** Заявки, которым пора истечь (не решены за ttlDays). */
+  staleRecRequests(states: string[], olderThan: string): RecRequestRow[] {
+    if (!states.length) return [];
+    const qs = states.map(() => "?").join(",");
+    return (this.db.prepare(`SELECT * FROM rec_requests WHERE state IN (${qs}) AND created_at < ? ORDER BY id`).all(...states, olderThan) as Array<Record<string, unknown>>).map(recRequestRow);
+  }
+
+  /** Зеркало слотов с записывалки — для /slots и карты. */
+  upsertRecSlot(row: { groupKey: string; groupTitle: string; requestId: number | null; status: string; lastOkAt: string | null }): void {
+    this.db
+      .prepare("INSERT INTO rec_slots (group_key, group_title, request_id, status, last_ok_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(group_key) DO UPDATE SET group_title = excluded.group_title, request_id = excluded.request_id, status = excluded.status, last_ok_at = excluded.last_ok_at, updated_at = excluded.updated_at")
+      .run(row.groupKey, row.groupTitle, row.requestId, row.status, row.lastOkAt, nowIso());
+  }
+
+  recSlots(): RecSlotRow[] {
+    return (this.db.prepare("SELECT * FROM rec_slots ORDER BY group_key").all() as Array<Record<string, unknown>>).map((r) => ({
+      groupKey: String(r.group_key),
+      groupTitle: String(r.group_title),
+      requestId: r.request_id == null ? null : Number(r.request_id),
+      status: String(r.status),
+      lastOkAt: r.last_ok_at == null ? null : String(r.last_ok_at),
+      updatedAt: String(r.updated_at),
+    }));
+  }
+
+  removeRecSlot(groupKey: string): void {
+    this.db.prepare("DELETE FROM rec_slots WHERE group_key = ?").run(groupKey);
+  }
+
+  deleteRecRequest(id: number): void {
+    this.db.prepare("DELETE FROM rec_requests WHERE id = ?").run(id);
+  }
+
+  /** Выполнить несколько записей одной транзакцией (для применения отчёта записывалки). */
+  transaction(fn: () => void): void {
+    this.db.transaction(fn)();
+  }
+}
+
+export interface RecRequestRow {
+  id: number;
+  userId: number;
+  username: string | null;
+  groupKey: string;
+  groupTitle: string;
+  envelopeJson: string | null;
+  state: string;
+  actualGroup: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecSlotRow {
+  groupKey: string;
+  groupTitle: string;
+  requestId: number | null;
+  status: string;
+  lastOkAt: string | null;
+  updatedAt: string;
+}
+
+function recRequestRow(r: Record<string, unknown>): RecRequestRow {
+  return {
+    id: Number(r.id),
+    userId: Number(r.user_id),
+    username: r.username == null ? null : String(r.username),
+    groupKey: String(r.group_key),
+    groupTitle: String(r.group_title),
+    envelopeJson: r.envelope_json == null ? null : String(r.envelope_json),
+    state: String(r.state),
+    actualGroup: r.actual_group == null ? null : String(r.actual_group),
+    createdAt: String(r.created_at),
+    updatedAt: String(r.updated_at),
+  };
 }
 
 export interface SlideDeckRow {
