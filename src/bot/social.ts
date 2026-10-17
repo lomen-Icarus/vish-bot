@@ -19,6 +19,7 @@ import type { ChatTool } from "../chat/service.js";
 import { cleanName, matchSubjects, matchSubjectsLoose, sameSubject, subjectKey, type IntroRequest, type SlidesRequest } from "../chat/social.js";
 import { nameWords, samePersonWords } from "../text/match.js";
 import { addDays, fmtDDMM, todayMsk, weekdayShort, type LocalDate } from "../time.js";
+import { newestFirst } from "../notify/deckName.js";
 import { esc } from "../schedule/format.js";
 import { logger } from "../logger.js";
 import type { DeckToSend } from "./deck.js";
@@ -284,7 +285,7 @@ export function handleSlidesRequest(ctx: BotContext, req: SlidesRequest, speaker
     }
     // Свежие записи по предмету: сначала своей группы, иначе любой.
     // «по физике с прошлой пары», «по бжд плз»: предмет подбираем так же терпимо, как для подписки.
-    const all = deps.repo.recentSlideDecks(200);
+    const all = newestFirst(deps.repo.recentSlideDecks(200));
     const hit = matchSubjectsLoose(req.subject, [...new Set(all.map((d) => d.subject))], 1)[0];
     const decks = hit ? all.filter((d) => sameSubject(d.subject, hit)) : [];
     const deck = (group && decks.find((d) => d.groups.some((g) => logicalKeyFor(g) === group.key))) ?? (req.group ? undefined : decks[0]);
