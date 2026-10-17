@@ -41,3 +41,17 @@ describe("публичный адрес: основной и запасной", 
     expect(publicBase({ config: {} })).toBeUndefined();
   });
 });
+
+describe("публичный DNS вместо кеша хостинга", () => {
+  const fake = (body: unknown, ok = true) => (async () => ({ ok, json: async () => body })) as unknown as typeof fetch;
+  it("имя не резолвится публично (SERVFAIL) — false; резолвится — true; DNS недоступен — null", async () => {
+    const { publicDnsOk } = await import("../src/http/publicUrl.js");
+    expect(await publicDnsOk("calendar.secretvish.ru", fake({ Status: 2 }))).toBe(false);
+    expect(await publicDnsOk("ok.example", fake({ Status: 0, Answer: [{ data: "1.2.3.4" }] }))).toBe(true);
+    expect(await publicDnsOk("empty.example", fake({ Status: 0, Answer: [] }))).toBe(false);
+    const down = (async () => {
+      throw new Error("network");
+    }) as unknown as typeof fetch;
+    expect(await publicDnsOk("x.example", down)).toBeNull();
+  });
+});
