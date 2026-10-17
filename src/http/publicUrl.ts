@@ -3,7 +3,8 @@
  * запасной (тоже HTTPS). По ним телефоны забирают подписку на календарь.
  * Домен основного может лечь (у регистратора ломалось делегирование DNS), и
  * тогда бот раздавал бы мёртвые ссылки. Поэтому раз в несколько минут бот
- * спрашивает /health сам у себя через основной адрес: ответил 2xx — ссылки
+ * проверяет основной адрес: есть ли имя в публичном DNS и отвечает ли /health
+ * (сам у себя). Всё в порядке — ссылки
  * идут через основной; нет — пробует запасной; не отвечает никто — остаётся
  * основной (как настроено). Ссылка, уже выданная через запасной, работает и
  * дальше: запасной адрес постоянный.
@@ -14,9 +15,33 @@ export const PUBLIC_URL_CHECK_MS = 5 * 60_000;
 
 export type Prober = (url: string) => Promise<boolean>;
 
-/** GET <адрес>/health за 10 секунд: true — бот ответил 2xx. */
+/** Публичные DNS-over-HTTPS: так имя видят телефоны пользователей, а не кеш хостинга. */
+const DOH = ["https://dns.google/resolve", "https://cloudflare-dns.com/dns-query"];
+
+/**
+ * Резолвится ли имя в публичном DNS. true/false — ответ DNS; null — до DNS
+ * не достучались (тогда судим только по /health). Нужно потому, что DNS
+ * хостинга бота помнил записи лёгшего домена: со своего сервера бот видел
+ * основной адрес живым и раздавал ссылки, которые у людей не открывались.
+ */
+export async function publicDnsOk(host: string, fetcher: typeof fetch = fetch): Promise<boolean | null> {
+  for (const url of DOH) {
+    try {
+      const res = await fetcher(`${url}?name=${encodeURIComponent(host)}&type=A`, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(8_000) });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { Status?: number; Answer?: unknown[] };
+      return data.Status === 0 && Array.isArray(data.Answer) && data.Answer.length > 0;
+    } catch {
+      /* следующий резолвер */
+    }
+  }
+  return null;
+}
+
+/** Адрес жив: имя есть в публичном DNS (или DNS недоступен) и GET /health отвечает 2xx за 10 с. */
 export const probeHealth: Prober = async (base) => {
   try {
+    if ((await publicDnsOk(new URL(base).hostname)) === false) return false;
     const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(10_000) });
     await res.text().catch(() => undefined);
     return res.ok;
