@@ -120,9 +120,13 @@ export async function runTask(task: Task, deps: SyncDeps): Promise<TaskResult> {
       if (!slot) return { id: task.id, requestId: task.requestId, code: "removed" };
       const check = await checkStudentLogin(slot.login, slot.password, { proxyUrl: deps.proxyUrl });
       if (check.verdict === "ok") {
-        deps.store.update(task.group, { status: "ok", failures: 0, lastOkAt: new Date().toISOString(), nextCheckAt: Date.now() + CHECK_EVERY_MS });
+        deps.store.update(task.group, { status: "ok", failures: 0, lastOkAt: new Date().toISOString(), nextCheckAt: Date.now() + CHECK_EVERY_MS }, slot.installedAt);
         return { id: task.id, requestId: task.requestId, code: "login_ok" };
       }
+      // Админ сам попросил проверить, и кабинет сказал «неверный пароль» — слот
+      // «не пускает» сразу, без второй попытки: иначе /slots показывал бы ✅, а
+      // на пары пробовалась бы мёртвая учётка до плановой проверки.
+      if (check.verdict === "bad") deps.store.update(task.group, { status: "lost", failures: Math.max(2, slot.failures + 1), nextCheckAt: Date.now() + CHECK_EVERY_MS }, slot.installedAt);
       return { id: task.id, requestId: task.requestId, code: check.verdict === "down" ? "portal_down" : "login_failed" };
     }
   }
@@ -176,12 +180,15 @@ export async function syncOnce(deps: SyncDeps): Promise<{ done: number } | null>
   }
   const portal = results.some((r) => r.code === "portal_down") ? "down" : "ok";
   try {
-    await undiciFetch(`${base}/rec/report`, {
+    const res = await undiciFetch(`${base}/rec/report`, {
       method: "POST",
       headers: { Authorization: `Bearer ${deps.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ publicKey: deps.publicSpki, results, slots: [...deps.store.list().map(slotSummary), ...(deps.general ? [deps.general.summary()] : [])], portal }),
       signal: AbortSignal.timeout(30_000),
     });
+    // Тело дочитываем (иначе соединение висит до сборки мусора); отказ бота — в лог.
+    await res.text().catch(() => "");
+    if (res.status < 200 || res.status >= 300) log.warn({ status: res.status, results: results.length }, "бот не принял отчёт по заявкам");
   } catch (err) {
     log.debug({ err: String(err).slice(0, 150) }, "не доложил боту результаты заявок");
   }

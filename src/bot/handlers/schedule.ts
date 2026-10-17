@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, formatPicker, groupPicker, menuFor, menuHint, onboardingKeyboard } from "../keyboards.js";
+import { BTN, FIND_BTN, formatPicker, groupPicker, menuFor, menuHint, onboardingKeyboard, panelRef } from "../keyboards.js";
 import { groupRequiredText, needGroup, sendDay, sendWeek } from "../views.js";
 import { addDays, fmtDDMM, isLocalDate, mondayOf, parseDayWord, parseRuDate, todayMsk, wallClock, type LocalDate } from "../../time.js";
 import { showOwnTeacher } from "../teacherMode.js";
@@ -95,8 +95,7 @@ export async function showOtherGroups(ctx: BotContext): Promise<void> {
   const groups = ctx.deps.service.groups();
   if (!groups.length) return void (await ctx.reply("Список групп ещё не загружен с портала, попробуй через минуту."));
   const kb = groupPicker(groups, { prefix: "pk", selected: ctx.user.groupKey });
-  // При POISK=FALSE строки просто нет — раздела не существует.
-  if (ctx.deps.config.POISK && ctx.deps.students) kb.row().text("🕵️ Где студент? Глобал поиск", "poisk:menu");
+  // «Где студент» здесь больше нет: он соседняя кнопка той же панели «🔍 Найти» (один вход на функцию).
   await ctx.reply("Чьё расписание показать? Своя группа при этом не меняется.", { reply_markup: kb });
 }
 scheduleHandlers.hears(BTN.otherGroups, showOtherGroups);
@@ -284,7 +283,7 @@ export function changesText(ctx: BotContext): { text: string; hasEvents: boolean
   if (ctx.user.teacherMode) {
     // У преподавателя нет «своей группы», за изменениями которой следить: его пары
     // идут у разных групп, и их изменения видны прямо в расписании этих групп.
-    parts.push("🔔 <b>Изменения в расписании</b>\n\nВ режиме преподавателя изменения видны в расписании групп: открой «👥 Студенты» и выбери группу — переносы, замены и отмены там уже учтены.");
+    parts.push(`🔔 <b>Изменения в расписании</b>\n\nВ режиме преподавателя изменения видны в расписании групп: открой ${panelRef(ctx.user, BTN.find, FIND_BTN.teacherGroups, "/groups")} и выбери группу — переносы, замены и отмены там уже учтены.`);
     return { text: parts.join("\n\n"), hasEvents: false, events: [] };
   }
   if (!group) {

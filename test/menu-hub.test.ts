@@ -57,16 +57,16 @@ const press = (data: string, from = USER): Update => ({ update_id: mid++, callba
 const markup = (c: Call | undefined): string => JSON.stringify(c?.payload.reply_markup ?? null);
 
 describe("панели «🔍 Найти» и «🗂 Ещё»", () => {
-  it("«Найти»: группы, поток, преподы и вопрос ИИ; у преподавателя первая кнопка — «Студенты»", async () => {
+  it("«Найти»: другие группы, поток, преподы и вопрос ИИ; у преподавателя первая кнопка — «Группы»", async () => {
     const deps = makeDeps({ ask: true });
     const calls = await run(deps, text("🔍 Найти"));
     const msg = calls.find((c) => c.method === "sendMessage")!;
     expect(String(msg.payload.text)).toContain("Просто напиши");
     for (const cb of ["hub:groups", "hub:stream", "hub:teachers", "hub:ask"]) expect(markup(msg)).toContain(cb);
-    expect(markup(msg)).toContain("👥 Группы");
+    expect(markup(msg)).toContain("👥 Другие группы");
     expect(markup(msg)).toContain("👨‍🏫 Где препод");
     deps.repo.updateUser(USER, { teacherMode: true });
-    expect(markup((await run(deps, text("🔍 Найти"))).find((c) => c.method === "sendMessage"))).toContain("👥 Студенты");
+    expect(markup((await run(deps, text("🔍 Найти"))).find((c) => c.method === "sendMessage"))).toContain("\"👥 Группы\"");
   });
 
   it("«Найти» с поиском студента: «Где препод» и «Где студент» в одном ряду, «Спросить ИИ» — отдельным рядом ниже", async () => {
@@ -75,7 +75,7 @@ describe("панели «🔍 Найти» и «🗂 Ещё»", () => {
     (deps as { students?: unknown }).students = {};
     const msg = (await run(deps, text("🔍 Найти"))).find((c) => c.method === "sendMessage")!;
     const rows = (msg.payload.reply_markup as { inline_keyboard: { text: string }[][] }).inline_keyboard.map((r) => r.map((b) => b.text));
-    expect(rows).toEqual([["👥 Группы", "🎓 Поток"], ["👨‍🏫 Где препод", "🕵️ Где студент"], ["💬 Спросить ИИ"]]);
+    expect(rows).toEqual([["👥 Другие группы", "🎓 Поток"], ["👨‍🏫 Где препод", "🕵️ Где студент"], ["💬 Спросить ИИ"]]);
   });
 
   it("«Ещё»: изменения, календарь, настройки, справка; старая подпись «☰ Ещё» тоже открывает", async () => {

@@ -32,6 +32,12 @@ export interface LiveTarget {
   password: string;
   state: LiveState;
   save: (patch: Partial<LiveState>) => void;
+  /**
+   * Состояние сейчас, а не на начало прохода (null — цели уже нет: слот
+   * убрали или заменили). Проверка идёт десятки секунд; если за это время
+   * заход на пару отметил успех, «неверный пароль» не должен его перечеркнуть.
+   */
+  fresh?: () => LiveState | null;
 }
 
 /** Слот сменил состояние — об этом бот сообщает владельцу один раз. */
@@ -92,8 +98,11 @@ export async function runLiveness(targets: LiveTarget[], deps: LivenessDeps): Pr
       t.save({ nextCheckAt: now() + PORTAL_DOWN_RETRY_MS });
       continue;
     }
-    // verdict === "bad": неверный логин или пароль.
-    const failures = t.state.failures + 1;
+    // verdict === "bad": неверный логин или пароль. Считаем от текущего
+    // состояния: пока шла проверка, мог быть удачный заход — тогда не осечка.
+    const cur = t.fresh ? t.fresh() : t.state;
+    if (!cur || cur.status !== "ok" || cur.lastOkAt !== t.state.lastOkAt) continue;
+    const failures = cur.failures + 1;
     if (failures < 2) {
       t.save({ failures, nextCheckAt: now() + RECHECK_SOON_MS });
       continue;

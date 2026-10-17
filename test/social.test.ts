@@ -601,6 +601,15 @@ describe("группа: слайды — разовая просьба, опеч
     expect(requests).toHaveLength(0);
   });
 
+  it("большой PDF частями: «скинь слайды» отдаёт первую часть, а не последнюю записанную", async () => {
+    const { deps, repo } = setup();
+    const file = tmpFile("deck.pdf");
+    writeFileSync(file, Buffer.from("%PDF-1.4\n"));
+    for (const i of [1, 2, 3]) repo.addSlideDeck({ date: today, subject: "Физика", teacher: null, title: `Тема · часть ${i} из 3`, groups: ["ВИШ-12-23"], slides: 4, file, bytes: 9 });
+    const sent = await send(deps, msg("скинь слайды по физике"));
+    expect(String(sent.find((s) => s.method === "sendDocument")!.payload.caption)).toContain("ч. 1/3");
+  });
+
   it("хвост с опечаткой («по БЖД пожаслуйста») не мешает найти предмет", async () => {
     const { deps, repo } = setup();
     repo.replaceWebinars(addDays(today, 1), [webinar({ subject: "Безопасность жизнедеятельности", groups: ["ВИШ-14-24"] })]);

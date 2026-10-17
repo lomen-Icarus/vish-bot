@@ -17,6 +17,7 @@ import { groupByDate, positionKey, type Occurrence } from "../schedule/model.js"
 import type { WeekInfo } from "../schedule/service.js";
 import { captionFits, clampHtml, CAPTION_MAX, esc, formatChangeEvent, formatDay, MARK_ICON, MESSAGE_MAX, plural, shortTeacher, visibleLength, type LessonMark, type MarkedLesson, type TeacherView } from "../schedule/format.js";
 import { addDays, fmtDDMM, fmtDayMonth, fmtHHMM, mondayOf, weekdayName, weekdayShort, type LocalDate, type WallClock } from "../time.js";
+import { BTN, MORE_BTN } from "../bot/keyboards.js";
 
 const range = (o: Occurrence): string => (o.start != null && o.end != null ? `${fmtHHMM(o.start)}–${fmtHHMM(o.end)}` : "—");
 const where = (date: LocalDate, slot: number | null): string => `${fmtDDMM(date)}${slot ? ` (${slot} пара)` : ""}`;
@@ -158,7 +159,7 @@ export const LATER_HEAD = "🗓 <b>Изменения на будущее</b>";
  * Изменения» не попадает — её актуальное расписание в «Других группах».
  */
 export function moreLine(rest: number, own: boolean): string {
-  return `<i>…и ещё ${rest} ${plural(rest, "изменение", "изменения", "изменений")} — ${own ? "остальные в «🗂 Ещё → 🔔 Изменения»" : "смотри расписание группы"}</i>`;
+  return `<i>…и ещё ${rest} ${plural(rest, "изменение", "изменения", "изменений")} — ${own ? `остальные в «${BTN.more} → ${MORE_BTN.changes}»` : "смотри расписание группы"}</i>`;
 }
 
 /**

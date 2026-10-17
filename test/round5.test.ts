@@ -248,10 +248,10 @@ describe("global student search", () => {
     expect(await run(textUpdate("/poisk"), deps)).toEqual([]);
   });
 
-  it("offers the entry point under the group picker when POISK is on", async () => {
+  it("is not duplicated under the group picker: its entry is «🔍 Найти → 🕵️ Где студент»", async () => {
     const deps = makeDeps({ poisk: true, students: new StudentDirectory(tempFile("students.csv", CSV)) });
     const calls = await run(textUpdate(BTN.otherGroups), deps);
-    expect(JSON.stringify(calls)).toContain("poisk:menu");
+    expect(JSON.stringify(calls)).not.toContain("poisk:menu");
   });
 
   it("explains itself, then shows where the person should be now", async () => {

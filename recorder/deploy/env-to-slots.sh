@@ -32,7 +32,9 @@ read -r -p "Продолжить? [y/N] " ok
 [ "$ok" = "y" ] || [ "$ok" = "Y" ] || { echo "Отменил."; exit 0; }
 
 EXTRA=()
-[ -f "$DIR/docker.extra" ] && read -r -a EXTRA < "$DIR/docker.extra"
+# «|| true»: без перевода строки в конце (или в пустом файле) read возвращает 1,
+# и set -e молча обрывал деплой между сборкой и запуском контейнера.
+[ -f "$DIR/docker.extra" ] && { read -r -a EXTRA < "$DIR/docker.extra" || true; }
 
 docker stop "$NAME" >/dev/null 2>&1 || true
 # Что бы ни случилось дальше — записывалку поднять обратно.

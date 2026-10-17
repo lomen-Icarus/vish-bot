@@ -105,13 +105,8 @@ export function planRecording(
   nowMs: number,
 ): DuePlan {
   const inWindow = rows.filter((r) => wanted(r, cfg) && r.startMinutes != null && now.minutes >= r.startMinutes - cfg.leadMinutes && (r.endMinutes == null || now.minutes < r.endMinutes));
-  // Одна пара — один бот: если портал покажет одну лекцию двумя строками
-  // (например, поток — по комнате на группу), ключ у них один, берём первую.
-  const seen = new Set<string>();
-  const open = inWindow.filter((r) => {
+  const open = mergeSamePair(inWindow, now.date).filter((r) => {
     const key = keyOf(now.date, r);
-    if (seen.has(key)) return false;
-    seen.add(key);
     return !state.done.has(key) && !state.active.has(key);
   });
   // Сначала пары, для групп которых заведён свой профиль (поток, куда пускают
@@ -125,9 +120,37 @@ export function planRecording(
   return { start: ready.slice(0, free), skipped: ready.slice(free), waiting: open.filter((r) => !ready.includes(r)) };
 }
 
-/** Имя файла без опасных символов: предмет, дата и время начала — у двух пар одного предмета в день разные файлы. */
-export function deckBaseName(date: string, startMinutes: number | null, subject: string): string {
+/**
+ * Одна пара — один бот. Портал может показать одну лекцию несколькими
+ * строками (поток — по комнате на группу): ключ у них один. Строки не
+ * отбрасываем, а сливаем: группы — все (по ним выбираются учётки и кому
+ * отправить PDF), основная комната — первая, где уже можно подключиться,
+ * остальные — запасные (alts).
+ */
+export function mergeSamePair(rows: WebinarRow[], date: string): WebinarRow[] {
+  const byKey = new Map<string, WebinarRow[]>();
+  for (const r of rows) {
+    const key = keyOf(date, r);
+    byKey.set(key, [...(byKey.get(key) ?? []), r]);
+  }
+  return [...byKey.values()].map((same) => {
+    if (same.length === 1) return same[0]!;
+    const main = same.find((r) => r.joinId) ?? same[0]!;
+    const groups = [...new Set(same.flatMap((r) => r.groups))];
+    return { ...main, groups, alts: same.filter((r) => r !== main && r.joinId) };
+  });
+}
+
+/**
+ * Имя файла без опасных символов: дата, время начала, предмет и фамилия
+ * преподавателя. Фамилия нужна: две пары одного предмета в одно время у
+ * разных потоков (ключ пары их различает) иначе писали бы кадры в одну папку
+ * и собирались в один PDF.
+ */
+export function deckBaseName(date: string, startMinutes: number | null, subject: string, teacher = ""): string {
   const hhmm = startMinutes != null ? `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}${String(startMinutes % 60).padStart(2, "0")}` : "xxxx";
-  const safe = subject.replace(/[^\p{L}\p{N} .-]/gu, "").trim().replace(/\s+/g, "-").slice(0, 50) || "вебинар";
-  return `${date}-${hhmm}-${safe}`.replace(/[/\\]/g, "-");
+  const clean = (s: string): string => s.replace(/[^\p{L}\p{N} .-]/gu, "").trim().replace(/\s+/g, "-");
+  const safe = clean(subject).slice(0, 50) || "вебинар";
+  const who = clean(teacher.split(/\s+/)[0] ?? "").slice(0, 20);
+  return `${date}-${hhmm}-${safe}${who ? `-${who}` : ""}`.replace(/[/\\]/g, "-");
 }

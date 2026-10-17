@@ -8,7 +8,7 @@
  */
 import { InlineKeyboard } from "grammy";
 import type { Repo, RecRequestRow } from "../db/repo.js";
-import { GENERAL_SLOT_TITLE, OWNER_PREFIX, type RecReportEffect, type RecSlotChange, type RecTransition } from "./recorder.js";
+import { GENERAL_SLOT_TITLE, heldWithoutRequest, OWNER_PREFIX, type RecReportEffect, type RecSlotChange, type RecTransition } from "./recorder.js";
 import { requestsLeft } from "./tma.js";
 import { esc } from "../schedule/format.js";
 import { fmtDDMM, fmtHHMM, wallClock } from "../time.js";
@@ -20,8 +20,8 @@ export interface SendApi {
   sendMessage(chatId: number, text: string, other?: { parse_mode?: "HTML"; reply_markup?: InlineKeyboard }): Promise<unknown>;
 }
 
-/** Где студент подаёт и смотрит заявку — одна дорожка во всех текстах. */
-export const FORM_PATH = "🗂 Ещё → 🎥 Записывать мою группу";
+import { FORM_PATH } from "./keyboards.js";
+export { FORM_PATH };
 
 const who = (username: string | null, userId: number | null): string => (username ? `@${esc(username)}` : userId ? `id ${userId}` : "учётка из .env");
 
@@ -44,7 +44,10 @@ export function requestCard(repo: Repo, req: RecRequestRow): { text: string; kb?
   lines.push(`От: ${who(req.username, req.userId)} (id ${req.userId})`, "Вход на портал: ✅ проверен");
   const holder = repo.activeRecRequest(req.groupKey);
   if (holder && holder.id !== req.id) lines.push(`Слот группы занят ${who(holder.username, holder.userId)} — одобрение заменит учётку.`);
-  else lines.push("Слот группы свободен.");
+  else if (!holder && heldWithoutRequest(repo, req.groupKey)) {
+    const label = repo.recorderMarkValue(`${OWNER_PREFIX}${req.groupKey}`);
+    lines.push(`Слот группы занят учёткой из .env${label ? ` (@${esc(label)})` : ""} — одобрение заменит её.`);
+  } else lines.push("Слот группы свободен.");
   if (req.state !== "verified") return { text: `${lines.join("\n")}\n\n<i>${stateLabel(req.state)}</i>` };
   const kb = new InlineKeyboard().text("✅ Одобрить", `rq:ok:${req.id}`).text("❌ Отклонить", `rq:no:${req.id}`);
   return { text: lines.join("\n"), kb };

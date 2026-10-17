@@ -174,25 +174,36 @@ export function applyRecorderReport(repo: Repo, report: RecReport, now = Date.no
     }
     // Зеркало слотов: статус и когда последний раз пускало. Сверяем с прежним,
     // чтобы о потере и возврате доступа сказать один раз. Запись без group пропускаем.
+    // Зеркало — единственное место, где строки слотов появляются и пропадают.
     if (Array.isArray(report.slots)) {
       const before = new Map(repo.recSlots().map((sl) => [sl.groupKey, sl]));
-      const seen = new Set<string>();
+      // Два слота записывалки на одну группу (старая учётка под портальным
+      // именем и новая под нашим) — одна строка: «пускает», если пускает хоть
+      // один. Иначе строки затирали бы друг друга, и вести «не пускает / снова
+      // пускает» шли бы каждую минуту.
+      const byKey = new Map<string, { group: string; status: string; lastOkAt: string | null }>();
       for (const s of report.slots) {
         if (!s.group) continue;
         const key = logicalKeyFor(s.group);
-        seen.add(key);
+        const had = byKey.get(key);
+        if (!had) byKey.set(key, { group: s.group, status: s.status, lastOkAt: s.lastOkAt ?? null });
+        else byKey.set(key, { group: had.status === "ok" ? had.group : s.group, status: had.status === "ok" || s.status === "ok" ? "ok" : s.status, lastOkAt: [had.lastOkAt, s.lastOkAt ?? null].filter(Boolean).sort().pop() ?? null });
+      }
+      for (const [key, s] of byKey) {
         const req = repo.activeRecRequest(key);
         const prev = before.get(key)?.status;
         const change: RecSlotChange = { groupKey: key, groupTitle: s.group, requestId: req?.id ?? null, userId: req?.userId ?? null, username: req?.username ?? null };
         if (s.status === "lost" && prev !== "lost") effect.lost.push(change);
         if (s.status === "ok" && prev === "lost") effect.recovered.push(change);
-        repo.upsertRecSlot({ groupKey: key, groupTitle: s.group, requestId: req?.id ?? null, status: s.status, lastOkAt: s.lastOkAt ?? null });
+        repo.upsertRecSlot({ groupKey: key, groupTitle: s.group, requestId: req?.id ?? null, status: s.status, lastOkAt: s.lastOkAt });
       }
       // Записывалка присылает все слоты: чего нет в отчёте, того нет и у неё.
+      // Вместе со строкой уходят её подпись владельца и «проверить снова».
       for (const key of before.keys()) {
-        if (seen.has(key)) continue;
+        if (byKey.has(key)) continue;
         repo.removeRecSlot(key);
         repo.clearRecorderMark(`${OWNER_PREFIX}${key}`);
+        repo.clearRecorderMark(`${RECHECK_PREFIX}${key}`);
       }
     }
     // Заявки, которые неделю не проверились или не решены, — истекают; шифровку стираем.
@@ -230,26 +241,30 @@ function nextState(repo: Repo, req: RecRequestRow, res: RecResult): string | nul
       // Осечка как при проверке, так и при установке (напр. сменился ключ/пароль).
       if (req.state !== "pending_verify" && req.state !== "approved") return null;
       repo.setRecRequestState(req.id, "rejected_auth", { dropEnvelope: true });
-      if (req.state === "approved") repo.removeRecSlot(req.groupKey);
       return "rejected_auth";
     case "bad_envelope":
       if (req.state !== "pending_verify" && req.state !== "approved") return null;
       repo.setRecRequestState(req.id, "rejected_bad_envelope", { dropEnvelope: true });
-      if (req.state === "approved") repo.removeRecSlot(req.groupKey);
       return "rejected_bad_envelope";
     case "portal_down":
       // Остаёмся pending_verify, но следующую попытку — через полчаса.
       if (req.state === "pending_verify") repo.recorderMark(`${VERIFY_WAIT_PREFIX}${req.id}`, new Date(Date.now() + VERIFY_WAIT_MS).toISOString());
       return null;
     case "installed":
+      // Отозвали, пока отчёт об установке был в пути, — учётка всё же встала:
+      // теперь её надо убрать (remove уйдёт на следующем обмене).
+      if (req.state === "revoked_early") {
+        repo.setRecRequestState(req.id, "revoking", { dropEnvelope: true });
+        return "revoking";
+      }
       if (req.state !== "approved") return null;
       repo.setRecRequestState(req.id, "active", { dropEnvelope: true });
       return "active";
     case "removed":
       if (req.state !== "revoking") return null;
-      // Отзыв завершён — строку удаляем целиком (в т. ч. id и ник забытого человека).
+      // Отзыв завершён — строку удаляем целиком (в т. ч. id и ник забытого
+      // человека). Строку слота уберёт зеркало: в этом же отчёте её уже нет.
       repo.deleteRecRequest(req.id);
-      repo.removeRecSlot(req.groupKey);
       return "revoked";
     case "group_mismatch":
       return null;
@@ -258,8 +273,14 @@ function nextState(repo: Repo, req: RecRequestRow, res: RecResult): string | nul
 
 /** Чем закончилось действие над заявкой — для ответа на нажатие кнопки. */
 export type RecActionResult =
-  | { ok: true; replaced?: RecRequestRow | null }
+  | { ok: true; replaced?: RecRequestRow | null; replacedEnv?: boolean; immediate?: boolean }
   | { ok: false; reason: "gone" | "state" | "no_envelope" };
+
+/** В слоте группы стоит учётка без заявки (из .env), не общая. */
+export function heldWithoutRequest(repo: Repo, groupKey: string): boolean {
+  const slot = repo.recSlots().find((s) => s.groupKey === groupKey);
+  return !!slot && slot.groupTitle !== GENERAL_SLOT_TITLE && !repo.activeRecRequest(groupKey);
+}
 
 /**
  * Одобрить проверенную заявку. Занятый слот группы освобождается: прежняя
@@ -276,8 +297,13 @@ export function approveRecRequest(repo: Repo, id: number, adminId: number): RecA
     if (!req.envelopeJson) return void (result = { ok: false, reason: "no_envelope" });
     const prev = repo.activeRecRequest(req.groupKey);
     if (prev && prev.id !== req.id) repo.setRecRequestState(prev.id, "revoking", { dropEnvelope: true, decidedBy: adminId });
+    // Слот без заявки (учётка из .env) — тоже занят: убрать его по имени
+    // записывалки (оно может отличаться от нашего названия группы), иначе
+    // install молча затёр бы учётку или завёл второй слот на ту же группу.
+    const envSlot = !prev && heldWithoutRequest(repo, req.groupKey);
+    if (envSlot) revokeSlotWithoutRequest(repo, req.groupKey, adminId);
     repo.setRecRequestState(req.id, "approved", { decidedBy: adminId });
-    result = { ok: true, replaced: prev && prev.id !== req.id ? prev : null };
+    result = { ok: true, replaced: prev && prev.id !== req.id ? prev : null, replacedEnv: envSlot };
   });
   return result;
 }
@@ -292,20 +318,23 @@ export function rejectRecRequest(repo: Repo, id: number, adminId: number): RecAc
 }
 
 /**
- * Отозвать учётку (студент или админ). Поставленная или одобренная — на
- * отзыв: записывалка уберёт слот, уже идущая запись пары доснимется (ссылка на
- * комнату у неё уже есть). Ещё не одобренная — просто снимается.
+ * Отозвать учётку (студент или админ). Поставленная — на отзыв: записывалка
+ * уберёт слот, уже идущая запись пары доснимется (ссылка на комнату у неё уже
+ * есть). Одобренная, но ещё не поставленная, и неодобренная — снимаются сразу
+ * (immediate): задание remove по группе снесло бы то, что сейчас стоит в
+ * слоте, — например, учётку из .env. Если отчёт об установке был уже в пути,
+ * его разберёт nextState («installed» у снятой → на отзыв).
  */
 export function revokeRecRequest(repo: Repo, id: number, by?: number): RecActionResult {
   const req = repo.recRequest(id);
   if (!req) return { ok: false, reason: "gone" };
-  if (req.state === "active" || req.state === "approved") {
+  if (req.state === "active") {
     repo.setRecRequestState(id, "revoking", { dropEnvelope: true, ...(by !== undefined ? { decidedBy: by } : {}) });
     return { ok: true };
   }
-  if (req.state === "pending_verify" || req.state === "verified") {
-    repo.setRecRequestState(id, "revoked_early", { dropEnvelope: true });
-    return { ok: true };
+  if (req.state === "approved" || req.state === "pending_verify" || req.state === "verified") {
+    repo.setRecRequestState(id, "revoked_early", { dropEnvelope: true, ...(by !== undefined ? { decidedBy: by } : {}) });
+    return { ok: true, immediate: true };
   }
   return { ok: false, reason: "state" };
 }
@@ -326,16 +355,24 @@ export function revokeSlotWithoutRequest(repo: Repo, groupKey: string, adminId: 
 }
 
 /** Чем закончилась привязка слота к человеку. */
-export type AdoptResult = { ok: true; slotTitle: string; linked: boolean } | { ok: false; reason: "no_slot" | "taken" };
+export type AdoptResult = { ok: true; slotTitle: string; linked: boolean } | { ok: false; reason: "no_slot" | "taken" | "ambiguous" };
 
 /**
  * Подписать слот без заявки (учётка из .env) владельцем. Знаком боту —
  * становится обычной «стоящей в слоте» заявкой: вести ему, «Отозвать» сам.
  * Не знаком — только подпись в /slots, пока он не напишет боту.
  */
-export function adoptSlot(repo: Repo, groupCodeArg: string, username: string, adminId: number): AdoptResult {
-  const code = groupCode(groupCodeArg);
-  const slot = repo.recSlots().find((s) => s.groupTitle !== GENERAL_SLOT_TITLE && groupCode(s.groupTitle) === code);
+export function adoptSlot(repo: Repo, groupArg: string, username: string, adminId: number): AdoptResult {
+  const slots = repo.recSlots().filter((s) => s.groupTitle !== GENERAL_SLOT_TITLE);
+  // Сначала точное совпадение группы («ОЗВИШ-14-25», «ВИШ-11-23 (ЭиЭА)»),
+  // потом по номеру («14-25»), но только если он однозначен: иначе подпись
+  // досталась бы чужому слоту (ВИШ-14-25 вместо ОЗВИШ-14-25).
+  let slot = slots.find((s) => s.groupKey === logicalKeyFor(groupArg));
+  if (!slot) {
+    const byCode = slots.filter((s) => groupCode(s.groupTitle) === groupCode(groupArg));
+    if (byCode.length > 1) return { ok: false, reason: "ambiguous" };
+    slot = byCode[0];
+  }
   if (!slot) return { ok: false, reason: "no_slot" };
   if (repo.activeRecRequest(slot.groupKey)) return { ok: false, reason: "taken" };
   const nick = username.replace(/^@/, "");

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
-import { adoptSlot, applyRecorderReport, approveRecRequest, recorderTasks, VERIFY_WAIT_MS, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
+import { adoptSlot, applyRecorderReport, approveRecRequest, heldWithoutRequest, recorderTasks, VERIFY_WAIT_MS, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
 import { notifyRecorderEffect, requestCard, type SendApi } from "../src/bot/recNotify.js";
 import { myRecordingScreen, slotsScreen } from "../src/bot/handlers/recSlots.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
@@ -364,5 +364,59 @@ describe("кабинет лежит — проверку заявки не до�
     expect(recorderTasks(r, Date.now() + VERIFY_WAIT_MS + 1000).map((t) => t.kind)).toEqual(["verify"]);
     applyRecorderReport(r, { results: [{ id: `${id}:verify`, requestId: id, code: "login_ok" }] });
     expect(r.recorderMarkKeys("vwait:")).toEqual([]);
+  });
+});
+
+describe("ревью: слоты из .env и заявки", () => {
+  it("карточка видит слот из .env; одобрение сперва убирает его по имени записывалки, потом ставит новую", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-12-23иот (11.03.04)", status: "ok" }] });
+    const key = r.recSlots()[0]!.groupKey;
+    const id = r.createRecRequest({ userId: 2, username: "u2", groupKey: key, groupTitle: "ВИШ-12-23", envelopeJson: ENV });
+    r.setRecRequestState(id, "verified");
+    expect(heldWithoutRequest(r, key)).toBe(true);
+    expect(requestCard(r, r.recRequest(id)!).text).toContain("занят учёткой из .env");
+    expect(approveRecRequest(r, id, 99)).toMatchObject({ ok: true, replacedEnv: true });
+    expect(recorderTasks(r).map((t) => `${t.kind}:${t.group}`)).toEqual(["remove:ВИШ-12-23иот (11.03.04)", "install:ВИШ-12-23"]);
+  });
+
+  it("два слота записывалки на одну группу — одна строка «пускает», без ежеминутных вестей", () => {
+    const r = repo();
+    const two = (a: string, b: string) => ({ slots: [{ group: "ВИШ-12-23иот (11.03.04)", status: a }, { group: "ВИШ-12-23", status: b }] });
+    applyRecorderReport(r, two("ok", "ok"));
+    for (let i = 0; i < 3; i++) {
+      const eff = applyRecorderReport(r, two("ok", "lost"));
+      expect(eff.lost).toEqual([]);
+      expect(eff.recovered).toEqual([]);
+    }
+    expect(r.recSlots()).toEqual([expect.objectContaining({ status: "ok" })]);
+  });
+
+  it("отзыв одобренной, но не поставленной — без задания remove; пришло «installed» — тогда на отзыв", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok" }] }); // учётка из .env
+    const id = req(r, 2, "ВИШ-14-25", "approved");
+    expect(revokeRecRequest(r, id)).toEqual({ ok: true, immediate: true });
+    expect(recorderTasks(r)).toEqual([]);
+    applyRecorderReport(r, { results: [{ id: `${id}:install`, requestId: id, code: "installed" }] });
+    expect(r.recRequest(id)!.state).toBe("revoking");
+    expect(recorderTasks(r)).toEqual([expect.objectContaining({ kind: "remove", requestId: id })]);
+  });
+
+  it("слот пропал — его подпись владельца и «проверить снова» тоже", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-13-23", status: "lost" }] });
+    adoptSlot(r, "13-23", "nobody_known", 99);
+    requestRecheck(r, "виш-13-23");
+    applyRecorderReport(r, { slots: [] });
+    expect(r.recorderMarkKeys("owner:")).toEqual([]);
+    expect(r.recorderMarkKeys("recheck:")).toEqual([]);
+  });
+
+  it("/slot_owner: «ОЗВИШ-14-25» не путается с «ВИШ-14-25»; голый номер при двух слотах — переспросить", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok" }, { group: "ОЗВИШ-14-25", status: "ok" }] });
+    expect(adoptSlot(r, "14-25", "x", 99)).toEqual({ ok: false, reason: "ambiguous" });
+    expect(adoptSlot(r, "ОЗВИШ-14-25", "x", 99)).toMatchObject({ ok: true, slotTitle: "ОЗВИШ-14-25" });
   });
 });

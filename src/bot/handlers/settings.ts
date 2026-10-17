@@ -115,7 +115,7 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "group":
       await ctx.answerCallbackQuery();
       if (user.teacherMode) {
-        await ctx.reply("Сейчас включён режим преподавателя: «Сегодня», «Неделя» и напоминания — по твоим парам, «🔍 Найти → 👥 Студенты» — расписание любой группы. Выключить: /prepod");
+        await ctx.reply(`Сейчас включён режим преподавателя: «Сегодня», «Неделя» и напоминания — по твоим парам, ${panelRef(user, BTN.find, FIND_BTN.teacherGroups, "/groups")} — расписание любой группы. Выключить: /prepod`);
         return;
       }
       await showGroupPicker(ctx);
