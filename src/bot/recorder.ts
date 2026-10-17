@@ -44,7 +44,13 @@ export function groupCode(title: string): string {
 /** Задания из текущего состояния заявок. Идемпотентно: id = requestId:kind. */
 export function recorderTasks(repo: Repo): RecTask[] {
   const tasks: RecTask[] = [];
-  const envelope = (r: RecRequestRow): unknown => (r.envelopeJson ? JSON.parse(r.envelopeJson) : undefined);
+  const envelope = (r: RecRequestRow): unknown => {
+    try {
+      return r.envelopeJson ? JSON.parse(r.envelopeJson) : undefined;
+    } catch {
+      return undefined; // битый конверт — задание не шлём, пусть истечёт по сроку
+    }
+  };
   for (const r of repo.recRequestsByState(["pending_verify"])) {
     const env = envelope(r);
     if (env) tasks.push({ id: `${r.id}:verify`, kind: "verify", requestId: r.id, userId: r.userId, group: r.groupTitle, codes: [groupCode(r.groupTitle)], envelope: env });
@@ -70,25 +76,28 @@ export interface RecReportEffect {
 /** Применить отчёт записывалки: ключ, результаты заданий, зеркало слотов. */
 export function applyRecorderReport(repo: Repo, report: RecReport): RecReportEffect {
   const effect: RecReportEffect = { firstConnect: false, keyChanged: false, transitions: [] };
-  if (report.publicKey) {
-    const had = repo.recorderPublicKey() !== null;
-    const changed = repo.setRecorderPublicKey(report.publicKey);
-    effect.firstConnect = !had;
-    effect.keyChanged = changed && had;
-  }
-  for (const res of report.results ?? []) {
-    const req = repo.recRequest(res.requestId);
-    if (!req) continue;
-    const to = nextState(repo, req, res);
-    if (to && to !== req.state) effect.transitions.push({ requestId: req.id, to, mismatch: to === "verified" && isMismatch(req, res) });
-  }
-  // Зеркало слотов: статус и когда последний раз пускало.
-  for (const s of report.slots ?? []) {
-    const req = repo.activeRecRequest(logicalKeyFor(s.group));
-    repo.upsertRecSlot({ groupKey: logicalKeyFor(s.group), groupTitle: s.group, requestId: req?.id ?? null, status: s.status, lastOkAt: s.lastOkAt ?? null });
-  }
-  if (report.portal) repo.recorderMark("portal", report.portal);
-  repo.recorderMark("last_report_at", new Date().toISOString());
+  repo.transaction(() => {
+    if (report.publicKey) {
+      const had = repo.recorderPublicKey() !== null;
+      effect.keyChanged = repo.setRecorderPublicKey(report.publicKey);
+      effect.firstConnect = !had;
+    }
+    for (const res of report.results ?? []) {
+      const req = repo.recRequest(res.requestId);
+      if (!req) continue;
+      const to = nextState(repo, req, res);
+      if (to && to !== req.state) effect.transitions.push({ requestId: req.id, to, mismatch: to === "verified" && isMismatch(req, res) });
+    }
+    // Зеркало слотов: статус и когда последний раз пускало. Запись без group пропускаем.
+    for (const s of report.slots ?? []) {
+      if (!s.group) continue;
+      const key = logicalKeyFor(s.group);
+      const req = repo.activeRecRequest(key);
+      repo.upsertRecSlot({ groupKey: key, groupTitle: s.group, requestId: req?.id ?? null, status: s.status, lastOkAt: s.lastOkAt ?? null });
+    }
+    if (report.portal) repo.recorderMark("portal", report.portal);
+    repo.recorderMark("last_report_at", new Date().toISOString());
+  });
   return effect;
 }
 
@@ -105,12 +114,15 @@ function nextState(repo: Repo, req: RecRequestRow, res: RecResult): string | nul
       repo.setRecRequestState(req.id, "verified", { actualGroup: res.actualGroup ?? null });
       return "verified";
     case "login_failed":
-      if (req.state !== "pending_verify") return null;
+      // Осечка как при проверке, так и при установке (напр. сменился ключ/пароль).
+      if (req.state !== "pending_verify" && req.state !== "approved") return null;
       repo.setRecRequestState(req.id, "rejected_auth", { dropEnvelope: true });
+      if (req.state === "approved") repo.removeRecSlot(req.groupKey);
       return "rejected_auth";
     case "bad_envelope":
-      if (req.state !== "pending_verify") return null;
+      if (req.state !== "pending_verify" && req.state !== "approved") return null;
       repo.setRecRequestState(req.id, "rejected_bad_envelope", { dropEnvelope: true });
+      if (req.state === "approved") repo.removeRecSlot(req.groupKey);
       return "rejected_bad_envelope";
     case "portal_down":
       return null; // остаёмся pending_verify, повторим на следующем sync
@@ -120,7 +132,8 @@ function nextState(repo: Repo, req: RecRequestRow, res: RecResult): string | nul
       return "active";
     case "removed":
       if (req.state !== "revoking") return null;
-      repo.setRecRequestState(req.id, "revoked", { dropEnvelope: true });
+      // Отзыв завершён — строку удаляем целиком (в т. ч. id и ник забытого человека).
+      repo.deleteRecRequest(req.id);
       repo.removeRecSlot(req.groupKey);
       return "revoked";
     case "group_mismatch":

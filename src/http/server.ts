@@ -227,16 +227,16 @@ export function createHttpServer(deps: HttpDeps): Server {
     const token = deps.slidesToken;
     const auth = req.headers.authorization ?? "";
     if (!token || !sameSecret(auth, `Bearer ${token}`)) return reply(token ? 403 : 404, { error: "нет доступа" });
-    if (kind === "sync") return reply(200, { tasks: recorderTasks(deps.repo) });
     try {
+      if (kind === "sync") return reply(200, { tasks: recorderTasks(deps.repo) });
       const body = await readBody(req, 256 * 1024);
       const report = JSON.parse(body.toString("utf8") || "{}") as RecReport;
       const effect = applyRecorderReport(deps.repo, report);
       deps.onRecorderReport?.(effect);
       return reply(200, { ok: true });
     } catch (err) {
-      logger.warn({ err: String(err).slice(0, 150) }, "отчёт записывалки не разобран");
-      return reply(400, { error: "не разобран" });
+      logger.warn({ err: String(err).slice(0, 150), kind }, "обмен заявками с записывалкой споткнулся");
+      return reply(kind === "sync" ? 500 : 400, { error: "ошибка" });
     }
   };
 
