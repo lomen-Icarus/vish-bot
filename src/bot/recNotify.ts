@@ -8,7 +8,7 @@
  */
 import { InlineKeyboard } from "grammy";
 import type { Repo, RecRequestRow } from "../db/repo.js";
-import type { RecReportEffect, RecSlotChange, RecTransition } from "./recorder.js";
+import { GENERAL_SLOT_TITLE, type RecReportEffect, type RecSlotChange, type RecTransition } from "./recorder.js";
 import { requestsLeft } from "./tma.js";
 import { esc } from "../schedule/format.js";
 import { fmtDDMM, fmtHHMM, wallClock } from "../time.js";
@@ -122,18 +122,23 @@ function adminText(repo: Repo, t: RecTransition): { text: string; kb?: InlineKey
   }
 }
 
-/** Кнопки слота: по заявке, а у слота без заявки (учётка из .env) — по группе. */
-export function slotButtons(requestId: number | null, groupKey: string): { recheck: string; revoke: string } | null {
+/**
+ * Кнопки слота: по заявке, а у слота без заявки (учётка из .env) — по группе.
+ * У общей учётки — только «Проверить снова»: она в .env, отзывать нечего.
+ */
+export function slotButtons(requestId: number | null, groupKey: string, groupTitle = ""): { recheck: string; revoke?: string } | null {
   if (requestId !== null) return { recheck: `rq:rc:${requestId}`, revoke: `rq:rv:${requestId}` };
-  const recheck = `rq:rcg:${groupKey}`;
-  const revoke = `rq:rvg:${groupKey}`;
   // callback_data — не больше 64 байт; ключ группы кириллицей, с запасом на «rq:rvgy:».
-  return Buffer.byteLength(`rq:rvgy:${groupKey}`) <= 64 ? { recheck, revoke } : null;
+  if (Buffer.byteLength(`rq:rvgy:${groupKey}`) > 64) return null;
+  if (groupTitle === GENERAL_SLOT_TITLE) return { recheck: `rq:rcg:${groupKey}` };
+  return { recheck: `rq:rcg:${groupKey}`, revoke: `rq:rvg:${groupKey}` };
 }
 
 function slotKb(c: RecSlotChange): InlineKeyboard | undefined {
-  const b = slotButtons(c.requestId, c.groupKey);
-  return b ? new InlineKeyboard().text("🔁 Проверить снова", b.recheck).text("🗑 Отозвать", b.revoke) : undefined;
+  const b = slotButtons(c.requestId, c.groupKey, c.groupTitle);
+  if (!b) return undefined;
+  const kb = new InlineKeyboard().text("🔁 Проверить снова", b.recheck);
+  return b.revoke ? kb.text("🗑 Отозвать", b.revoke) : kb;
 }
 
 /** Разослать уведомления по итогам отчёта записывалки. Ошибки отправки — только в лог (id и цифры). */
@@ -154,10 +159,18 @@ export async function notifyRecorderEffect(api: SendApi, repo: Repo, adminIds: n
     if (s) student(t.userId, s.text, s.kb);
   }
   for (const c of effect.lost) {
+    if (c.groupTitle === GENERAL_SLOT_TITLE) {
+      admins("⚠️ Общая учётка (.env, профиль 1) перестала пускать в кабинет — похоже, сменился пароль. Поправь WEBINAR_PASSWORD в .env и пересоздай контейнер (vps-update.sh --recreate). На пары пробую её как раньше.", slotKb(c));
+      continue;
+    }
     admins(`⚠️ Слот ${esc(c.groupTitle)} (${who(c.username, c.userId)}): портал перестал пускать — на пары под этой учёткой не захожу.`, slotKb(c));
     student(c.userId, `⏸ Запись пар группы ${esc(c.groupTitle)} приостановлена: портал перестал пускать под твоей учёткой (например, сменился пароль).\nЕсли менял пароль — отзови старую учётку и подай заявку заново: ${FORM_PATH}.`);
   }
   for (const c of effect.recovered) {
+    if (c.groupTitle === GENERAL_SLOT_TITLE) {
+      admins("✅ Общая учётка (.env) снова пускает.");
+      continue;
+    }
     admins(`✅ Слот ${esc(c.groupTitle)} снова пускает.`);
     student(c.userId, `▶️ Запись пар группы ${esc(c.groupTitle)} снова работает.`);
   }

@@ -16,7 +16,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { esc } from "../../schedule/format.js";
-import { approveRecRequest, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, type RecActionResult } from "../recorder.js";
+import { approveRecRequest, GENERAL_SLOT_TITLE, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, type RecActionResult } from "../recorder.js";
 import { mskStamp, requestCard, slotButtons, stateLabel } from "../recNotify.js";
 import { studentGroupList } from "../tma.js";
 import type { Repo, RecRequestRow } from "../../db/repo.js";
@@ -39,7 +39,10 @@ function failText(res: RecActionResult): string {
 
 /** Текст и кнопки /slots: все учебные группы, слоты со статусом, ждущие заявки. */
 export function slotsScreen(repo: Repo, groups: LogicalGroup[]): { text: string; kb: InlineKeyboard } {
-  const slots = new Map(repo.recSlots().map((s) => [s.groupKey, s]));
+  const all = repo.recSlots();
+  // Общая учётка (профиль 1 из .env) — отдельной строкой сверху, не слот группы.
+  const general = all.find((s) => s.groupTitle === GENERAL_SLOT_TITLE);
+  const slots = new Map(all.filter((s) => s !== general).map((s) => [s.groupKey, s]));
   const rechecks = new Set(repo.recorderMarkKeys("recheck:").map((k) => k.slice("recheck:".length)));
   const list = studentGroupList(groups);
   const known = new Set(list.map((g) => g.key));
@@ -61,11 +64,12 @@ export function slotsScreen(repo: Repo, groups: LogicalGroup[]): { text: string;
           ? `не пускает (последний вход ${mskStamp(slot.lastOkAt)})`
           : `пускало ${mskStamp(slot.lastOkAt)}`;
       lines.push(`${slot.status === "lost" ? "⚠️" : "✅"} ${esc(g.title)} — ${holder} · ${state}`);
-      const b = slotButtons(req?.id ?? null, g.key);
+      const b = slotButtons(req?.id ?? null, g.key, g.title);
       if (b) {
         const short = g.title.replace(/^(ОЗ)?ВИШ-/, "");
         if (slot.status === "lost") kb.text(`🔁 ${short}`, b.recheck);
-        kb.text(`🗑 ${short}`, b.revoke).row();
+        if (b.revoke) kb.text(`🗑 ${short}`, b.revoke);
+        kb.row();
       }
     } else if (approved.has(g.key)) {
       lines.push(`⏳ ${esc(g.title)} — ${who(approved.get(g.key)!)} · ставлю в слот`);
@@ -81,6 +85,13 @@ export function slotsScreen(repo: Repo, groups: LogicalGroup[]): { text: string;
     `🎥 <b>Слоты записи</b> — ${filled} из ${list.length} групп`,
     `Записывалка: ${last ? `на связи ${mskStamp(last)}` : "ещё не подключалась"}${portal ? ` · портал ${portal === "ok" ? "✅" : "лежит"}` : ""}`,
   ];
+  if (general) {
+    const state = rechecks.has(general.groupKey) ? "🔁 проверяю заново" : general.status === "lost" ? `не пускает (последний вход ${mskStamp(general.lastOkAt)})` : `пускало ${mskStamp(general.lastOkAt)}`;
+    head.push(`🔑 Общая учётка (.env) — для групп без своей: ${general.status === "lost" ? "⚠️ " : "✅ "}${state}`);
+    const b = slotButtons(null, general.groupKey, general.groupTitle);
+    // Кнопка — после слотов групп, перед «Заявки» и «Обновить».
+    if (general.status === "lost" && b) kb.text("🔁 Общая учётка", b.recheck).row();
+  }
   const tail: string[] = [];
   if (waiting) tail.push(`Ждут решения: ${waiting}`);
   if (checking) tail.push(`Проверяю вход: ${checking}`);

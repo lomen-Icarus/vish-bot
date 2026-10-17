@@ -43,6 +43,9 @@ export function groupCode(title: string): string {
 
 /** Сколько заявка ждёт проверки и решения админа, прежде чем истечь. */
 export const REQUEST_TTL_DAYS = 7;
+/** Строка общей учётки (профиль 1 из .env) в отчёте записывалки — не слот студента. */
+export const GENERAL_SLOT_TITLE = "Общая учётка (.env)";
+
 /** Метка «проверить слот заново» в recorder_state; она же — id задания recheck. */
 export const RECHECK_PREFIX = "recheck:";
 
@@ -287,7 +290,8 @@ export function revokeRecRequest(repo: Repo, id: number, by?: number): RecAction
  */
 export function revokeSlotWithoutRequest(repo: Repo, groupKey: string, adminId: number): boolean {
   const slot = repo.recSlots().find((s) => s.groupKey === groupKey);
-  if (!slot || repo.activeRecRequest(groupKey)) return false;
+  // Общая учётка живёт в .env — кнопкой её не убрать.
+  if (!slot || slot.groupTitle === GENERAL_SLOT_TITLE || repo.activeRecRequest(groupKey)) return false;
   if (repo.recRequestsByState(["revoking"]).some((r) => r.groupKey === groupKey)) return true;
   const id = repo.createRecRequest({ userId: 0, username: null, groupKey, groupTitle: slot.groupTitle, envelopeJson: "" });
   repo.setRecRequestState(id, "revoking", { dropEnvelope: true, decidedBy: adminId });
