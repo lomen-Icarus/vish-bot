@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
-import { adoptSlot, applyRecorderReport, approveRecRequest, recorderTasks, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
+import { adoptSlot, applyRecorderReport, approveRecRequest, recorderTasks, VERIFY_WAIT_MS, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
 import { notifyRecorderEffect, requestCard, type SendApi } from "../src/bot/recNotify.js";
 import { myRecordingScreen, slotsScreen } from "../src/bot/handlers/recSlots.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
@@ -325,14 +325,14 @@ describe("общая учётка (.env) в /slots", () => {
 describe("подписать слот из .env владельцем (/slot_owner)", () => {
   it("знаком боту — обычная «в слоте»: @ник в /slots, кнопки по заявке, лимит не тронут, отозвать может сам", () => {
     const r = repo();
-    r.touchUser(7, "Smerch9809", "S");
+    r.touchUser(7, "student_one", "S");
     applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok", lastOkAt: "2026-10-17T12:40:00Z" }] });
-    expect(adoptSlot(r, "14-25", "@smerch9809", 99)).toEqual({ ok: true, slotTitle: "ВИШ-14-25", linked: true });
+    expect(adoptSlot(r, "14-25", "@student_one", 99)).toEqual({ ok: true, slotTitle: "ВИШ-14-25", linked: true });
     const req = r.liveRecRequest(7)!;
-    expect(req).toMatchObject({ state: "active", groupKey: "виш-14-25", username: "Smerch9809" });
+    expect(req).toMatchObject({ state: "active", groupKey: "виш-14-25", username: "student_one" });
     expect(r.recRequestsSince(7, "2000-01-01T00:00:00Z")).toBe(0);
     const { text } = slotsScreen(r, GROUPS);
-    expect(text).toContain("✅ ВИШ-14-25 — @Smerch9809 · пускало 17.10 15:40");
+    expect(text).toContain("✅ ВИШ-14-25 — @student_one · пускало 17.10 15:40");
     expect(adoptSlot(r, "14-25", "@other", 99)).toEqual({ ok: false, reason: "taken" });
     expect(revokeRecRequest(r, req.id).ok).toBe(true);
     expect(recorderTasks(r)).toEqual([expect.objectContaining({ kind: "remove", group: "ВИШ-14-25", userId: 7 })]);
@@ -341,8 +341,8 @@ describe("подписать слот из .env владельцем (/slot_owne
   it("не знаком боту — только подпись «@ник (из .env)», кнопки по группе; слот пропал — подпись тоже", () => {
     const r = repo();
     applyRecorderReport(r, { slots: [{ group: "ВИШ-13-23", status: "ok" }] });
-    expect(adoptSlot(r, "13-23", "boretszajizn", 99)).toEqual({ ok: true, slotTitle: "ВИШ-13-23", linked: false });
-    expect(slotsScreen(r, GROUPS).text).toContain("ВИШ-13-23 — @boretszajizn (из .env)");
+    expect(adoptSlot(r, "13-23", "student_two", 99)).toEqual({ ok: true, slotTitle: "ВИШ-13-23", linked: false });
+    expect(slotsScreen(r, GROUPS).text).toContain("ВИШ-13-23 — @student_two (из .env)");
     applyRecorderReport(r, { slots: [] });
     expect(r.recorderMarkValue("owner:виш-13-23")).toBeNull();
   });
@@ -351,5 +351,18 @@ describe("подписать слот из .env владельцем (/slot_owne
     const r = repo();
     applyRecorderReport(r, { slots: [{ group: "Общая учётка (.env)", status: "ok" }] });
     expect(adoptSlot(r, "14-25", "@x", 99)).toEqual({ ok: false, reason: "no_slot" });
+  });
+});
+
+describe("кабинет лежит — проверку заявки не долбим", () => {
+  it("portal_down: следующее задание verify — только через 30 минут; вошло — пауза снята", () => {
+    const r = repo();
+    const id = req(r, 1);
+    expect(recorderTasks(r).map((t) => t.kind)).toEqual(["verify"]);
+    applyRecorderReport(r, { results: [{ id: `${id}:verify`, requestId: id, code: "portal_down" }] });
+    expect(recorderTasks(r)).toEqual([]);
+    expect(recorderTasks(r, Date.now() + VERIFY_WAIT_MS + 1000).map((t) => t.kind)).toEqual(["verify"]);
+    applyRecorderReport(r, { results: [{ id: `${id}:verify`, requestId: id, code: "login_ok" }] });
+    expect(r.recorderMarkKeys("vwait:")).toEqual([]);
   });
 });

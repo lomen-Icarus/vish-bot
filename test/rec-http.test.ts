@@ -63,3 +63,21 @@ describe("ручки /rec/sync и /rec/report", () => {
     expect((await call(port, "POST", "/rec/report", { body: "{}" })).status).toBe(403);
   });
 });
+
+describe("форма /tma: подпись раньше лимита, тело не дочитывается", () => {
+  it("поддельный initData — 401, сколько ни шли (корзин лимита не заводит)", async () => {
+    const port = await start(new Repo(openDatabase(":memory:")));
+    const statuses = new Set<number>();
+    for (let i = 0; i < 25; i++) {
+      const body = JSON.stringify({ initData: `user=${encodeURIComponent(JSON.stringify({ id: i }))}&hash=${"0".repeat(64)}` });
+      statuses.add((await call(port, "POST", "/tma/context", { body })).status);
+    }
+    expect([...statuses]).toEqual([401]);
+  });
+
+  it("тело больше 64 КиБ — соединение рвётся, а не дочитывается", async () => {
+    const port = await start(new Repo(openDatabase(":memory:")));
+    const res = await call(port, "POST", "/tma/submit", { body: JSON.stringify({ initData: "x".repeat(200 * 1024) }) }).catch((e: Error) => ({ status: -1, body: e.message }));
+    expect([400, -1]).toContain(res.status);
+  });
+});
