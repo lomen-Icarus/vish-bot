@@ -11,6 +11,7 @@ import type { StudentDirectory } from "../students/directory.js";
 import type { KnownPeople } from "../students/known.js";
 import type { Server } from "node:http";
 import type { ChatService } from "../chat/service.js";
+import type { PublicUrl } from "../http/publicUrl.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
@@ -58,6 +59,8 @@ export interface Deps {
   chat?: ChatService | null;
   /** Calendar-feed server; subscription links are offered only while it listens. */
   http: Server | null;
+  /** Публичный адрес с резервом (основной/запасной); без него — PUBLIC_URL из конфига. */
+  publicUrl?: PublicUrl;
   /**
    * Включён ли inline-режим у бота (BotFather → /setinline). Telegram сообщает
    * это в getMe; без него подсказка «@бот 12-23» в чатах просто не появляется,
