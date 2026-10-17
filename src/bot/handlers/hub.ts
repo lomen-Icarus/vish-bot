@@ -23,7 +23,7 @@ import { showFeatures, startSearch } from "./misc.js";
 import { renderSettings } from "./settings.js";
 import { showChanges, showOtherGroups } from "./schedule.js";
 import { enterStream } from "./stream.js";
-import { publicBase } from "../../http/publicUrl.js";
+import { httpsBase } from "../../http/publicUrl.js";
 
 export const hubHandlers = new Composer<BotContext>();
 
@@ -78,9 +78,9 @@ function morePanel(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     .row()
     .text("⚙️ Настройки", "more:settings")
     .text("❓ Как пользоваться", "more:help");
-  // «Записывать мою группу» — форма Mini App; нужен рабочий HTTPS-адрес и включённая запись.
-  const base = publicBase(ctx.deps);
-  if (base && ctx.deps.config.SLIDES_TOKEN && base.startsWith("https://")) kb.row().webApp("🎥 Записывать мою группу", `${base}/tma`);
+  // «Записывать мою группу» — форма Mini App; нужен HTTPS-адрес (Telegram иначе не откроет) и включённая запись.
+  const base = httpsBase(ctx.deps);
+  if (base && ctx.deps.config.SLIDES_TOKEN) kb.row().webApp("🎥 Записывать мою группу", `${base}/tma`);
   return { text: "🗂 <b>Ещё</b>", kb };
 }
 

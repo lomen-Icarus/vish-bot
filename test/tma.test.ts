@@ -88,17 +88,21 @@ describe("Mini App: приём заявки", () => {
 });
 
 describe("Mini App: сквозное шифрование (браузер → бот → записывалка)", () => {
-  it("конверт, собранный как в браузере, расшифровывается записывалкой с тем же AAD", async () => {
-    const { loadOrCreateKeys, sealCredentials, openEnvelope, envelopeAad } = await import("../recorder/src/crypto.js");
+  it("seal() со страницы (реальный код формы) расшифровывается записывалкой с тем же AAD", async () => {
+    const { loadOrCreateKeys, openEnvelope, envelopeAad } = await import("../recorder/src/crypto.js");
+    const { TMA_PAGE } = await import("../src/http/tmaPage.js");
     const { mkdtempSync } = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
+    // Берём ровно ту функцию seal(), что уходит в браузер, и выполняем её в Node (WebCrypto общий).
+    const src = /async function seal\(pubB64, creds, aad\) \{[\s\S]*?\n\}/.exec(TMA_PAGE);
+    expect(src).not.toBeNull();
+    const seal = new Function(`${src![0]}; return seal;`)() as (pub: string, creds: { login: string; password: string }, aad: string) => Promise<{ v: number; k: string; iv: string; c: string }>;
     const keys = loadOrCreateKeys(mkdtempSync(path.join(os.tmpdir(), "tma-")) + "/keys");
     const repo = new Repo(openDatabase(":memory:"));
     repo.touchUser(7, "stud", "S");
     repo.setRecorderPublicKey(keys.publicSpki);
-    // Браузер шифрует логин и пароль открытым ключом записывалки и AAD по группе.
-    const env = await sealCredentials(keys.publicSpki, { login: "stud@x", password: "пароль 42" }, envelopeAad(7, "ВИШ-13-23"));
+    const env = await seal(keys.publicSpki, { login: "stud@x", password: "пароль 42" }, envelopeAad(7, "ВИШ-13-23"));
     const r = tmaSubmit(deps(repo), { initData: initData(7), groupKey: "виш-13-23", envelope: env });
     expect(r.status).toBe(200);
     const stored = JSON.parse(repo.recRequest((r.json as { requestId: number }).requestId)!.envelopeJson!);

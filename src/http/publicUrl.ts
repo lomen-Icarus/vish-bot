@@ -85,3 +85,11 @@ export class PublicUrl {
 export function publicBase(deps: { publicUrl?: PublicUrl; config: { PUBLIC_URL?: string; PUBLIC_URL_FALLBACK?: string } }): string | undefined {
   return deps.publicUrl?.current() ?? deps.config.PUBLIC_URL ?? deps.config.PUBLIC_URL_FALLBACK;
 }
+
+/**
+ * Первый HTTPS-адрес среди доступных: нужен Mini App (Telegram открывает его
+ * только по HTTPS), когда основной адрес — http, а HTTPS только запасной.
+ */
+export function httpsBase(deps: { publicUrl?: PublicUrl; config: { PUBLIC_URL?: string; PUBLIC_URL_FALLBACK?: string } }): string | undefined {
+  return [deps.publicUrl?.current(), deps.config.PUBLIC_URL, deps.config.PUBLIC_URL_FALLBACK].find((u) => u?.startsWith("https://"));
+}

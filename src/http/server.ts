@@ -261,16 +261,20 @@ export function createHttpServer(deps: HttpDeps): Server {
       res.end(buf);
     };
     if (!deps.botToken) return reply(404, { error: "форма выключена" });
-    const ip = String(req.socket.remoteAddress ?? "");
-    if (!tmaRateOk(ip)) return reply(429, { error: "слишком часто, подожди минуту" });
     try {
       const body = JSON.parse((await readBody(req, 64 * 1024)).toString("utf8") || "{}") as Record<string, unknown>;
+      // Лимит частоты по id из initData (а не по IP): за HTTPS-прокси у всех
+      // один IP, и общий лимит стал бы отказом в обслуживании для всех.
+      // Подпись проверяется дальше; подделка id лишь заводит свою корзину.
+      const who = new URLSearchParams(String(body.initData ?? "")).get("user") ?? String(req.socket.remoteAddress ?? "");
+      if (!tmaRateOk(who)) return reply(429, { error: "слишком часто, подожди минуту" });
       const tdeps = { repo: deps.repo, groups: () => deps.service.groups(), botToken: deps.botToken };
       const r = kind === "context" ? tmaContext(tdeps, String(body.initData ?? "")) : tmaSubmit(tdeps, body);
       if (kind === "submit" && r.status === 200) logger.info({ requestId: (r.json as { requestId?: number }).requestId }, "новая заявка на запись");
       return reply(r.status, r.json);
     } catch (err) {
-      logger.warn({ err: String(err).slice(0, 150), kind }, "форма записи споткнулась");
+      // Только тип ошибки: текст JSON-разбора может содержать кусок тела с именем.
+      logger.warn({ err: (err as Error).name, kind }, "форма записи споткнулась");
       return reply(400, { error: "не разобрано" });
     }
   };

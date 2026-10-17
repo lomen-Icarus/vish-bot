@@ -23,7 +23,7 @@ export interface InitDataResult {
   reason?: "bad_hash" | "stale" | "no_user" | "malformed";
 }
 
-const MAX_AGE_SEC = 10 * 60;
+const MAX_AGE_SEC = 30 * 60;
 
 export function verifyInitData(initData: string, botToken: string, now = Date.now()): InitDataResult {
   const params = new URLSearchParams(initData);

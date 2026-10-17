@@ -49,7 +49,7 @@ export const TMA_PAGE = `<!doctype html>
 
     <div class="box">
       <label class="consent"><input type="checkbox" id="c1"><span class="warn">Понимаю, что на онлайн-паре бот будет виден в списке участников под моим именем.</span></label>
-      <label class="consent"><input type="checkbox" id="c2"><span class="warn">Понимаю, что бот будет периодически заходить в мой аккаунт, чтобы проверить, что доступ ещё работает. Я могу отозвать доступ в любой момент.</span></label>
+      <label class="consent"><input type="checkbox" id="c2"><span class="warn">Понимаю, что бот будет периодически заходить в мой аккаунт, чтобы проверить, что доступ ещё работает, и что я могу отозвать доступ в боте.</span></label>
     </div>
 
     <button type="submit" id="send" disabled>Отправить заявку</button>
@@ -59,7 +59,7 @@ export const TMA_PAGE = `<!doctype html>
 <script>
 const tg = window.Telegram?.WebApp;
 tg?.ready(); tg?.expand();
-const initData = tg?.initData || "";
+let initData = tg?.initData || "";
 const $ = (id) => document.getElementById(id);
 let ctx = null;
 
@@ -93,7 +93,7 @@ async function load() {
   if (!res.ok) return block("Не удалось открыть форму. Попробуй позже.");
   ctx = await res.json();
   if (!ctx.recorderReady) return block("Сервис записи ещё не подключён. Попробуй позже.");
-  if (ctx.remaining <= 0) return block("Ты уже подавал(а) заявки в этом месяце. Можно не больше 2 в месяц — попробуй позже.");
+  if (ctx.remaining <= 0) return block("Ты уже подавал(а) заявки в этом месяце. Можно не больше " + (ctx.limit || 2) + " в месяц — попробуй позже.");
   const sel = $("group");
   for (const g of ctx.groups) { const o = document.createElement("option"); o.value = g.key; o.textContent = g.title; if (g.key === ctx.myGroupKey) o.selected = true; sel.appendChild(o); }
   $("loading").classList.add("hidden");
@@ -107,6 +107,7 @@ $("form").addEventListener("submit", async (e) => {
   $("send").disabled = true;
   const msg = $("msg"); msg.textContent = "Шифрую и отправляю…"; msg.className = "";
   try {
+    initData = tg?.initData || initData;
     const group = ctx.groups.find((g) => g.key === $("group").value);
     const aad = "vish-rec|" + ctx.userId + "|" + group.title;
     const envelope = await seal(ctx.publicKey, { login: $("login").value.trim(), password: $("password").value }, aad);
@@ -114,13 +115,13 @@ $("form").addEventListener("submit", async (e) => {
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
       $("form").querySelectorAll("input,select,button").forEach((el) => (el.disabled = true));
-      msg.textContent = "✅ Заявка отправлена. Админ рассмотрит её вручную; отдельного ответа может не быть. Отозвать доступ можно в боте.";
+      msg.textContent = "✅ Заявка отправлена. Админ рассмотрит её вручную; отдельного ответа может не быть. Отозвать свои данные можно командой /soon в боте.";
       msg.className = "ok";
       tg?.HapticFeedback?.notificationOccurred("success");
     } else {
-      msg.textContent = data.error || "Не отправилось. Попробуй позже.";
+      msg.textContent = (res.status === 401 ? "Форма устарела — закрой и открой заново из бота." : data.error) || "Не отправилось. Попробуй позже.";
       msg.className = "err";
-      $("send").disabled = false;
+      $("send").disabled = res.status !== 401 ? false : true;
     }
   } catch {
     msg.textContent = "Не удалось зашифровать. Обнови Telegram и попробуй снова.";
