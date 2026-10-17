@@ -24,6 +24,7 @@ import { AccountStore, CHECK_EVERY_MS, type Slot } from "./accounts.js";
 import { envelopeAad, openEnvelope, type Envelope } from "./crypto.js";
 import { checkStudentLogin, lkAlive } from "./lk.js";
 import { log } from "./log.js";
+import { GENERAL_SLOT, type GeneralWatch } from "./general.js";
 
 export interface Task {
   id: string;
@@ -57,6 +58,8 @@ export interface SyncDeps {
   proxyUrl?: string;
   /** Для verify нужно знать, к какой логической группе относится номер группы из кабинета. */
   groupName?: (groupId: number) => Promise<string | null>;
+  /** Общая учётка из .env под присмотром (null — не «обучающийся», не проверяем). */
+  general?: GeneralWatch | null;
 }
 
 export function syncBase(botUrl: string): string {
@@ -108,6 +111,11 @@ export async function runTask(task: Task, deps: SyncDeps): Promise<TaskResult> {
       deps.store.remove(task.group);
       return { id: task.id, requestId: task.requestId, code: "removed" };
     case "recheck": {
+      if (task.group === GENERAL_SLOT && deps.general) {
+        const check = await checkStudentLogin(deps.general.profile.login, deps.general.profile.password, { proxyUrl: deps.proxyUrl });
+        if (check.verdict === "ok") deps.general.noteJoin();
+        return { id: task.id, requestId: task.requestId, code: check.verdict === "ok" ? "login_ok" : check.verdict === "down" ? "portal_down" : "login_failed" };
+      }
       const slot = deps.store.get(task.group);
       if (!slot) return { id: task.id, requestId: task.requestId, code: "removed" };
       const check = await checkStudentLogin(slot.login, slot.password, { proxyUrl: deps.proxyUrl });
@@ -171,7 +179,7 @@ export async function syncOnce(deps: SyncDeps): Promise<{ done: number } | null>
     await undiciFetch(`${base}/rec/report`, {
       method: "POST",
       headers: { Authorization: `Bearer ${deps.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ publicKey: deps.publicSpki, results, slots: deps.store.list().map(slotSummary), portal }),
+      body: JSON.stringify({ publicKey: deps.publicSpki, results, slots: [...deps.store.list().map(slotSummary), ...(deps.general ? [deps.general.summary()] : [])], portal }),
       signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {

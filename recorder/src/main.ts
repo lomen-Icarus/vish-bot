@@ -21,6 +21,7 @@ import { loadOrCreateKeys } from "./crypto.js";
 import { lkAlive, checkStudentLogin } from "./lk.js";
 import { runLiveness, type LiveTarget } from "./liveness.js";
 import { syncOnce } from "./sync.js";
+import { GeneralWatch } from "./general.js";
 import { log } from "./log.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -40,7 +41,7 @@ type Outcome = "done" | "retry";
 
 const botUrls = (cfg: Pick<RecorderConfig, "botUrl" | "botFallbackUrl">): string[] => [cfg.botUrl, cfg.botFallbackUrl].filter(Boolean);
 
-async function recordOne(cfg: RecorderConfig, store: AccountStore, portal: Portal, date: string, row: WebinarRow): Promise<Outcome> {
+async function recordOne(cfg: RecorderConfig, store: AccountStore, general: GeneralWatch | null, portal: Portal, date: string, row: WebinarRow): Promise<Outcome> {
   const meta: DeckMeta = {
     date,
     subject: row.subject,
@@ -60,6 +61,7 @@ async function recordOne(cfg: RecorderConfig, store: AccountStore, portal: Porta
   log.info({ subject: row.subject, teacher: row.teacher, groups: row.groups, profile: join.profile }, "захожу на вебинар");
   // Заход под учёткой студента — уже проверка «аккаунт жив»: отодвигаем плановую.
   if (join.profile?.startsWith("slot:")) store.update(join.profile.slice(5), { status: "ok", failures: 0, lastOkAt: new Date().toISOString(), nextCheckAt: Date.now() + CHECK_EVERY_MS });
+  if (join.profile === "1") general?.noteJoin();
   // Папка кадров своя у каждой пары (дата + время + предмет). Если съёмку
   // этой пары прервали (перезапуск, повторный заход), снятое до этого
   // остаётся и съёмка продолжается с того же номера; уже собранную пачку
@@ -99,11 +101,13 @@ async function recordOne(cfg: RecorderConfig, store: AccountStore, portal: Porta
 }
 
 /** Проверить слоты, которым пора; о «доступ потерян» сообщить боту (он уведомит владельца). */
-async function checkSlotLiveness(store: AccountStore, proxyUrl?: string): Promise<void> {
+async function checkSlotLiveness(store: AccountStore, general: GeneralWatch | null, proxyUrl?: string): Promise<void> {
   const targets: LiveTarget[] = store
     .list()
     .filter((s) => s.status === "ok")
     .map((s) => ({ key: `slot:${s.group}`, login: s.login, password: s.password, state: { status: s.status, failures: s.failures, lastOkAt: s.lastOkAt, nextCheckAt: s.nextCheckAt }, save: (patch) => store.update(s.group, patch) }));
+  // Общая учётка — тем же порядком (на пары она пробуется и «потерянной», см. general.ts).
+  if (general) targets.push(general.target());
   if (!targets.length) return;
   const res = await runLiveness(targets, { check: (l, p) => checkStudentLogin(l, p, { proxyUrl }), alive: () => lkAlive({ proxyUrl }) });
   for (const t of res.transitions) log.warn({ slot: t.key }, "учётка слота перестала пускать — доступ потерян");
@@ -119,6 +123,8 @@ async function main(): Promise<void> {
   const dataDir = dirname(cfg.outDir);
   const keys = loadOrCreateKeys(`${dataDir}/keys`);
   const store = AccountStore.inDir(dataDir);
+  // Общая учётка (профиль 1) — под присмотром «жива ли», видна в /slots.
+  const general = GeneralWatch.forProfile(dataDir, cfg.profiles[0]!);
   log.info({ keys: `${dataDir}/keys/accounts.key`, accounts: `${dataDir}/accounts.json`, slots: store.list().length }, "слоты студентов и ключ шифрования");
   // Профили — только номер и группы: логины и пароли в лог не попадают.
   // Каждая запись — свой Chromium, ~0,5–1 ГБ: честно предупреждаем, если места на столько не хватит.
@@ -151,13 +157,13 @@ async function main(): Promise<void> {
       if (Date.now() - syncAt > SYNC_EVERY_MS && !syncing) {
         syncAt = Date.now();
         syncing = true;
-        void syncOnce({ botUrls: botUrls(cfg), token: cfg.botToken, store, privatePem: keys.privatePem, publicSpki: keys.publicSpki, proxyUrl: process.env.HTTPS_PROXY, groupName: (id) => portal.groupName(id) })
+        void syncOnce({ botUrls: botUrls(cfg), token: cfg.botToken, store, privatePem: keys.privatePem, publicSpki: keys.publicSpki, proxyUrl: process.env.HTTPS_PROXY, groupName: (id) => portal.groupName(id), general })
           .catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "обмен заявками споткнулся"))
           .finally(() => (syncing = false));
       }
       if (!checking) {
         checking = true;
-        void checkSlotLiveness(store, process.env.HTTPS_PROXY)
+        void checkSlotLiveness(store, general, process.env.HTTPS_PROXY)
           .catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "проверка аккаунтов споткнулась"))
           .finally(() => (checking = false));
       }
@@ -173,7 +179,7 @@ async function main(): Promise<void> {
       for (const row of plan.start) {
         const key = keyOf(now.date, row);
         state.active.add(key);
-        void recordOne(cfg, store, portal, now.date, row)
+        void recordOne(cfg, store, general, portal, now.date, row)
           .then((outcome) => {
             if (outcome === "done") state.done.add(key);
             else state.retryAt.set(key, Date.now() + RETRY_MS);

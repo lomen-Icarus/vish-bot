@@ -291,3 +291,33 @@ describe("слот без заявки (учётка перенесена из .
     expect(api.sent[0]!.text).toContain("учётка из .env");
   });
 });
+
+describe("общая учётка (.env) в /slots", () => {
+  const GEN = "Общая учётка (.env)";
+
+  it("строка сверху, не считается слотом группы, без «Отозвать»", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: GEN, status: "ok", lastOkAt: "2026-10-17T09:00:00Z" }] });
+    const { text, kb } = slotsScreen(r, GROUPS);
+    expect(text).toContain("0 из 2 групп");
+    expect(text).toContain("🔑 Общая учётка (.env) — для групп без своей: ✅ пускало 17.10 12:00");
+    const data = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(data).toEqual(["rq:slots"]);
+  });
+
+  it("не пускает — кнопка «Проверить снова», весть админу про WEBINAR_PASSWORD; отозвать нельзя", async () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: GEN, status: "ok" }] });
+    const eff = applyRecorderReport(r, { slots: [{ group: GEN, status: "lost" }] });
+    const api = fakeApi();
+    await notifyRecorderEffect(api, r, [100], eff);
+    expect(api.sent).toHaveLength(1);
+    expect(api.sent[0]!.text).toContain("WEBINAR_PASSWORD");
+    expect(api.sent[0]!.buttons).toEqual(["rq:rcg:общая учётка (.env)"]);
+    const { kb } = slotsScreen(r, GROUPS);
+    expect(kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data)).toEqual(["rq:rcg:общая учётка (.env)", "rq:slots"]);
+    expect(revokeSlotWithoutRequest(r, "общая учётка (.env)", 99)).toBe(false);
+    expect(requestRecheck(r, "общая учётка (.env)")).toBe(true);
+    expect(recorderTasks(r)).toEqual([expect.objectContaining({ kind: "recheck", group: GEN })]);
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { envelopeAad, loadOrCreateKeys, openEnvelope, sealCredentials } from "../recorder/src/crypto.js";
@@ -7,6 +7,8 @@ import { AccountStore } from "../recorder/src/accounts.js";
 import { runLiveness, type LiveTarget } from "../recorder/src/liveness.js";
 import type { LoginCheck } from "../recorder/src/lk.js";
 import { groupCode as recGroupCode, profileToSlot } from "../recorder/src/envslot.js";
+import { GeneralWatch, GENERAL_SLOT } from "../recorder/src/general.js";
+import { GENERAL_SLOT_TITLE } from "../src/bot/recorder.js";
 import { groupCode as botGroupCode } from "../src/bot/recorder.js";
 
 const tmp = (): string => mkdtempSync(path.join(os.tmpdir(), "rec-acc-"));
@@ -147,5 +149,38 @@ describe("перенос профилей .env в слоты", () => {
     const store = AccountStore.inDir(dir);
     store.install({ ...profileToSlot({ groups: ["11-23", "12-23"] }, "ВИШ-13-23"), login: "l", password: "p", requestId: 0, userId: 0 });
     expect(store.profiles()[0]!.groups).toEqual(["13-23", "11-23", "12-23"]);
+  });
+});
+
+describe("общая учётка (профиль 1) под присмотром", () => {
+  const profile = { name: "1", authMode: "1" as const, login: "l", password: "p", groups: [] };
+
+  it("название строки одинаковое у записывалки и бота", () => {
+    expect(GENERAL_SLOT).toBe(GENERAL_SLOT_TITLE);
+  });
+
+  it("только для «обучающегося»; состояние переживает перезапуск, логина в файле нет", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "general-"));
+    expect(GeneralWatch.forProfile(dir, { ...profile, authMode: "2" })).toBeNull();
+    const g = GeneralWatch.forProfile(dir, profile)!;
+    expect(g.summary()).toEqual({ group: GENERAL_SLOT, status: "ok", lastOkAt: null });
+    g.target().save({ status: "lost", failures: 2 });
+    const again = GeneralWatch.forProfile(dir, profile)!;
+    expect(again.current).toMatchObject({ status: "lost", failures: 2 });
+    again.noteJoin(Date.parse("2026-10-17T10:00:00Z"));
+    expect(again.summary()).toEqual({ group: GENERAL_SLOT, status: "ok", lastOkAt: "2026-10-17T10:00:00.000Z" });
+    expect(readFileSync(path.join(dir, "general.json"), "utf8")).not.toContain("\"l\"");
+  });
+
+  it("проверка «жива ли» вместе со слотами: два «неверный пароль» подряд — lost", async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "general-"));
+    const g = GeneralWatch.forProfile(dir, profile)!;
+    let t = 0;
+    const deps = { check: async (): Promise<LoginCheck> => ({ verdict: "bad" }), alive: async () => true, now: () => t, sleep: async () => undefined };
+    await runLiveness([g.target()], deps);
+    t += 16 * 60 * 1000;
+    const res = await runLiveness([g.target()], deps);
+    expect(res.transitions).toEqual([{ key: "general", to: "lost" }]);
+    expect(g.summary().status).toBe("lost");
   });
 });
