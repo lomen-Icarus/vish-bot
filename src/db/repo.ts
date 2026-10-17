@@ -1569,6 +1569,21 @@ export class Repo {
     return r?.value ?? null;
   }
 
+  /** Ключи меток с этим началом (например, «recheck:»). */
+  recorderMarkKeys(prefix: string): string[] {
+    return (this.db.prepare("SELECT key FROM recorder_state WHERE substr(key, 1, ?) = ? ORDER BY key").all(prefix.length, prefix) as Array<{ key: string }>).map((r) => r.key);
+  }
+
+  clearRecorderMark(key: string): void {
+    this.db.prepare("DELETE FROM recorder_state WHERE key = ?").run(key);
+  }
+
+  /** Текущая заявка человека — та, что ещё в работе или стоит в слоте. */
+  liveRecRequest(userId: number): RecRequestRow | null {
+    const r = this.db.prepare("SELECT * FROM rec_requests WHERE user_id = ? AND state IN ('pending_verify','verified','approved','active','revoking') ORDER BY id DESC LIMIT 1").get(userId) as Record<string, unknown> | undefined;
+    return r ? recRequestRow(r) : null;
+  }
+
   /** Заявок за последние 30 дней от этого человека (для лимита). Считаются все, кроме снятых системой. */
   recRequestsSince(userId: number, since: string): number {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM rec_requests WHERE user_id = ? AND created_at >= ? AND state NOT IN ('rejected_bad_envelope','expired','revoked')").get(userId, since) as { n: number }).n;

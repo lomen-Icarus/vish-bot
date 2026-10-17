@@ -1,5 +1,5 @@
 /**
- * Mini App «Подключить мою группу к записи» (этап 2B). Логика без HTTP: страница
+ * Mini App «Записывать мою группу» (этап 2B). Логика без HTTP: страница
  * формы шифрует логин и пароль в браузере открытым ключом записывалки и шлёт
  * боту только шифровку. Бот проверяет подпись Telegram, лимит и сохраняет
  * заявку. Расшифровать может лишь записывалка.
@@ -20,12 +20,17 @@ const WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 const since30 = (now: number): string => new Date(now - WINDOW_MS).toISOString();
 
-/** Только учебные группы ВИШ (без справочных «нулевых»), по возрастанию. */
-function studentGroups(deps: TmaDeps): LogicalGroup[] {
-  return deps.groups()
-    .filter((g) => g.course > 0)
-    .sort((a, b) => a.title.localeCompare(b.title));
+/** Сколько заявок человек ещё может подать в скользящие 30 дней. */
+export function requestsLeft(repo: Repo, userId: number, now = Date.now()): number {
+  return Math.max(0, REQUEST_LIMIT - repo.recRequestsSince(userId, since30(now)));
 }
+
+/** Только учебные группы ВИШ (без справочных «нулевых»), по возрастанию. */
+export function studentGroupList(groups: LogicalGroup[]): LogicalGroup[] {
+  return groups.filter((g) => g.course > 0).sort((a, b) => a.title.localeCompare(b.title));
+}
+
+const studentGroups = (deps: TmaDeps): LogicalGroup[] => studentGroupList(deps.groups());
 
 export interface TmaContext {
   status: number;
@@ -39,7 +44,6 @@ export function tmaContext(deps: TmaDeps, initData: string, now = Date.now()): T
   const publicKey = deps.repo.recorderPublicKey();
   const groups = studentGroups(deps).map((g) => ({ key: g.key, title: g.title }));
   const user = deps.repo.getUser(check.user.id);
-  const used = deps.repo.recRequestsSince(check.user.id, since30(now));
   return {
     status: 200,
     json: {
@@ -48,7 +52,9 @@ export function tmaContext(deps: TmaDeps, initData: string, now = Date.now()): T
       groups,
       myGroupKey: user?.groupKey ?? null,
       userId: check.user.id,
-      remaining: Math.max(0, REQUEST_LIMIT - used),
+      remaining: requestsLeft(deps.repo, check.user.id, now),
+      // Заявка уже в работе или учётка в слоте — вторую не принимаем (форма могла остаться в старом сообщении).
+      busy: !!deps.repo.liveRecRequest(check.user.id),
       limit: REQUEST_LIMIT,
     },
   };
@@ -71,6 +77,7 @@ export function tmaSubmit(deps: TmaDeps, body: TmaSubmitBody, now = Date.now()):
   if (!env || env.v !== 1 || typeof env.k !== "string" || typeof env.iv !== "string" || typeof env.c !== "string") return { status: 400, json: { error: "данные не зашифровались, попробуй ещё раз" } };
   // Великоватую шифровку не храним: защита от мусора в базе.
   if (env.k.length > 4000 || env.c.length > 8000 || env.iv.length > 64) return { status: 400, json: { error: "слишком длинно" } };
+  if (deps.repo.liveRecRequest(check.user.id)) return { status: 409, json: { error: "У тебя уже есть заявка или учётка в записи. Статус и отзыв: 🗂 Ещё → 🎥 Запись моей группы." } };
   if (deps.repo.recRequestsSince(check.user.id, since30(now)) >= REQUEST_LIMIT) return { status: 429, json: { error: `Можно не больше ${REQUEST_LIMIT} заявок в месяц. Попробуй позже.` } };
   const id = deps.repo.createRecRequest({
     userId: check.user.id,

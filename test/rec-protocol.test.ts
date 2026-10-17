@@ -53,7 +53,7 @@ describe("код группы для сверки", () => {
 });
 
 describe("задания записывалке из состояния заявок", () => {
-  it("pending_verify → verify с конвертом; approved → install; revoking → remove", () => {
+  it("revoking → remove первым, затем pending_verify → verify с конвертом, approved → install", () => {
     const r = repo();
     const a = r.createRecRequest({ userId: 1, username: "a", groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", envelopeJson: ENV });
     const b = r.createRecRequest({ userId: 2, username: "b", groupKey: "виш-13-23", groupTitle: "ВИШ-13-23", envelopeJson: ENV });
@@ -62,9 +62,9 @@ describe("задания записывалке из состояния заяв
     r.setRecRequestState(c, "revoking", { dropEnvelope: true });
     const tasks = recorderTasks(r).map((t) => [t.kind, t.requestId, t.codes.join(","), !!t.envelope]);
     expect(tasks).toEqual([
+      ["remove", c, "12-23", false],
       ["verify", a, "14-25", true],
       ["install", b, "13-23", true],
-      ["remove", c, "12-23", false],
     ]);
   });
 });
@@ -93,7 +93,7 @@ describe("применение отчёта записывалки", () => {
     const r = repo();
     const id = r.createRecRequest({ userId: 1, username: "a", groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", envelopeJson: ENV });
     const eff = applyRecorderReport(r, { results: [{ id: `${id}:verify`, requestId: id, code: "login_ok", actualGroup: "ВИШ-12-25" }] });
-    expect(eff.transitions).toEqual([{ requestId: id, to: "verified", mismatch: true }]);
+    expect(eff.transitions).toEqual([{ requestId: id, from: "pending_verify", to: "verified", mismatch: true, actualGroup: "ВИШ-12-25", userId: 1, username: "a", groupKey: "виш-14-25", groupTitle: "ВИШ-14-25" }]);
   });
 
   it("installed → active (конверт стёрт); removed → revoked и слот убран", () => {
