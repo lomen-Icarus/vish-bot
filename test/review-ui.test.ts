@@ -90,7 +90,7 @@ async function botWith(deps: Deps) {
 const deck = (id: number, date: string, subject: string, title: string | null = null): SlideDeckRow => ({ id, date, subject, teacher: null, title, groups: ["ВИШ-14-25"], slides: 5, file: "/nope.pdf", bytes: 1, fileId: null, sent: 0, createdAt: "" });
 
 describe("кнопка меню снимает ожидание ввода", () => {
-  it("«💬 Поддержка» → «🔍 Найти» → «14-24»: это уже поиск, а не обращение", async () => {
+  it("«🙋 Поддержка» → «🔍 Найти» → «14-24»: это уже поиск, а не обращение", async () => {
     const { deps } = makeDeps();
     const { bot, calls } = await botWith(deps);
     await bot.handleUpdate(text(BTN.complaint));
@@ -194,7 +194,7 @@ describe("заявка на запись: «Отклонить» с подтве
 
 describe("подписи и счётчики", () => {
   it("старые подписи — те же кнопки; в /stats сводятся к нынешней", () => {
-    expect(btnLabels("complaint")).toEqual([BTN.complaint, "🏛 Жалоба", "👥 Поддержка"]);
+    expect(btnLabels("complaint")).toEqual(["🙋 Поддержка", "🏛 Жалоба", "👥 Поддержка", "💬 Поддержка"]);
     expect(isMenuText("👥 Поддержка")).toBe(true);
     expect(currentLabel("☰ Ещё")).toBe(BTN.more);
     expect(currentLabel(BTN.today)).toBe(BTN.today);

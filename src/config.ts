@@ -70,7 +70,7 @@ const schema = z.object({
   BOT_TOKEN: z.string().min(20, "BOT_TOKEN is required"),
   ADMIN_IDS: idList,
   MEDIA_CHAT_IDS: idList,
-  /** Кому писать напрямую — в разделе «💬 Поддержка» (Министерство Жалоб). */
+  /** Кому писать напрямую — в разделе «🙋 Поддержка» (Министерство Жалоб). */
   SUPPORT_CONTACT: z.preprocess(blankToUndefined, z.string().default("@lomen_Icarus")),
   FACULTY_ID: num(z.coerce.number().int().positive().default(32)),
   /** Group name prefixes hidden from users and skipped by the poller (part-time streams etc.). */
