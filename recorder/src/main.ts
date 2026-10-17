@@ -51,8 +51,15 @@ async function recordOne(cfg: RecorderConfig, store: AccountStore, general: Gene
     startMinutes: row.startMinutes,
     endMinutes: row.endMinutes,
   };
-  // Профиль для групп этой пары — первым; не пустили — общий.
-  const join = await joinWithProfiles(portal, row, [...cfg.profiles, ...store.profiles()]);
+  // Профиль для групп этой пары — первым; не пустили — общий. Не пустила
+  // основная комната потока — пробуем остальные его комнаты.
+  const profiles = [...cfg.profiles, ...store.profiles()];
+  let join = await joinWithProfiles(portal, row, profiles);
+  for (const alt of row.alts ?? []) {
+    if (join.url) break;
+    const next = await joinWithProfiles(portal, alt, profiles);
+    join = next.url ? next : { ...next, errors: [...join.errors, ...next.errors] };
+  }
   if (!join.url) {
     // Часто это «ведущий ещё не открыл комнату»: пара идёт — пробуем снова.
     log.warn({ subject: row.subject, groups: row.groups, err: join.errors }, "портал не дал ссылку на комнату, попробую ещё");
@@ -67,7 +74,7 @@ async function recordOne(cfg: RecorderConfig, store: AccountStore, general: Gene
   // этой пары прервали (перезапуск, повторный заход), снятое до этого
   // остаётся и съёмка продолжается с того же номера; уже собранную пачку
   // заново не начинаем — см. earlierSlides.
-  const dir = path.join(cfg.outDir, deckBaseName(date, row.startMinutes, row.subject));
+  const dir = path.join(cfg.outDir, deckBaseName(date, row.startMinutes, row.subject, row.teacher));
   const pdfPath = path.join(cfg.outDir, deckFileName(meta));
   const earlier = earlierSlides(dir, pdfPath);
   if (earlier.length) log.info({ slides: earlier.length }, "продолжаю прерванную съёмку этой пары: снятое раньше остаётся");
@@ -106,7 +113,18 @@ async function checkSlotLiveness(store: AccountStore, general: GeneralWatch | nu
   const targets: LiveTarget[] = store
     .list()
     .filter((s) => s.status === "ok")
-    .map((s) => ({ key: `slot:${s.group}`, login: s.login, password: s.password, state: { status: s.status, failures: s.failures, lastOkAt: s.lastOkAt, nextCheckAt: s.nextCheckAt }, save: (patch) => store.update(s.group, patch) }));
+    .map((s) => ({
+      key: `slot:${s.group}`,
+      login: s.login,
+      password: s.password,
+      state: { status: s.status, failures: s.failures, lastOkAt: s.lastOkAt, nextCheckAt: s.nextCheckAt },
+      // Итог — только в тот же слот: заменили его за время проверки — не трогаем новый.
+      save: (patch) => store.update(s.group, patch, s.installedAt),
+      fresh: () => {
+        const c = store.get(s.group);
+        return c && c.installedAt === s.installedAt ? { status: c.status, failures: c.failures, lastOkAt: c.lastOkAt, nextCheckAt: c.nextCheckAt } : null;
+      },
+    }));
   // Общая учётка — тем же порядком (на пары она пробуется и «потерянной», см. general.ts).
   if (general) targets.push(general.target());
   if (!targets.length) return;

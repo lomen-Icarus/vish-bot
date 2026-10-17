@@ -18,7 +18,8 @@ import type { BotContext } from "../context.js";
 import { esc } from "../../schedule/format.js";
 import { adoptSlot, approveRecRequest, GENERAL_SLOT_TITLE, OWNER_PREFIX, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, type RecActionResult } from "../recorder.js";
 import { mskStamp, requestCard, slotButtons, stateLabel } from "../recNotify.js";
-import { studentGroupList } from "../tma.js";
+import { REQUEST_LIMIT, studentGroupList } from "../tma.js";
+import { FORM_PATH, STATUS_PATH } from "../keyboards.js";
 import type { Repo, RecRequestRow } from "../../db/repo.js";
 import type { LogicalGroup } from "../../schedule/groups.js";
 import { logger } from "../../logger.js";
@@ -142,7 +143,7 @@ adminOnly.callbackQuery(/^rq:ok:(\d+)$/, async (ctx) => {
   const id = Number(ctx.match[1]);
   const res = approveRecRequest(ctx.deps.repo, id, ctx.from.id);
   logger.info({ request: id, admin: ctx.from.id, ok: res.ok, replaced: res.ok ? (res.replaced?.id ?? null) : null }, "заявка на запись: одобрение");
-  await ctx.answerCallbackQuery({ text: res.ok ? (res.replaced ? "Одобрено: прежнюю учётку уберу, новую поставлю" : "Одобрено: поставлю в слот в ближайшую минуту") : failText(res) });
+  await ctx.answerCallbackQuery({ text: res.ok ? (res.replaced || res.replacedEnv ? "Одобрено: прежнюю учётку уберу, новую поставлю" : "Одобрено: поставлю в слот в ближайшую минуту") : failText(res) });
   await refreshCard(ctx, id);
   // Тому, чью учётку заменили, — почему её убирают (иначе «учётка убрана» без объяснений).
   const old = res.ok ? res.replaced : null;
@@ -151,7 +152,27 @@ adminOnly.callbackQuery(/^rq:ok:(\d+)$/, async (ctx) => {
   }
 });
 
+// «Отклонить» — с подтверждением, как «Отозвать»: шифровка стирается, студенту
+// уходит весть и заявка засчитывается в его лимит, а промахнуться мимо
+// «Одобрить» в соседней кнопке легко.
 adminOnly.callbackQuery(/^rq:no:(\d+)$/, async (ctx) => {
+  const id = Number(ctx.match[1]);
+  const req = ctx.deps.repo.recRequest(id);
+  await ctx.answerCallbackQuery();
+  if (!req || req.state !== "verified") return refreshCard(ctx, id);
+  const card = requestCard(ctx.deps.repo, req);
+  const kb = new InlineKeyboard().text("❌ Да, отклонить", `rq:noy:${id}`).text("◀️ Назад", `rq:card:${id}`);
+  await ctx.editMessageText(`${card.text}
+
+Отклонить? Логин и пароль сотрутся, студенту придёт весть, заявка засчитается в его лимит (${REQUEST_LIMIT} в месяц).`, { parse_mode: "HTML", reply_markup: kb }).catch(() => undefined);
+});
+
+adminOnly.callbackQuery(/^rq:card:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await refreshCard(ctx, Number(ctx.match[1]));
+});
+
+adminOnly.callbackQuery(/^rq:noy:(\d+)$/, async (ctx) => {
   const id = Number(ctx.match[1]);
   const req = ctx.deps.repo.recRequest(id);
   const res = rejectRecRequest(ctx.deps.repo, id, ctx.from.id);
@@ -210,16 +231,22 @@ adminOnly.callbackQuery(/^rq:rvgy:(.+)$/, async (ctx) => {
 
 /** «/slot_owner 14-25 @ник» — подписать слот из .env владельцем. */
 adminOnly.command("slot_owner", async (ctx) => {
-  const [group, nick] = String(ctx.match ?? "").trim().split(/\s+/);
+  // Ник — последнее слово, группа — всё до него («ВИШ-11-23 (ЭиЭА) @ник»).
+  const words = String(ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+  const nick = words.length >= 2 ? words.pop()! : "";
+  const group = words.join(" ");
   if (!group || !nick) return void (await ctx.reply("Подписать слот из .env владельцем: <code>/slot_owner 14-25 @ник</code>", { parse_mode: "HTML" }));
   const res = adoptSlot(ctx.deps.repo, group, nick, ctx.from!.id);
-  if (!res.ok) return void (await ctx.reply(res.reason === "taken" ? "У этого слота уже есть владелец — смотри /slots." : `Слота группы ${esc(group)} из .env нет — смотри /slots.`, { parse_mode: "HTML" }));
+  if (!res.ok) {
+    const why = res.reason === "taken" ? "У этого слота уже есть владелец — смотри /slots." : res.reason === "ambiguous" ? `Под «${esc(group)}» подходит несколько слотов — напиши группу полностью, например ОЗВИШ-14-25.` : `Слота группы ${esc(group)} из .env нет — смотри /slots.`;
+    return void (await ctx.reply(why, { parse_mode: "HTML" }));
+  }
   logger.info({ admin: ctx.from!.id, linked: res.linked }, "слот записи: подписан владелец");
   const name = `@${esc(nick.replace(/^@/, ""))}`;
   if (!res.linked) return void (await ctx.reply(`Подписал ${esc(res.slotTitle)} — ${name}. Боту он ещё не писал, поэтому вести ему не придут. Когда нажмёт /start, повтори команду — тогда сможет и сам отозвать.`, { parse_mode: "HTML" }));
-  await ctx.reply(`✅ ${esc(res.slotTitle)} теперь за ${name}: ему будут приходить вести о записи, отозвать он может сам (🗂 Ещё → 🎥 Запись моей группы).`, { parse_mode: "HTML" });
+  await ctx.reply(`✅ ${esc(res.slotTitle)} теперь за ${name}: ему будут приходить вести о записи, отозвать он может сам (${STATUS_PATH}).`, { parse_mode: "HTML" });
   const user = ctx.deps.repo.userByUsername(nick);
-  if (user) await ctx.api.sendMessage(user.id, `🎥 Твоя учётка записывает пары группы ${esc(res.slotTitle)}: бот заходит под ней на онлайн-пары и присылает слайды всем в группе. Спасибо!\nСтатус и отзыв: 🗂 Ещё → 🎥 Запись моей группы.`, { parse_mode: "HTML" }).catch(() => undefined);
+  if (user) await ctx.api.sendMessage(user.id, `🎥 Твоя учётка записывает пары группы ${esc(res.slotTitle)}: бот заходит под ней на онлайн-пары и присылает слайды всем в группе. Спасибо!\nСтатус и отзыв: ${STATUS_PATH}.`, { parse_mode: "HTML" }).catch(() => undefined);
 });
 
 // ---- экран студента ----
@@ -237,7 +264,7 @@ export function myRecordingScreen(repo: Repo, req: RecRequestRow): { text: strin
 recSlotsHandlers.callbackQuery("rqme", async (ctx) => {
   await ctx.answerCallbackQuery();
   const req = ctx.deps.repo.liveRecRequest(ctx.user.id);
-  if (!req) return void (await ctx.reply("Заявки на запись сейчас нет. Подать: 🗂 Ещё → 🎥 Записывать мою группу."));
+  if (!req) return void (await ctx.reply(`Заявки на запись сейчас нет. Подать: ${FORM_PATH}.`));
   const s = myRecordingScreen(ctx.deps.repo, req);
   await ctx.reply(s.text, { parse_mode: "HTML", ...(s.kb ? { reply_markup: s.kb } : {}) });
 });
@@ -273,7 +300,12 @@ recSlotsHandlers.callbackQuery("rqme:rvy", async (ctx) => {
   logger.info({ request: req.id, user: ctx.user.id, ok: res.ok }, "заявка на запись: отозвана студентом");
   await ctx.answerCallbackQuery();
   if (!res.ok) return void (await ctx.editMessageText("Уже убираю учётку — подожди минуту.").catch(() => undefined));
-  await ctx.editMessageText(placed ? "🗑 Отзыв принят: учётку уберу в ближайшую минуту, идущая пара доснимется. Когда уберу — напишу." : "🗑 Заявка снята, логин и пароль удалены.").catch(() => undefined);
+  const text = !res.immediate
+    ? "🗑 Отзыв принят: учётку уберу в ближайшую минуту, идущая пара доснимется. Когда уберу — напишу."
+    : req.state === "approved"
+      ? "🗑 Отозвано: учётку ещё не поставили — логин и пароль удалены."
+      : "🗑 Заявка снята, логин и пароль удалены.";
+  await ctx.editMessageText(text).catch(() => undefined);
   const note = placed ? `🗑 ${who(req)} отозвал(а) учётку из записи группы ${esc(req.groupTitle)}.` : `🗑 ${who(req)} снял(а) заявку №${req.id} (${esc(req.groupTitle)}).`;
   for (const id of ctx.deps.config.ADMIN_IDS) await ctx.api.sendMessage(id, note, { parse_mode: "HTML" }).catch(() => undefined);
 });

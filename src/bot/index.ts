@@ -1,6 +1,7 @@
 import { Bot, GrammyError, HttpError, session } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
 import type { BotContext, Deps } from "./context.js";
+import { clearPending } from "./context.js";
 import { scheduleHandlers } from "./handlers/schedule.js";
 import { settingsHandlers } from "./handlers/settings.js";
 import { adminHandlers } from "./handlers/admin.js";
@@ -16,7 +17,7 @@ import { sourceHandlers } from "./handlers/sources.js";
 import { poiskHandlers } from "./handlers/poisk.js";
 import { peopleHandlers } from "./people.js";
 import { logger } from "../logger.js";
-import { isMenuText, menuFor, menuHint } from "./keyboards.js";
+import { currentLabel, isMenuText, menuFor, menuHint } from "./keyboards.js";
 import { todayMsk } from "../time.js";
 import { menuRefresher } from "./menuRefresh.js";
 import { teacherModeHandlers } from "./teacherMode.js";
@@ -25,6 +26,9 @@ import { groupChatHandlers } from "./handlers/groupChat.js";
 import { chatAdminHandlers } from "./handlers/chatAdmin.js";
 import { recSlotsHandlers } from "./handlers/recSlots.js";
 import { easterHandlers } from "./easter.js";
+
+/** Колбэки панелей, которые считаются по кнопкам, а не одной строкой на панель. */
+const PANEL_PREFIXES = new Set(["hub", "more"]);
 
 export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
@@ -86,17 +90,29 @@ export function createBot(deps: Deps): Bot<BotContext> {
   // одной строке на день, без id людей. По ним видно, что реально нужно.
   bot.use(async (ctx, next) => {
     try {
-      const key = ctx.callbackQuery?.data
-        ? `cb:${ctx.callbackQuery.data.split(":")[0]}`
+      // Кнопки панелей «Найти» и «Ещё» — каждая своей строкой (hub:groups,
+      // more:help), иначе эффект перестановок в панели не измерить; старая
+      // подпись кнопки меню считается вместе с нынешней.
+      const data = ctx.callbackQuery?.data;
+      const key = data
+        ? `cb:${PANEL_PREFIXES.has(data.split(":")[0]!) ? data.split(":").slice(0, 2).join(":") : data.split(":")[0]}`
         : ctx.msg?.text?.startsWith("/")
           ? `cmd:${ctx.msg.text.split(/[\s@]/)[0]}`
           : isMenuText(ctx.msg?.text)
-            ? `btn:${ctx.msg!.text!.trim()}`
+            ? `btn:${currentLabel(ctx.msg!.text!.trim())}`
             : null;
       if (key && ctx.chat?.type === "private") deps.repo.bumpCounter(todayMsk(), key);
     } catch (err) {
       logger.debug({ err: String(err) }, "counter not saved");
     }
+    await next();
+  });
+
+  // Кнопка нижнего меню — человек передумал: ожидание ввода (обращение,
+  // фамилия, вопрос ИИ, своё время календаря) снимаем здесь, один раз для
+  // всех, а не в каждом обработчике — «🔍 Найти» и «🗂 Ещё» стоят раньше них.
+  bot.on("message:text", async (ctx, next) => {
+    if (isMenuText(ctx.msg.text)) clearPending(deps, ctx.user.id);
     await next();
   });
 

@@ -28,6 +28,9 @@ export interface PendingState {
   /** «Министерство Жалоб»: отправить анонимно; ticket — на какое обращение отвечает админ. */
   anon?: boolean;
   ticket?: number;
+  /** Обращение из нескольких сообщений (текст, потом скриншот): все id по порядку и вопрос «Отправить?» под последним. */
+  messageIds?: number[];
+  confirmId?: number;
   expiresAt: number;
 }
 

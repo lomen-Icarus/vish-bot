@@ -13,7 +13,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, FIND_BTN, isMenuText, LEGACY_BTN } from "../keyboards.js";
+import { BTN, btnLabels, FIND_BTN, isMenuText, MORE_BTN } from "../keyboards.js";
 import { needGroup } from "../views.js";
 import { esc } from "../../schedule/format.js";
 import { logger } from "../../logger.js";
@@ -32,7 +32,7 @@ function findPanel(ctx: BotContext): { text: string; kb: InlineKeyboard } {
   const teacher = ctx.user.teacherMode;
   // «Где препод» и «Где студент» — рядом: это один и тот же поиск человека.
   const kb = new InlineKeyboard()
-    .text(teacher ? FIND_BTN.students : FIND_BTN.groups, "hub:groups")
+    .text(teacher ? FIND_BTN.teacherGroups : FIND_BTN.groups, "hub:groups")
     .text(FIND_BTN.stream, "hub:stream")
     .row()
     .text(FIND_BTN.teachers, "hub:teachers");
@@ -72,21 +72,21 @@ hubHandlers.callbackQuery(/^hub:(groups|stream|teachers|ask|poisk)$/, async (ctx
 // ---- 🗂 Ещё ----
 function morePanel(ctx: BotContext): { text: string; kb: InlineKeyboard } {
   const kb = new InlineKeyboard()
-    .text("🔔 Изменения и объявления", "more:changes")
+    .text(MORE_BTN.changes, "more:changes")
     .row()
-    .text("📆 Календарь телефона", "more:calendar")
+    .text(MORE_BTN.calendar, "more:calendar")
     .row()
-    .text("⚙️ Настройки", "more:settings")
-    .text("❓ Как пользоваться", "more:help");
+    .text(MORE_BTN.settings, "more:settings")
+    .text(MORE_BTN.help, "more:help");
   // «Записывать мою группу» — форма Mini App; нужен HTTPS-адрес (Telegram иначе не откроет) и включённая запись.
   // Заявка уже в работе или учётка в слоте — та же строка ведёт к статусу и отзыву (один вход на функцию).
   const base = httpsBase(ctx.deps);
-  if (ctx.deps.config.SLIDES_TOKEN && ctx.deps.repo.liveRecRequest(ctx.user.id)) kb.row().text("🎥 Запись моей группы", "rqme");
-  else if (base && ctx.deps.config.SLIDES_TOKEN) kb.row().webApp("🎥 Записывать мою группу", `${base}/tma`);
+  if (ctx.deps.config.SLIDES_TOKEN && ctx.deps.repo.liveRecRequest(ctx.user.id)) kb.row().text(MORE_BTN.recordMe, "rqme");
+  else if (base && ctx.deps.config.SLIDES_TOKEN) kb.row().webApp(MORE_BTN.recordNew, `${base}/tma`);
   return { text: "🗂 <b>Ещё</b>", kb };
 }
 
-hubHandlers.hears([BTN.more, LEGACY_BTN.more], async (ctx) => {
+hubHandlers.hears(btnLabels("more"), async (ctx) => {
   const { text, kb } = morePanel(ctx);
   await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
 });
@@ -133,7 +133,7 @@ async function openSupport(ctx: BotContext): Promise<void> {
   setPending(ctx.deps, ctx.user.id, { kind: "support", anon: false }, SUPPORT_TTL_MS);
   await ctx.reply(supportText(ctx, false), { parse_mode: "HTML", reply_markup: supportKeyboard(false), link_preview_options: { is_disabled: true } });
 }
-hubHandlers.hears([BTN.complaint, LEGACY_BTN.complaint, LEGACY_BTN.complaint2], openSupport);
+hubHandlers.hears(btnLabels("complaint"), openSupport);
 hubHandlers.command("support", openSupport);
 
 hubHandlers.callbackQuery(/^sup:(anon|named|back)$/, async (ctx) => {
@@ -147,14 +147,18 @@ hubHandlers.callbackQuery(/^sup:(anon|named|back)$/, async (ctx) => {
   const anon = choice === "anon";
   // Уже написанное (ждёт «Отправить») не теряем — меняется только режим.
   const was = takePending(ctx.deps, ctx.user.id);
-  const kept = was?.kind === "support" ? { chatId: was.chatId, messageId: was.messageId } : {};
+  const kept = was?.kind === "support" ? { chatId: was.chatId, messageIds: was.messageIds, confirmId: was.confirmId } : {};
   setPending(ctx.deps, ctx.user.id, { kind: "support", anon, ...kept }, SUPPORT_TTL_MS);
   await ctx.answerCallbackQuery({ text: anon ? "Отправлю анонимно" : "Отправлю с твоим ником" });
-  if (kept.messageId) await ctx.editMessageText(confirmText(anon), { reply_markup: confirmKeyboard(anon) }).catch(() => undefined);
+  if (kept.messageIds?.length) await ctx.editMessageText(confirmText(anon, kept.messageIds.length), { reply_markup: confirmKeyboard(anon) }).catch(() => undefined);
   else await ctx.editMessageText(supportText(ctx, anon), { parse_mode: "HTML", reply_markup: supportKeyboard(anon), link_preview_options: { is_disabled: true } }).catch(() => undefined);
 });
 
-const confirmText = (anon: boolean): string => `Отправить это в Министерство Жалоб ${anon ? "🕶 анонимно" : "👤 с твоим ником"}?`;
+/** Сообщений в одном обращении — не больше: дальше это уже переписка, а не жалоба. */
+const MAX_TICKET_MESSAGES = 10;
+
+const confirmText = (anon: boolean, count = 1): string =>
+  `Отправить ${count > 1 ? `эти ${count} сообщения` : "это"} в Министерство Жалоб ${anon ? "🕶 анонимно" : "👤 с твоим ником"}?${count > 1 ? "" : " Можно дописать ещё — уйдёт одним обращением."}`;
 function confirmKeyboard(anon: boolean): InlineKeyboard {
   return new InlineKeyboard().text("✅ Отправить", "sup:send").text("✖️ Не отправлять", "sup:back").row().text(anon ? "👤 Отправить с ником" : "🕶 Отправить анонимно", anon ? "sup:named" : "sup:anon");
 }
@@ -163,6 +167,8 @@ function confirmKeyboard(anon: boolean): InlineKeyboard {
  * Обращение: любое сообщение — текст, фото, документ, голосовое. Сразу не
  * уходит: «💬 Поддержка» — постоянная кнопка, её жмут из любопытства, и
  * набранное потом «14-24» иначе улетело бы админу. Поэтому — «Отправить?».
+ * Несколько сообщений подряд (текст, потом скриншот) — одно обращение:
+ * вопрос «Отправить?» переезжает под последнее, уходят все.
  */
 hubHandlers.on("message", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
@@ -178,23 +184,25 @@ hubHandlers.on("message", async (ctx, next) => {
     return void (await relayReply(ctx, pending.ticket ?? 0));
   }
   const anon = !!pending.anon;
-  setPending(ctx.deps, ctx.user.id, { kind: "support", anon, chatId: ctx.chat.id, messageId: ctx.msg.message_id }, SUPPORT_TTL_MS);
-  await ctx.reply(confirmText(anon), { reply_parameters: { message_id: ctx.msg.message_id, allow_sending_without_reply: true }, reply_markup: confirmKeyboard(anon) });
+  const messageIds = [...(pending.messageIds ?? []), ctx.msg.message_id].slice(-MAX_TICKET_MESSAGES);
+  if (pending.confirmId) await ctx.api.deleteMessage(ctx.chat.id, pending.confirmId).catch(() => undefined);
+  const confirm = await ctx.reply(confirmText(anon, messageIds.length), { reply_parameters: { message_id: ctx.msg.message_id, allow_sending_without_reply: true }, reply_markup: confirmKeyboard(anon) });
+  setPending(ctx.deps, ctx.user.id, { kind: "support", anon, chatId: ctx.chat.id, messageIds, confirmId: confirm.message_id }, SUPPORT_TTL_MS);
 });
 
 hubHandlers.callbackQuery("sup:send", async (ctx) => {
   const pending = takePending(ctx.deps, ctx.user.id);
-  if (pending?.kind !== "support" || !pending.messageId || !pending.chatId) {
+  if (pending?.kind !== "support" || !pending.messageIds?.length || !pending.chatId) {
     await ctx.answerCallbackQuery({ text: "Не нашёл, что отправлять — напиши ещё раз", show_alert: true });
     return;
   }
   clearPending(ctx.deps, ctx.user.id);
   await ctx.answerCallbackQuery();
-  const text = await sendTicket(ctx, pending.chatId, pending.messageId, !!pending.anon);
+  const text = await sendTicket(ctx, pending.chatId, pending.messageIds, !!pending.anon);
   await ctx.editMessageText(text).catch(() => ctx.reply(text));
 });
 
-async function sendTicket(ctx: BotContext, chatId: number, messageId: number, anon: boolean): Promise<string> {
+async function sendTicket(ctx: BotContext, chatId: number, messageIds: number[], anon: boolean): Promise<string> {
   const repo = ctx.deps.repo;
   if (repo.supportBlocked(ctx.user.id)) return "Министерство сейчас не принимает от тебя обращения.";
   const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
@@ -212,7 +220,8 @@ async function sendTicket(ctx: BotContext, chatId: number, messageId: number, an
   for (const adminId of ctx.deps.config.ADMIN_IDS) {
     try {
       await ctx.api.sendMessage(adminId, `🏛 <b>Обращение #${ticket}</b> ${who}`, { parse_mode: "HTML" });
-      await ctx.api.copyMessage(adminId, chatId, messageId, { reply_markup: kb });
+      // Кнопки «Ответить / Не принимать» — под последним сообщением обращения.
+      for (const [i, messageId] of messageIds.entries()) await ctx.api.copyMessage(adminId, chatId, messageId, i === messageIds.length - 1 ? { reply_markup: kb } : {});
       delivered++;
     } catch (err) {
       logger.warn({ err: String(err).slice(0, 200), ticket }, "support ticket not delivered");

@@ -12,7 +12,7 @@
 import { Composer, InlineKeyboard, InputFile } from "grammy";
 import type { BotContext } from "./context.js";
 import { clearPending, setPending, takePending } from "./context.js";
-import { BTN, groupCb, isMenuText } from "./keyboards.js";
+import { BTN, FIND_BTN, groupCb, isMenuText } from "./keyboards.js";
 import { esc } from "../schedule/format.js";
 import { courseFor, parseGroupName, personGroup, shortGroupTitle } from "../schedule/groups.js";
 import { groupByDate } from "../schedule/model.js";
@@ -173,7 +173,7 @@ export async function showPerson(ctx: BotContext, ref: PersonRef, date: LocalDat
     p = null;
   }
   if (!p) {
-    await ctx.reply(ref.kind === "student" ? "Человек не найден — база обновилась. Поищи заново." : "Преподаватель не найден, поищи заново: «🔍 Найти → 👨‍🏫 Где препод»");
+    await ctx.reply(ref.kind === "student" ? "Человек не найден — база обновилась. Поищи заново." : `Преподаватель не найден, поищи заново: «${BTN.find} → ${FIND_BTN.teachers}»`);
     return false;
   }
   const view = mode === "day" ? await personDayView(ctx.deps, p, date, ctx.user) : await personWeekView(ctx.deps, p, date, ctx.user);

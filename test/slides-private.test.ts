@@ -24,7 +24,7 @@ function makeDeps(): Deps {
   deck("2026-10-16", "Экономика", ["ВИШ-11-25", "ВИШ-14-25", "ОЗВИШ-12-25"]);
   deck("2026-10-16", "Программирование станков с ЧПУ", ["ВИШ-12-23", "ВИШ-12-23иот (13.03.02)"]);
   deck("2026-10-02", "Экономика", ["ВИШ-11-25", "ВИШ-14-25"]);
-  return { repo, config: { SLIDES_TOKEN: "x".repeat(16) } } as unknown as Deps;
+  return { repo, config: { SLIDES_TOKEN: "x".repeat(16) }, pending: new Map() } as unknown as Deps;
 }
 
 async function run(deps: Deps, update: Update): Promise<Call[]> {
