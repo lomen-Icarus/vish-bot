@@ -23,7 +23,7 @@ export interface SendApi {
 /** Где студент подаёт и смотрит заявку — одна дорожка во всех текстах. */
 export const FORM_PATH = "🗂 Ещё → 🎥 Записывать мою группу";
 
-const who = (username: string | null, userId: number | null): string => (username ? `@${esc(username)}` : userId ? `id ${userId}` : "без заявки");
+const who = (username: string | null, userId: number | null): string => (username ? `@${esc(username)}` : userId ? `id ${userId}` : "учётка из .env");
 
 /** «17.10 12:58» по Москве. */
 export function mskStamp(iso: string | null): string {
@@ -122,9 +122,18 @@ function adminText(repo: Repo, t: RecTransition): { text: string; kb?: InlineKey
   }
 }
 
+/** Кнопки слота: по заявке, а у слота без заявки (учётка из .env) — по группе. */
+export function slotButtons(requestId: number | null, groupKey: string): { recheck: string; revoke: string } | null {
+  if (requestId !== null) return { recheck: `rq:rc:${requestId}`, revoke: `rq:rv:${requestId}` };
+  const recheck = `rq:rcg:${groupKey}`;
+  const revoke = `rq:rvg:${groupKey}`;
+  // callback_data — не больше 64 байт; ключ группы кириллицей, с запасом на «rq:rvgy:».
+  return Buffer.byteLength(`rq:rvgy:${groupKey}`) <= 64 ? { recheck, revoke } : null;
+}
+
 function slotKb(c: RecSlotChange): InlineKeyboard | undefined {
-  if (c.requestId === null) return undefined;
-  return new InlineKeyboard().text("🔁 Проверить снова", `rq:rc:${c.requestId}`).text("🗑 Отозвать", `rq:rv:${c.requestId}`);
+  const b = slotButtons(c.requestId, c.groupKey);
+  return b ? new InlineKeyboard().text("🔁 Проверить снова", b.recheck).text("🗑 Отозвать", b.revoke) : undefined;
 }
 
 /** Разослать уведомления по итогам отчёта записывалки. Ошибки отправки — только в лог (id и цифры). */

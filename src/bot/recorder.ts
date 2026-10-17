@@ -280,6 +280,20 @@ export function revokeRecRequest(repo: Repo, id: number, by?: number): RecAction
   return { ok: false, reason: "state" };
 }
 
+/**
+ * Отозвать слот, у которого нет заявки (учётка перенесена из .env). Заводим
+ * служебную заявку сразу «на отзыв» — дальше тот же путь: задание remove,
+ * отчёт removed удаляет строку. Студента у неё нет (id 0) — писать некому.
+ */
+export function revokeSlotWithoutRequest(repo: Repo, groupKey: string, adminId: number): boolean {
+  const slot = repo.recSlots().find((s) => s.groupKey === groupKey);
+  if (!slot || repo.activeRecRequest(groupKey)) return false;
+  if (repo.recRequestsByState(["revoking"]).some((r) => r.groupKey === groupKey)) return true;
+  const id = repo.createRecRequest({ userId: 0, username: null, groupKey, groupTitle: slot.groupTitle, envelopeJson: "" });
+  repo.setRecRequestState(id, "revoking", { dropEnvelope: true, decidedBy: adminId });
+  return true;
+}
+
 /** «Проверить снова» потерянный слот: на следующем обмене записывалка зайдёт в кабинет. */
 export function requestRecheck(repo: Repo, groupKey: string): boolean {
   if (!repo.recSlots().some((s) => s.groupKey === groupKey)) return false;

@@ -16,8 +16,8 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { esc } from "../../schedule/format.js";
-import { approveRecRequest, rejectRecRequest, requestRecheck, revokeRecRequest, type RecActionResult } from "../recorder.js";
-import { mskStamp, requestCard, stateLabel } from "../recNotify.js";
+import { approveRecRequest, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, type RecActionResult } from "../recorder.js";
+import { mskStamp, requestCard, slotButtons, stateLabel } from "../recNotify.js";
 import { studentGroupList } from "../tma.js";
 import type { Repo, RecRequestRow } from "../../db/repo.js";
 import type { LogicalGroup } from "../../schedule/groups.js";
@@ -54,17 +54,18 @@ export function slotsScreen(repo: Repo, groups: LogicalGroup[]): { text: string;
     const req = repo.activeRecRequest(g.key);
     if (slot) {
       filled++;
-      const holder = req ? who(req) : "без заявки";
+      const holder = req ? who(req) : "учётка из .env";
       const state = rechecks.has(g.key)
         ? "🔁 проверяю заново"
         : slot.status === "lost"
           ? `не пускает (последний вход ${mskStamp(slot.lastOkAt)})`
           : `пускало ${mskStamp(slot.lastOkAt)}`;
       lines.push(`${slot.status === "lost" ? "⚠️" : "✅"} ${esc(g.title)} — ${holder} · ${state}`);
-      if (req) {
+      const b = slotButtons(req?.id ?? null, g.key);
+      if (b) {
         const short = g.title.replace(/^(ОЗ)?ВИШ-/, "");
-        if (slot.status === "lost") kb.text(`🔁 ${short}`, `rq:rc:${req.id}`);
-        kb.text(`🗑 ${short}`, `rq:rv:${req.id}`).row();
+        if (slot.status === "lost") kb.text(`🔁 ${short}`, b.recheck);
+        kb.text(`🗑 ${short}`, b.revoke).row();
       }
     } else if (approved.has(g.key)) {
       lines.push(`⏳ ${esc(g.title)} — ${who(approved.get(g.key)!)} · ставлю в слот`);
@@ -170,6 +171,28 @@ adminOnly.callbackQuery(/^rq:rvy:(\d+)$/, async (ctx) => {
   const res = revokeRecRequest(ctx.deps.repo, id, ctx.from.id);
   logger.info({ request: id, admin: ctx.from.id, ok: res.ok }, "слот записи: отозван админом");
   await ctx.answerCallbackQuery({ text: res.ok ? "Отзыв принят: уберу в ближайшую минуту" : failText(res) });
+  await showSlots(ctx, true);
+});
+
+// Слот без заявки (учётка перенесена из .env) — те же действия, но по группе.
+adminOnly.callbackQuery(/^rq:rcg:(.+)$/, async (ctx) => {
+  const ok = requestRecheck(ctx.deps.repo, ctx.match[1]!);
+  await ctx.answerCallbackQuery({ text: ok ? "Проверю вход в ближайшую минуту — результат пришлю сообщением" : "Слота уже нет" });
+});
+
+adminOnly.callbackQuery(/^rq:rvg:(.+)$/, async (ctx) => {
+  const key = ctx.match[1]!;
+  const slot = ctx.deps.repo.recSlots().find((s) => s.groupKey === key);
+  await ctx.answerCallbackQuery();
+  if (!slot) return void (await ctx.reply("Слота уже нет."));
+  const kb = new InlineKeyboard().text("🗑 Да, отозвать", `rq:rvgy:${key}`).text("◀️ Назад", "rq:slots");
+  await ctx.reply(`Отозвать учётку из .env у группы ${esc(slot.groupTitle)}?\nБот перестанет заходить под ней на пары (идущая пара доснимется), логин и пароль удалятся с сервера записи.`, { parse_mode: "HTML", reply_markup: kb });
+});
+
+adminOnly.callbackQuery(/^rq:rvgy:(.+)$/, async (ctx) => {
+  const ok = revokeSlotWithoutRequest(ctx.deps.repo, ctx.match[1]!, ctx.from.id);
+  logger.info({ admin: ctx.from.id, ok }, "слот записи без заявки: отозван админом");
+  await ctx.answerCallbackQuery({ text: ok ? "Отзыв принят: уберу в ближайшую минуту" : "Слота уже нет" });
   await showSlots(ctx, true);
 });
 

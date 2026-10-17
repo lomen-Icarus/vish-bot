@@ -72,6 +72,12 @@ describe("записывалка вебинаров: планировщик", ()
     expect(planRecording([r], at(690), cfg, fresh(), 0).start).toEqual([]);
   });
 
+  it("одна пара двумя строками (поток, комната на группу) — один бот, а не два", () => {
+    const a = row("Экономика", 600, 690, { joinId: "j1", groups: ["ВИШ-11-23"] });
+    const b = row("Экономика", 600, 690, { joinId: "j2", groups: ["ВИШ-12-23"] });
+    expect(planRecording([a, b], at(600), cfg, fresh(), 0).start).toEqual([a]);
+  });
+
   it("неудачная попытка повторяется, пока пара идёт, а не теряется после трёх осечек", () => {
     const r = row("Физика", 600, 690);
     const state = fresh();
