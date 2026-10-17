@@ -25,6 +25,7 @@ import { todayMsk } from "./time.js";
 import { QaBase } from "./chat/qa.js";
 import { ChatService } from "./chat/service.js";
 import { importLegacyCanned, seedDefaultQa } from "./chat/importCanned.js";
+import { notifyRecorderEffect } from "./bot/recNotify.js";
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -150,11 +151,8 @@ async function main(): Promise<void> {
           botToken: config.BOT_TOKEN,
           // Слайды приходят с отдельного сервера записи; рассылку делает бот.
           onSlides: (deck) => void notifier.sendSlideDeck(deck).catch((err: unknown) => logger.warn({ err: String(err) }, "рассылка слайдов не удалась")),
-          // Отчёт записывалки: при первом подключении и смене ключа — весть админу.
-          onRecorderReport: (effect) => {
-            if (effect.firstConnect) for (const id of config.ADMIN_IDS) void bot.api.sendMessage(id, "🎥 Записывалка подключилась к заявкам на запись.").catch(() => undefined);
-            if (effect.keyChanged) for (const id of config.ADMIN_IDS) void bot.api.sendMessage(id, "⚠️ Ключ записывалки сменился. Заявки, поданные до этого и ещё не одобренные, придётся подать заново.").catch(() => undefined);
-          },
+          // Отчёт записывалки: карточки заявок админу, вести студентам, потеря доступа слота.
+          onRecorderReport: (effect) => void notifyRecorderEffect(bot.api, repo, config.ADMIN_IDS, effect),
         })
       : null;
   deps.http = http;

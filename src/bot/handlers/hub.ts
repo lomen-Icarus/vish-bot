@@ -79,8 +79,10 @@ function morePanel(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     .text("⚙️ Настройки", "more:settings")
     .text("❓ Как пользоваться", "more:help");
   // «Записывать мою группу» — форма Mini App; нужен HTTPS-адрес (Telegram иначе не откроет) и включённая запись.
+  // Заявка уже в работе или учётка в слоте — та же строка ведёт к статусу и отзыву (один вход на функцию).
   const base = httpsBase(ctx.deps);
-  if (base && ctx.deps.config.SLIDES_TOKEN) kb.row().webApp("🎥 Записывать мою группу", `${base}/tma`);
+  if (ctx.deps.config.SLIDES_TOKEN && ctx.deps.repo.liveRecRequest(ctx.user.id)) kb.row().text("🎥 Запись моей группы", "rqme");
+  else if (base && ctx.deps.config.SLIDES_TOKEN) kb.row().webApp("🎥 Записывать мою группу", `${base}/tma`);
   return { text: "🗂 <b>Ещё</b>", kb };
 }
 

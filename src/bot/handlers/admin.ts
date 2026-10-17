@@ -34,7 +34,8 @@ function adminMenu(): InlineKeyboard {
     .text("🤖 Лимиты «Спросить»", "adm:ai")
     .text("📰 Источники", "adm:sources")
     .row()
-    .text("💬 Болталка в группах", "adm:chat");
+    .text("💬 Болталка в группах", "adm:chat")
+    .text("🎥 Слоты записи", "adm:slots");
 }
 
 adminOnly.command("admin", async (ctx) => {
