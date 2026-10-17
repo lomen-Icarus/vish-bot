@@ -76,8 +76,23 @@ describe("Mini App: приём заявки", () => {
 
   it("лимит: третья заявка за месяц — 429", () => {
     const repo = setup();
-    for (let i = 0; i < REQUEST_LIMIT; i++) expect(tmaSubmit(deps(repo), { initData: initData(7), groupKey: "виш-13-23", envelope: ENV }).status).toBe(200);
+    for (let i = 0; i < REQUEST_LIMIT; i++) {
+      const r = tmaSubmit(deps(repo), { initData: initData(7), groupKey: "виш-13-23", envelope: ENV });
+      expect(r.status).toBe(200);
+      // Вход не прошёл — заявка закрыта, можно подать следующую.
+      repo.setRecRequestState(r.json.requestId as number, "rejected_auth", { dropEnvelope: true });
+    }
     expect(tmaSubmit(deps(repo), { initData: initData(7), groupKey: "виш-13-23", envelope: ENV }).status).toBe(429);
+  });
+
+  it("заявка уже в работе — форма закрыта (busy), вторая — 409", () => {
+    const repo = setup();
+    expect(tmaContext(deps(repo), initData(7)).json.busy).toBe(false);
+    expect(tmaSubmit(deps(repo), { initData: initData(7), groupKey: "виш-13-23", envelope: ENV }).status).toBe(200);
+    expect(tmaContext(deps(repo), initData(7)).json.busy).toBe(true);
+    const second = tmaSubmit(deps(repo), { initData: initData(7), groupKey: "виш-14-25", envelope: ENV });
+    expect(second.status).toBe(409);
+    expect(String(second.json.error)).toContain("Запись моей группы");
   });
 
   it("чужая подпись — 401, заявки нет", () => {

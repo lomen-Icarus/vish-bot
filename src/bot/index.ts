@@ -23,6 +23,7 @@ import { teacherModeHandlers } from "./teacherMode.js";
 import { subjectHandlers } from "./handlers/subjects.js";
 import { groupChatHandlers } from "./handlers/groupChat.js";
 import { chatAdminHandlers } from "./handlers/chatAdmin.js";
+import { recSlotsHandlers } from "./handlers/recSlots.js";
 import { easterHandlers } from "./easter.js";
 
 export function createBot(deps: Deps): Bot<BotContext> {
@@ -101,6 +102,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
 
   bot.use(adminHandlers);
   bot.use(chatAdminHandlers);
+  bot.use(recSlotsHandlers);
   // Режим преподавателя: только команда /prepod, кнопок нет.
   bot.use(teacherModeHandlers);
   // Пасхалка: секретная /ershov (ни в одном меню её нет).
@@ -200,6 +202,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "prepod", description: "Режим преподавателя (проверка: /prepod Фамилия)" },
     { command: "subjects", description: "Предметы: сколько и когда пар (тест)" },
     { command: "chats", description: "Болталка в группах: чаты и лимиты" },
+    { command: "slots", description: "Слоты записи: учётки студентов и заявки" },
     { command: "qa", description: "Сценарий болталки: вопрос → ответ" },
     { command: "reply_add", description: "Добавить в сценарий: вопрос => ответ" },
     { command: "chatlimit", description: "Лимиты болталки в группах" },
