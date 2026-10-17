@@ -6,6 +6,8 @@ import { envelopeAad, loadOrCreateKeys, openEnvelope, sealCredentials } from "..
 import { AccountStore } from "../recorder/src/accounts.js";
 import { runLiveness, type LiveTarget } from "../recorder/src/liveness.js";
 import type { LoginCheck } from "../recorder/src/lk.js";
+import { groupCode as recGroupCode, profileToSlot } from "../recorder/src/envslot.js";
+import { groupCode as botGroupCode } from "../src/bot/recorder.js";
 
 const tmp = (): string => mkdtempSync(path.join(os.tmpdir(), "rec-acc-"));
 
@@ -127,5 +129,23 @@ describe("обмен с ботом: адрес и задания без сети
     const bad = await runTask({ id: "3", kind: "install", requestId: 6, userId: 10, group: "ВИШ-14-25", codes: ["14-25"], envelope: wrong }, deps);
     expect(bad.code).toBe("bad_envelope");
     expect(store.get("ВИШ-14-25")).toBeUndefined();
+  });
+});
+
+describe("перенос профилей .env в слоты", () => {
+  it("слот — своя группа владельца первой, затем группы профиля как были (без дубля своей)", () => {
+    expect(profileToSlot({ groups: ["11-23", "12-23", "13-23", "14-23"] }, "ВИШ-13-23")).toEqual({ group: "ВИШ-13-23", codes: ["13-23", "11-23", "12-23", "14-23"] });
+    expect(profileToSlot({ groups: [] }, "ВИШ-11-23 (ЭиЭА)")).toEqual({ group: "ВИШ-11-23 (ЭиЭА)", codes: ["11-23(эиэа)"] });
+  });
+
+  it("код группы у записывалки и у бота один и тот же", () => {
+    for (const t of ["ВИШ-14-25", "ВИШ-11-23 (ЭиЭА)", "ОЗВИШ-12-25", "ВИШ-11-23 (РЗиАЭС)"]) expect(recGroupCode(t)).toBe(botGroupCode(t));
+  });
+
+  it("слот с этими кодами ловит поточную пару, как ловил профиль", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "slots-"));
+    const store = AccountStore.inDir(dir);
+    store.install({ ...profileToSlot({ groups: ["11-23", "12-23"] }, "ВИШ-13-23"), login: "l", password: "p", requestId: 0, userId: 0 });
+    expect(store.profiles()[0]!.groups).toEqual(["13-23", "11-23", "12-23"]);
   });
 });
