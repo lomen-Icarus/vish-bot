@@ -16,6 +16,7 @@ import { WebinarService } from "./portal/webinars.js";
 import { NewsScanner } from "./news/scanner.js";
 import type { Deps } from "./bot/context.js";
 import { createHttpServer } from "./http/server.js";
+import { PUBLIC_URL_CHECK_MS, PublicUrl } from "./http/publicUrl.js";
 import { StudentDirectory } from "./students/directory.js";
 import { KnownPeople } from "./students/known.js";
 import { resolveStudentGroup, whereNowText } from "./students/locate.js";
@@ -151,8 +152,16 @@ async function main(): Promise<void> {
         })
       : null;
   deps.http = http;
+  // Основной и запасной публичный адрес: лёг домен основного — ссылки через запасной.
+  const publicUrl = new PublicUrl(config.PUBLIC_URL, config.PUBLIC_URL_FALLBACK);
+  deps.publicUrl = publicUrl;
   if (!http) logger.info("http server disabled: HTTP_PORT/SERVER_PORT not set");
-  else if (!config.PUBLIC_URL) logger.warn("PUBLIC_URL not set: calendar subscription links are hidden in the bot");
+  else if (!config.PUBLIC_URL && !config.PUBLIC_URL_FALLBACK) logger.warn("PUBLIC_URL not set: calendar subscription links are hidden in the bot");
+  else if (config.PUBLIC_URL && config.PUBLIC_URL_FALLBACK) {
+    // Первая проверка — когда сервер уже слушает; дальше раз в 5 минут.
+    setTimeout(() => void publicUrl.refresh(), 15_000).unref();
+    setInterval(() => void publicUrl.refresh(), PUBLIC_URL_CHECK_MS).unref();
+  }
 
   const runner = run(bot, { runner: { fetch: { allowed_updates: ["message", "callback_query", "inline_query", "my_chat_member", "channel_post"] } } });
   logger.info("polling Telegram for updates");
