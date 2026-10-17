@@ -10,6 +10,7 @@ import path from "node:path";
 import type { Repo } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { groupCalendar } from "../schedule/calendar.js";
+import { applyRecorderReport, recorderTasks, type RecReport, type RecReportEffect } from "../bot/recorder.js";
 import { logger } from "../logger.js";
 
 /** Сравнение секрета за постоянное время: по задержке ответа токен не подобрать. */
@@ -41,6 +42,10 @@ export interface HttpDeps {
   slidesDir?: string;
   /** Вызывается после успешной загрузки: бот рассылает слайды подписчикам. */
   onSlides?: (deck: SlideDeckUpload) => void;
+  /** Токен бота — для проверки подписи Mini App (этап 2). */
+  botToken?: string;
+  /** Вызывается после отчёта записывалки: бот уведомляет админа. */
+  onRecorderReport?: (effect: RecReportEffect) => void;
 }
 
 const MAX_DECK_BYTES = 40 * 1024 * 1024;
@@ -212,6 +217,29 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
   };
 
+  /** Обмен заявками на запись (этап 2). Доступ — тот же токен, что у слайдов. */
+  const handleRec = async (req: IncomingMessage, res: ServerResponse, kind: "sync" | "report"): Promise<void> => {
+    const reply = (status: number, body: unknown): void => {
+      const buf = Buffer.from(typeof body === "string" ? body : JSON.stringify(body), "utf8");
+      res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Content-Length": String(buf.length) });
+      res.end(buf);
+    };
+    const token = deps.slidesToken;
+    const auth = req.headers.authorization ?? "";
+    if (!token || !sameSecret(auth, `Bearer ${token}`)) return reply(token ? 403 : 404, { error: "нет доступа" });
+    if (kind === "sync") return reply(200, { tasks: recorderTasks(deps.repo) });
+    try {
+      const body = await readBody(req, 256 * 1024);
+      const report = JSON.parse(body.toString("utf8") || "{}") as RecReport;
+      const effect = applyRecorderReport(deps.repo, report);
+      deps.onRecorderReport?.(effect);
+      return reply(200, { ok: true });
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 150) }, "отчёт записывалки не разобран");
+      return reply(400, { error: "не разобран" });
+    }
+  };
+
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
     // Порт открыт всему интернету: «GET //[» или «GET http://a:b/» Node пропускает,
     // а new URL на них бросает — без этой проверки один такой запрос ронял весь бот.
@@ -226,6 +254,10 @@ export function createHttpServer(deps: HttpDeps): Server {
     // Слайды вебинаров приходят POST-ом от записывалки на отдельном сервере.
     if (method === "POST" && (url.pathname === "/slides" || url.pathname === "/slides/part" || url.pathname === "/slides/complete")) {
       void handleSlides(req, res, url.pathname === "/slides/part" ? "part" : url.pathname === "/slides/complete" ? "complete" : "whole");
+      return;
+    }
+    if (method === "POST" && url.pathname === "/rec/report") {
+      void handleRec(req, res, "report");
       return;
     }
     if (method !== "GET" && method !== "HEAD") {
@@ -244,7 +276,12 @@ export function createHttpServer(deps: HttpDeps): Server {
       // вебинара было видно снаружи, дошёл ли PDF от записывалки.
       const last = deps.repo.recentSlideDecks(1)[0];
       const slides = deps.slidesToken ? { decks: deps.repo.slideDeckCount(), last: last ? { date: last.date, subject: last.subject, slides: last.slides, receivedAt: last.createdAt } : null } : null;
-      send(200, JSON.stringify({ ok: true, lastPoll: p?.finishedAt ?? null, groups: deps.service.groups().length, slides }), "application/json; charset=utf-8", { "Cache-Control": "no-store" });
+      const rec = deps.slidesToken ? { lastReportAt: deps.repo.recorderMarkValue("last_report_at"), portal: deps.repo.recorderMarkValue("portal"), slots: deps.repo.recSlots().length } : null;
+      send(200, JSON.stringify({ ok: true, lastPoll: p?.finishedAt ?? null, groups: deps.service.groups().length, slides, recorder: rec }), "application/json; charset=utf-8", { "Cache-Control": "no-store" });
+      return;
+    }
+    if (url.pathname === "/rec/sync") {
+      void handleRec(req, res, "sync");
       return;
     }
     const m = /^\/cal\/([A-Za-z0-9_-]{8,64})\.ics$/.exec(url.pathname);
