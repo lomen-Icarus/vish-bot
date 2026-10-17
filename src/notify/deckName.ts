@@ -1,9 +1,26 @@
 /**
  * Имя PDF со слайдами в Telegram: «2026-09-29-Безопасность жизнедеятельности.pdf».
  * Одно на рассылку и на «скинь слайды» в чате — чтобы файл одной записи не
- * назывался по-разному в зависимости от того, как он пришёл.
+ * назывался по-разному в зависимости от того, как он пришёл. Часть большого
+ * PDF — «…-часть 2.pdf»: иначе у частей одно имя и их не различить.
  */
-export function deckFileName(deck: { date: string; subject: string }): string {
+export function deckFileName(deck: { date: string; subject: string; title?: string | null }): string {
   const subject = deck.subject.replace(/[^\p{L}\p{N} .-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 50).trim();
-  return `${deck.date}-${subject || "slides"}.pdf`;
+  const part = deckPart(deck.title);
+  return `${deck.date}-${subject || "slides"}${part ? `-часть ${part.index}` : ""}.pdf`;
+}
+
+/**
+ * Номер части: записывалка делит PDF больше лимита Telegram и пишет в тему
+ * «… · часть 2 из 3» (recorder/src/deliver.ts).
+ */
+export function deckPart(title: string | null | undefined): { index: number; count: number } | null {
+  const m = /часть (\d+) из (\d+)/.exec(title ?? "");
+  return m ? { index: Number(m[1]), count: Number(m[2]) } : null;
+}
+
+/** « · ч. 2/3» для подписей и кнопок; у целого PDF — пусто. */
+export function deckPartLabel(title: string | null | undefined): string {
+  const part = deckPart(title);
+  return part ? ` · ч. ${part.index}/${part.count}` : "";
 }

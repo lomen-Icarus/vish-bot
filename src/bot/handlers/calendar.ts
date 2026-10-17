@@ -52,7 +52,7 @@ export const MAX_ALARM_MIN = 1440;
 
 /** Число минут из ввода или кнопки: 0 — без напоминания; вне 0…1440 — null. */
 export function parseAlarm(raw: string): number | null {
-  const m = /^\s*(\d{1,4})\s*(мин\w*)?\s*$/iu.exec(raw);
+  const m = /^\s*(\d{1,4})\s*(мин\p{L}*\.?)?\s*$/iu.exec(raw);
   if (!m) return null;
   const n = Number(m[1]);
   return n <= MAX_ALARM_MIN ? n : null;

@@ -4,6 +4,8 @@
  * v1, что в recorder/src/crypto.ts). Боту уходит только шифровка. Страница
  * самодостаточна; данные берёт у /tma/context и шлёт в /tma/submit.
  */
+import { FORM_PATH, STATUS_PATH } from "../bot/keyboards.js";
+
 export const TMA_PAGE = `<!doctype html>
 <html lang="ru"><head>
 <meta charset="utf-8">
@@ -86,14 +88,14 @@ function refresh() {
 }
 
 async function load() {
-  if (!initData) return block("Открой форму из бота: 🗂 Ещё → 🎥 Записывать мою группу.");
+  if (!initData) return block(${JSON.stringify(`Открой форму из бота: ${FORM_PATH}.`)});
   let res;
   try { res = await fetch("/tma/context", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initData }) }); }
   catch { return block("Нет связи с ботом. Попробуй позже."); }
   if (!res.ok) return block("Не удалось открыть форму. Попробуй позже.");
   ctx = await res.json();
   if (!ctx.recorderReady) return block("Сервис записи ещё не подключён. Попробуй позже.");
-  if (ctx.busy) return block("У тебя уже есть заявка или учётка в записи. Статус и отзыв: 🗂 Ещё → 🎥 Запись моей группы.");
+  if (ctx.busy) return block(${JSON.stringify(`У тебя уже есть заявка или учётка в записи. Статус и отзыв: ${STATUS_PATH}.`)});
   if (ctx.remaining <= 0) return block("Ты уже подавал(а) заявки в этом месяце. Можно не больше " + (ctx.limit || 2) + " в месяц — попробуй позже.");
   const sel = $("group");
   for (const g of ctx.groups) { const o = document.createElement("option"); o.value = g.key; o.textContent = g.title; if (g.key === ctx.myGroupKey) o.selected = true; sel.appendChild(o); }
@@ -116,7 +118,7 @@ $("form").addEventListener("submit", async (e) => {
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
       $("form").querySelectorAll("input,select,button").forEach((el) => (el.disabled = true));
-      msg.textContent = "✅ Заявка отправлена. Бот проверит вход на портал, админ рассмотрит заявку — о решении бот напишет. Статус и отзыв: 🗂 Ещё → 🎥 Запись моей группы.";
+      msg.textContent = ${JSON.stringify(`✅ Заявка отправлена. Бот проверит вход на портал, админ рассмотрит заявку — о решении бот напишет. Статус и отзыв: ${STATUS_PATH}.`)};
       msg.className = "ok";
       tg?.HapticFeedback?.notificationOccurred("success");
     } else {

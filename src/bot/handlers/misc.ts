@@ -1,7 +1,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
-import { BTN, btnRef, FIND_BTN, groupCb, groupLabel, groupPicker, isMenuText, LEGACY_BTN, menuFor, menuHint, panelRef } from "../keyboards.js";
+import { BTN, btnRef, FIND_BTN, groupCb, groupLabel, groupPicker, isMenuText, btnLabels, menuFor, menuHint, panelRef } from "../keyboards.js";
 import { autoTeacherStart, nameAndPatronymic } from "../teacherMode.js";
 import { knownFirstName } from "../social.js";
 import { featuresSections, featuresText, needGroup } from "../views.js";
@@ -17,7 +17,7 @@ import { clampHtml, esc } from "../../schedule/format.js";
 import { buildInlineResults, buildPeopleResults, parseInlineQuery } from "../inline.js";
 import { findGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
-import { addDays, fmtDDMM, fmtHHMM, parseRuDate, todayMsk, weekdayName } from "../../time.js";
+import { addDays, fmtDDMM, fmtHHMM, parseRuDate, todayMsk, weekdayName, type LocalDate } from "../../time.js";
 import { logger } from "../../logger.js";
 
 export const miscHandlers = new Composer<BotContext>();
@@ -117,7 +117,7 @@ miscHandlers.command("start", async (ctx) => {
   if (ctx.user.teacherMode) {
     const name = ctx.user.teacherName ? nameAndPatronymic(ctx.user.teacherName) : null;
     const u = ctx.user;
-    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} ${btnRef(u, BTN.today, "/today")} и ${btnRef(u, BTN.week, "/week")} — ваши пары, ${panelRef(u, BTN.find, FIND_BTN.students, "/groups")} — расписание любой группы.`, { parse_mode: "HTML", reply_markup: menuFor(u) });
+    await ctx.reply(`${name ? `Здравствуйте, ${esc(name)}! Рад вас видеть 👋` : "Здравствуйте! Рад вас видеть 👋"} ${btnRef(u, BTN.today, "/today")} и ${btnRef(u, BTN.week, "/week")} — ваши пары, ${panelRef(u, BTN.find, FIND_BTN.teacherGroups, "/groups")} — расписание любой группы.`, { parse_mode: "HTML", reply_markup: menuFor(u) });
     await askOffer();
     return;
   }
@@ -143,7 +143,7 @@ miscHandlers.command("start", async (ctx) => {
 
 /** Карта функций приходит двумя сообщениями: одним она не влезает в лимит Telegram. */
 export async function showFeatures(ctx: BotContext): Promise<void> {
-  for (const part of featuresSections(ctx.deps, { admin: ctx.isAdmin, menuHidden: ctx.user.menuMode === "hidden" })) {
+  for (const part of featuresSections(ctx.deps, { admin: ctx.isAdmin, menuHidden: ctx.user.menuMode === "hidden", teacher: ctx.user.teacherMode })) {
     await ctx.reply(clampHtml(part), { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
   }
 }
@@ -243,7 +243,7 @@ export async function startSearch(ctx: BotContext): Promise<void> {
     { parse_mode: "HTML" },
   );
 }
-miscHandlers.hears([BTN.search, LEGACY_BTN.search], startSearch);
+miscHandlers.hears(btnLabels("search"), startSearch);
 miscHandlers.callbackQuery("ask:open", async (ctx) => {
   await ctx.answerCallbackQuery();
   await startSearch(ctx);
@@ -262,20 +262,50 @@ function normalize(s: string): string {
   return s.toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}\s-]/gu, " ").replace(/\s+/g, " ").trim();
 }
 
-function subjectHits(list: Occurrence[], query: string): Map<string, Occurrence[]> {
+/** Подходит ли предмет к запросу: подстрокой или по началам слов («мат ан» → «Математический анализ»). */
+function subjectMatcher(query: string): (subject: string) => boolean {
   const q = normalize(query);
   const stems = q
     .split(" ")
     .filter((w) => w.length >= 3)
     .map((w) => w.slice(0, Math.max(3, Math.min(w.length - 1, 5))));
+  return (subject) => {
+    const subj = normalize(subject);
+    return subj.includes(q) || (stems.length > 0 && stems.every((st) => subj.split(" ").some((w) => w.startsWith(st))));
+  };
+}
+
+function subjectHits(list: Occurrence[], query: string): Map<string, Occurrence[]> {
+  const matches = subjectMatcher(query);
   const out = new Map<string, Occurrence[]>();
   for (const o of list) {
     if (o.status !== "scheduled") continue;
-    const subj = normalize(o.subject);
-    const hit = subj.includes(q) || (stems.length > 0 && stems.every((st) => subj.split(" ").some((w) => w.startsWith(st))));
-    if (hit) out.set(o.subject, [...(out.get(o.subject) ?? []), o]);
+    if (matches(o.subject)) out.set(o.subject, [...(out.get(o.subject) ?? []), o]);
   }
   return out;
+}
+
+/**
+ * Предметы всех групп на 8 недель → в каких группах они есть. Поиск идёт на
+ * любой текст без команды, и разворачивать расписание каждой группы на каждое
+ * «спасибо» дорого: строим раз в 10 минут (и заново с новым днём).
+ */
+const ALL_SUBJECTS_TTL_MS = 10 * 60_000;
+const allSubjectsCache = new WeakMap<object, { at: number; day: string; map: Map<string, Set<string>> }>();
+function subjectsOfAllGroups(service: BotContext["deps"]["service"], today: LocalDate): Map<string, Set<string>> {
+  const cached = allSubjectsCache.get(service);
+  if (cached && cached.day === today && Date.now() - cached.at < ALL_SUBJECTS_TTL_MS) return cached.map;
+  const map = new Map<string, Set<string>>();
+  for (const g of service.groups()) {
+    for (const o of service.materialize(g, today, addDays(today, 56))) {
+      if (o.status !== "scheduled") continue;
+      const titles = map.get(o.subject) ?? new Set<string>();
+      titles.add(g.title);
+      map.set(o.subject, titles);
+    }
+  }
+  allSubjectsCache.set(service, { at: Date.now(), day: today, map });
+  return map;
 }
 
 interface LocalHits {
@@ -339,11 +369,9 @@ async function localSearch(ctx: BotContext, query: string, opts: { freeText?: bo
     if (own) found = scan(deps.service.materialize(own, today, addDays(today, 56)), `Предметы ${esc(own.title)}`);
     // Scanning every group is only worth it for a short, subject-like query.
     if (!found && query.trim().split(/\s+/).length <= 3) {
-      const all = new Map<string, Set<string>>();
-      for (const g of deps.service.groups()) {
-        for (const subject of subjectHits(deps.service.materialize(g, today, addDays(today, 56)), query).keys()) all.set(subject, new Set([...(all.get(subject) ?? []), g.title]));
-      }
-      if (all.size) parts.push(`<b>Предметы в других группах</b>\n${[...all.entries()].slice(0, 6).map(([s, gs]) => `• <b>${esc(s)}</b> — ${[...gs].map((t) => esc(t.replace(/^ВИШ-/, ""))).join(", ")}`).join("\n")}`);
+      const matches = subjectMatcher(query);
+      const all = [...subjectsOfAllGroups(deps.service, today)].filter(([subject]) => matches(subject));
+      if (all.length) parts.push(`<b>Предметы в других группах</b>\n${all.slice(0, 6).map(([s, gs]) => `• <b>${esc(s)}</b> — ${[...gs].map((t) => esc(t.replace(/^ВИШ-/, ""))).join(", ")}`).join("\n")}`);
     }
   }
 
@@ -422,8 +450,13 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
   await ctx.reply(`🔍 <b>Поиск: ${esc(query)}</b>\n\n${hits.parts.join("\n\n")}`, { parse_mode: "HTML", reply_markup: hits.buttons ? kb : undefined });
 }
 
-/** Что свободный поиск не нашёл — для кнопки «💬 Спросить ИИ» (callback_data на текст не хватит). */
-const lastFreeText = new Map<number, { q: string; at: number }>();
+/**
+ * Тексты свободного поиска — для кнопки «💬 Спросить ИИ» под ответом
+ * (callback_data на текст не хватит). У каждой кнопки свой номер: нажатие под
+ * старым ответом спрашивает ИИ про тот вопрос, а не про последний набранный.
+ */
+const freeTexts = new Map<number, { userId: number; q: string; at: number }>();
+let freeTextSeq = 0;
 const FREE_TEXT_TTL_MS = 15 * 60_000;
 
 /**
@@ -439,9 +472,10 @@ export async function freeTextSearch(ctx: BotContext, text: string): Promise<voi
   if (person) return void (await showPerson(ctx, person.ref, todayMsk(), { others: tiedWith(hits.people, person), self: person }));
   const kb = new InlineKeyboard(hits.kb.inline_keyboard.filter((row) => row.length).map((row) => [...row]));
   if (ctx.deps.ask) {
-    for (const [k, v] of lastFreeText) if (Date.now() - v.at > FREE_TEXT_TTL_MS) lastFreeText.delete(k);
-    lastFreeText.set(ctx.user.id, { q, at: Date.now() });
-    kb.row().text("💬 Спросить ИИ", "fx:ai");
+    for (const [k, v] of freeTexts) if (Date.now() - v.at > FREE_TEXT_TTL_MS) freeTexts.delete(k);
+    const seq = ++freeTextSeq;
+    freeTexts.set(seq, { userId: ctx.user.id, q, at: Date.now() });
+    kb.row().text(FIND_BTN.ask, `fx:ai:${seq}`);
   }
   const markup = kb.inline_keyboard.some((row) => row.length) ? kb : undefined;
   if (!hits.parts.length) {
@@ -451,12 +485,14 @@ export async function freeTextSearch(ctx: BotContext, text: string): Promise<voi
   await ctx.reply(clampHtml(`🔍 <b>${esc(q.slice(0, 60))}</b>\n\n${hits.parts.join("\n\n")}`), { parse_mode: "HTML", reply_markup: markup });
 }
 
-miscHandlers.callbackQuery("fx:ai", async (ctx) => {
+// «fx:ai» без номера — кнопка из прошлой версии: просто открыть вопрос ИИ.
+miscHandlers.callbackQuery(/^fx:ai(?::(\d+))?$/, async (ctx) => {
   await ctx.answerCallbackQuery();
-  const last = lastFreeText.get(ctx.user.id);
-  if (!last || Date.now() - last.at > FREE_TEXT_TTL_MS) return startSearch(ctx);
-  lastFreeText.delete(ctx.user.id);
-  const outcome = await askAi(ctx, last.q);
+  const seq = Number(ctx.match[1] ?? 0);
+  const saved = freeTexts.get(seq);
+  if (!saved || saved.userId !== ctx.user.id || Date.now() - saved.at > FREE_TEXT_TTL_MS) return startSearch(ctx);
+  freeTexts.delete(seq);
+  const outcome = await askAi(ctx, saved.q);
   if (outcome === "limit-user") await ctx.reply(`На сегодня твой лимит вопросов к ИИ исчерпан (${aiLimits(ctx.deps.repo, ctx.deps.config, todayMsk()).perUser} в день).`);
   else if (outcome === "limit-global") await ctx.reply("Сегодня бот уже много отвечал, общий дневной бюджет вопросов закончился.");
   else if (outcome === "disabled") await ctx.reply("Вопросы ИИ сейчас выключены.");

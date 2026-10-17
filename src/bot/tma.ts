@@ -7,6 +7,7 @@
 import type { Repo } from "../db/repo.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { verifyInitData } from "../http/initData.js";
+import { STATUS_PATH } from "./keyboards.js";
 
 export interface TmaDeps {
   repo: Repo;
@@ -77,7 +78,7 @@ export function tmaSubmit(deps: TmaDeps, body: TmaSubmitBody, now = Date.now()):
   if (!env || env.v !== 1 || typeof env.k !== "string" || typeof env.iv !== "string" || typeof env.c !== "string") return { status: 400, json: { error: "данные не зашифровались, попробуй ещё раз" } };
   // Великоватую шифровку не храним: защита от мусора в базе.
   if (env.k.length > 4000 || env.c.length > 8000 || env.iv.length > 64) return { status: 400, json: { error: "слишком длинно" } };
-  if (deps.repo.liveRecRequest(check.user.id)) return { status: 409, json: { error: "У тебя уже есть заявка или учётка в записи. Статус и отзыв: 🗂 Ещё → 🎥 Запись моей группы." } };
+  if (deps.repo.liveRecRequest(check.user.id)) return { status: 409, json: { error: `У тебя уже есть заявка или учётка в записи. Статус и отзыв: ${STATUS_PATH}.` } };
   if (deps.repo.recRequestsSince(check.user.id, since30(now)) >= REQUEST_LIMIT) return { status: 429, json: { error: `Можно не больше ${REQUEST_LIMIT} заявок в месяц. Попробуй позже.` } };
   const id = deps.repo.createRecRequest({
     userId: check.user.id,

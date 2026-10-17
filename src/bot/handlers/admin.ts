@@ -3,7 +3,7 @@ import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { esc, plural } from "../../schedule/format.js";
 import { pruneFalseChangeEvents } from "../../db/cleanup.js";
-import { isMenuText, menuFor, menuStampFor, TOPIC_LABELS, TOPICS } from "../keyboards.js";
+import { BTN, FIND_BTN, isMenuText, menuFor, menuStampFor, MORE_BTN, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
 import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
 import { addDays, todayMsk } from "../../time.js";
@@ -16,6 +16,19 @@ import { CHANGES_HELD_KEY, CHANGES_RELEASE_KEY } from "../../notify/dispatcher.j
 export const adminHandlers = new Composer<BotContext>();
 
 const adminOnly = adminHandlers.filter((ctx) => ctx.isAdmin);
+
+/** Кнопки панелей в /stats — подписями, как их видит человек. */
+const PANEL_CLICKS: Record<string, string> = {
+  "cb:hub:groups": `${BTN.find} → ${FIND_BTN.groups}`,
+  "cb:hub:stream": `${BTN.find} → ${FIND_BTN.stream}`,
+  "cb:hub:teachers": `${BTN.find} → ${FIND_BTN.teachers}`,
+  "cb:hub:poisk": `${BTN.find} → ${FIND_BTN.poisk}`,
+  "cb:hub:ask": `${BTN.find} → ${FIND_BTN.ask}`,
+  "cb:more:changes": `${BTN.more} → ${MORE_BTN.changes}`,
+  "cb:more:calendar": `${BTN.more} → ${MORE_BTN.calendar}`,
+  "cb:more:settings": `${BTN.more} → ${MORE_BTN.settings}`,
+  "cb:more:help": `${BTN.more} → ${MORE_BTN.help}`,
+};
 
 /** How long a broadcast stays on the "Объявления" board inside «Изменения». */
 export const BOARD_HOURS = 24;
@@ -54,7 +67,7 @@ function statsText(ctx: BotContext): string {
   ];
   // Что жмут: кнопки меню, кнопки под сообщениями и команды за неделю (без id людей).
   const clicks = repo.countersSince(addDays(todayMsk(), -6));
-  if (clicks.length) lines.push("", "<b>Нажатия за 7 дней</b>", ...clicks.slice(0, 20).map((c) => `${esc(c.key.replace(/^btn:/, "").replace(/^cb:/, "под сообщением: ").replace(/^cmd:/, "").replace(/^text:found$/, "текст → нашёл").replace(/^text:miss$/, "текст → не нашёл"))} — ${c.n}`));
+  if (clicks.length) lines.push("", "<b>Нажатия за 7 дней</b>", ...clicks.slice(0, 20).map((c) => `${esc((PANEL_CLICKS[c.key] ?? c.key).replace(/^btn:/, "").replace(/^cb:/, "под сообщением: ").replace(/^cmd:/, "").replace(/^text:found$/, "текст → нашёл").replace(/^text:miss$/, "текст → не нашёл"))} — ${c.n}`));
   return lines.join("\n");
 }
 
@@ -155,7 +168,7 @@ function aiLimitsScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     .text("🔄 Обновить", "ail:show");
   const text = [
     "<b>🤖 Лимиты «Спросить?»</b>",
-    "Кнопка «💬 Спросить?» в приветствии /start, «🔍 Найти → 💬 Спросить ИИ», «💬 Спросить ИИ» под поиском и /ask — это один ИИ-поиск с общим лимитом.",
+    `Кнопка «💬 Спросить?» в приветствии /start, «${BTN.find} → ${FIND_BTN.ask}», «${FIND_BTN.ask}» под поиском и /ask — это один ИИ-поиск с общим лимитом.`,
     ctx.deps.ask ? `Модель: <code>${esc(ctx.deps.config.AI_MODEL)}</code>` : "ИИ выключен: не задан ANTHROPIC_API_KEY.",
     "",
     `На человека в сутки: <b>${l.perUser}</b>${l.bonusUser ? ` (${l.baseUser} + ${l.bonusUser} на сегодня)` : ""}${l.userOverridden ? ` · в .env ${l.envUser}` : ""}`,
@@ -461,7 +474,7 @@ adminOnly.command("poll", async (ctx) => {
 async function startBroadcast(ctx: BotContext): Promise<void> {
   setPending(ctx.deps, ctx.user.id, { kind: "broadcast" });
   await ctx.reply(
-    `Пришли сообщение для рассылки: текст, фото с подписью, документ. Перед отправкой покажу, кому и скольким людям, и попрошу подтвердить.\n\nТам же можно повесить текст на доску объявлений в «🔔 Изменения» на ${BOARD_HOURS} ч. По умолчанию не вешаю: доска только для важного.`,
+    `Пришли сообщение для рассылки: текст, фото с подписью, документ. Перед отправкой покажу, кому и скольким людям, и попрошу подтвердить.\n\nТам же можно повесить текст на доску объявлений в «${MORE_BTN.changes}» на ${BOARD_HOURS} ч. По умолчанию не вешаю: доска только для важного.`,
     { reply_markup: cancelKeyboard() },
   );
 }
@@ -586,7 +599,7 @@ async function showConfirm(ctx: BotContext, target: string, board: boolean, hasT
   const kb = new InlineKeyboard().text(`✅ Отправить ${users.length} чел.`, `bc:go:${messageId}`).row();
   if (hasText) kb.text(`📌 На доску объявлений: ${board ? `да, ${BOARD_HOURS} ч` : "нет"}`, "bc:board").row();
   kb.text("◀️ Другая аудитория", "bc:back").text("✖️ Отмена", "bc:cancel");
-  const note = hasText ? "\n\nДоска объявлений висит в «🗂 Ещё → 🔔 Изменения» и видна всем, кто откроет этот экран. Вешай туда только важное." : "";
+  const note = hasText ? `\n\nДоска объявлений висит в «${BTN.more} → ${MORE_BTN.changes}» и видна всем, кто откроет этот экран. Вешай туда только важное.` : "";
   await ctx.editMessageText(`Отправить ${label}: <b>${users.length}</b> чел.?${note}\n\nЭто нельзя отменить после нажатия.`, { parse_mode: "HTML", reply_markup: kb });
 }
 
