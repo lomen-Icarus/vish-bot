@@ -115,6 +115,8 @@ export interface RecReportEffect {
   /** Слоты ok → lost и lost → ok: уведомляем один раз, на самом переходе. */
   lost: RecSlotChange[];
   recovered: RecSlotChange[];
+  /** Ответы на «Проверить снова». Успех виден и в recovered (lost → ok). */
+  rechecked: { groupKey: string; groupTitle: string; code: RecResultCode }[];
 }
 
 const transition = (req: RecRequestRow, to: string, extra: Partial<RecTransition> = {}): RecTransition => ({
@@ -130,7 +132,7 @@ const transition = (req: RecRequestRow, to: string, extra: Partial<RecTransition
 
 /** Применить отчёт записывалки: ключ, результаты заданий, зеркало слотов, истёкшие заявки. */
 export function applyRecorderReport(repo: Repo, report: RecReport, now = Date.now()): RecReportEffect {
-  const effect: RecReportEffect = { firstConnect: false, keyChanged: false, transitions: [], lost: [], recovered: [] };
+  const effect: RecReportEffect = { firstConnect: false, keyChanged: false, transitions: [], lost: [], recovered: [], rechecked: [] };
   repo.transaction(() => {
     if (report.publicKey) {
       const had = repo.recorderPublicKey() !== null;
@@ -143,6 +145,9 @@ export function applyRecorderReport(repo: Repo, report: RecReport, now = Date.no
       // слота придёт в зеркале ниже.
       if (typeof res.id === "string" && res.id.startsWith(RECHECK_PREFIX)) {
         repo.clearRecorderMark(res.id);
+        const key = res.id.slice(RECHECK_PREFIX.length);
+        const slot = repo.recSlots().find((sl) => sl.groupKey === key);
+        effect.rechecked.push({ groupKey: key, groupTitle: slot?.groupTitle ?? key, code: res.code });
         continue;
       }
       const req = repo.recRequest(res.requestId);

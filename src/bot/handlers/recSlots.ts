@@ -131,6 +131,11 @@ adminOnly.callbackQuery(/^rq:ok:(\d+)$/, async (ctx) => {
   logger.info({ request: id, admin: ctx.from.id, ok: res.ok, replaced: res.ok ? (res.replaced?.id ?? null) : null }, "заявка на запись: одобрение");
   await ctx.answerCallbackQuery({ text: res.ok ? (res.replaced ? "Одобрено: прежнюю учётку уберу, новую поставлю" : "Одобрено: поставлю в слот в ближайшую минуту") : failText(res) });
   await refreshCard(ctx, id);
+  // Тому, чью учётку заменили, — почему её убирают (иначе «учётка убрана» без объяснений).
+  const old = res.ok ? res.replaced : null;
+  if (old && ctx.deps.repo.getUser(old.userId)) {
+    await ctx.api.sendMessage(old.userId, `🎥 Для записи группы ${esc(old.groupTitle)} подключили другую учётку — твою бот больше не использует, логин и пароль удалятся с сервера записи. Спасибо, что помог(ла)!`, { parse_mode: "HTML" }).catch(() => undefined);
+  }
 });
 
 adminOnly.callbackQuery(/^rq:no:(\d+)$/, async (ctx) => {
@@ -148,7 +153,7 @@ adminOnly.callbackQuery(/^rq:no:(\d+)$/, async (ctx) => {
 adminOnly.callbackQuery(/^rq:rc:(\d+)$/, async (ctx) => {
   const req = ctx.deps.repo.recRequest(Number(ctx.match[1]));
   const ok = !!req && requestRecheck(ctx.deps.repo, req.groupKey);
-  await ctx.answerCallbackQuery({ text: ok ? "Проверю вход в ближайшую минуту — результат придёт сообщением" : "Слота уже нет" });
+  await ctx.answerCallbackQuery({ text: ok ? "Проверю вход в ближайшую минуту — результат пришлю сообщением" : "Слота уже нет" });
   if (ok) logger.info({ request: req!.id, admin: ctx.from.id }, "слот записи: проверить снова");
 });
 

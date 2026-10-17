@@ -92,8 +92,10 @@ function studentText(repo: Repo, t: RecTransition): { text: string; kb?: InlineK
         text: `✅ Запись пар группы ${g} подключена: бот будет заходить на онлайн-пары под твоей учёткой и присылать слайды всем в группе.\nОтозвать можно в любой момент — идущая пара при этом доснимется.`,
         kb: new InlineKeyboard().text("🗑 Отозвать", "rqme:rv"),
       };
-    case "expired":
-      return { text: `⌛ Заявка на запись группы ${g} истекла: за неделю её не успели рассмотреть. Логин и пароль удалены. Можно подать заново (${FORM_PATH}), в лимит она не засчитана.` };
+    case "expired": {
+      const why = t.from === "pending_verify" ? "за неделю не удалось проверить вход — портал не отвечал" : "за неделю её не успели рассмотреть";
+      return { text: `⌛ Заявка на запись группы ${g} истекла: ${why}. Логин и пароль удалены. Можно подать заново (${FORM_PATH}), в лимит она не засчитана.` };
+    }
     case "revoked":
       return { text: `🗑 Твоя учётка убрана из записи группы ${g}: логин и пароль удалены с сервера записи.` };
     default:
@@ -149,6 +151,14 @@ export async function notifyRecorderEffect(api: SendApi, repo: Repo, adminIds: n
   for (const c of effect.recovered) {
     admins(`✅ Слот ${esc(c.groupTitle)} снова пускает.`);
     student(c.userId, `▶️ Запись пар группы ${esc(c.groupTitle)} снова работает.`);
+  }
+  // «Проверить снова»: успех уже сказан выше (снова пускает), здесь — остальные исходы.
+  for (const r of effect.rechecked) {
+    const g = esc(r.groupTitle);
+    if (r.code === "login_failed") admins(`🔁 Слот ${g}: проверил — портал всё ещё не пускает.`);
+    else if (r.code === "portal_down") admins(`🔁 Слот ${g}: портал сейчас не отвечает — проверить не удалось, нажми «Проверить снова» позже.`);
+    else if (r.code === "removed") admins(`🔁 Слота ${g} на сервере записи уже нет.`);
+    else if (r.code === "login_ok" && !effect.recovered.some((c) => c.groupKey === r.groupKey)) admins(`🔁 Слот ${g}: вход прошёл.`);
   }
 
   for (const m of out) {

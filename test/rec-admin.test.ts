@@ -116,6 +116,26 @@ describe("слоты: потеря и возврат доступа", () => {
     expect(recorderTasks(r)).toEqual([]);
     expect(r.recRequest(id)!.state).toBe("active");
   });
+
+  it("«Проверить снова» — админу ровно одно сообщение при любом исходе", async () => {
+    const r = repo();
+    const id = req(r, 1, "ВИШ-14-25", "active");
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "lost" }] });
+    const cases: Array<[string, string, string]> = [
+      ["login_failed", "lost", "всё ещё не пускает"],
+      ["portal_down", "lost", "не отвечает"],
+      ["login_ok", "ok", "снова пускает"],
+    ];
+    for (const [code, status, expected] of cases) {
+      requestRecheck(r, "виш-14-25");
+      const eff = applyRecorderReport(r, { results: [{ id: "recheck:виш-14-25", requestId: id, code: code as "login_ok" }], slots: [{ group: "ВИШ-14-25", status }] });
+      const api = fakeApi();
+      await notifyRecorderEffect(api, r, [100], eff);
+      const toAdmin = api.sent.filter((m) => m.to === 100);
+      expect(toAdmin).toHaveLength(1);
+      expect(toAdmin[0]!.text).toContain(expected);
+    }
+  });
 });
 
 describe("срок жизни заявки", () => {
@@ -192,7 +212,7 @@ describe("уведомления", () => {
     const r = repo();
     const sent: number[] = [];
     const api: SendApi = { async sendMessage(to) { if (to === 100) throw new Error("blocked"); sent.push(to); } };
-    await notifyRecorderEffect(api, r, [100, 101], { firstConnect: true, keyChanged: false, transitions: [], lost: [], recovered: [] });
+    await notifyRecorderEffect(api, r, [100, 101], { firstConnect: true, keyChanged: false, transitions: [], lost: [], recovered: [], rechecked: [] });
     expect(sent).toEqual([101]);
   });
 });
