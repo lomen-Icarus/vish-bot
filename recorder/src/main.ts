@@ -58,7 +58,8 @@ async function recordOne(cfg: RecorderConfig, store: AccountStore, general: Gene
     log.warn({ subject: row.subject, groups: row.groups, err: join.errors }, "портал не дал ссылку на комнату, попробую ещё");
     return "retry";
   }
-  log.info({ subject: row.subject, teacher: row.teacher, groups: row.groups, profile: join.profile }, "захожу на вебинар");
+  // Без имени преподавателя: хвост лога попадает в публичный лог деплоя (Actions).
+  log.info({ subject: row.subject, groups: row.groups, profile: join.profile }, "захожу на вебинар");
   // Заход под учёткой студента — уже проверка «аккаунт жив»: отодвигаем плановую.
   if (join.profile?.startsWith("slot:")) store.update(join.profile.slice(5), { status: "ok", failures: 0, lastOkAt: new Date().toISOString(), nextCheckAt: Date.now() + CHECK_EVERY_MS });
   if (join.profile === "1") general?.noteJoin();

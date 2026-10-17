@@ -921,10 +921,17 @@ export class Repo {
   forgetUser(userId: number): void {
     this.db.transaction(() => {
       // Заявки на запись — данные человека. Учтённый слот (active/approved)
-      // сперва помечаем на отзыв, чтобы записывалка убрала учётку; остальное
-      // стираем сразу. Строку revoking удалит отчёт «removed».
-      this.db.prepare("UPDATE rec_requests SET state = 'revoking', updated_at = ? WHERE user_id = ? AND state IN ('active','approved')").run(nowIso(), userId);
-      this.db.prepare("DELETE FROM rec_requests WHERE user_id = ? AND state != 'revoking'").run(userId);
+      // помечаем на отзыв, чтобы записывалка убрала учётку (строку удалит
+      // отчёт «removed»); шифровку и ник стираем сразу. Заявки, что идут в
+      // месячный лимит, остаются обезличенными (только id и дата, как
+      // ai_usage): иначе /soon обнулял бы лимит, и форма стала бы бесконечным
+      // перебором чужих паролей через наш VPS. Остальное удаляем.
+      const now = nowIso();
+      this.db.prepare("UPDATE rec_requests SET state = 'revoking', envelope_json = NULL, username = NULL, updated_at = ? WHERE user_id = ? AND state IN ('active','approved')").run(now, userId);
+      this.db
+        .prepare("UPDATE rec_requests SET state = 'forgotten', envelope_json = NULL, username = NULL, group_key = '', group_title = '', actual_group = NULL, updated_at = ? WHERE user_id = ? AND state NOT IN ('revoking','forgotten','rejected_bad_envelope','expired','revoked')")
+        .run(now, userId);
+      this.db.prepare("DELETE FROM rec_requests WHERE user_id = ? AND state IN ('rejected_bad_envelope','expired','revoked')").run(userId);
       // Знакомство «@ник это …» про этого человека — по id или по нику, пока
       // запись о нём ещё есть. Кого знакомил он сам — остаётся, но без него.
       this.db.prepare("DELETE FROM people_intros WHERE user_id = ? OR username = (SELECT lower(username) FROM users WHERE id = ?)").run(userId, userId);
@@ -1647,6 +1654,11 @@ export class Repo {
     }
     vals.push(id);
     this.db.prepare(`UPDATE rec_requests SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+  }
+
+  /** Обезличенные после /soon заявки старше окна лимита больше не нужны. */
+  purgeForgottenRecRequests(olderThan: string): void {
+    this.db.prepare("DELETE FROM rec_requests WHERE state = 'forgotten' AND created_at < ?").run(olderThan);
   }
 
   /** Заявки, которым пора истечь (не решены за ttlDays). */

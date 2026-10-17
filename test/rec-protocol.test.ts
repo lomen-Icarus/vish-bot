@@ -166,15 +166,23 @@ describe("лимит заявок и /soon", () => {
     expect(r.recRequestsSince(5, since)).toBe(2);
   });
 
-  it("forgetUser: активную заявку помечает на отзыв, остальные удаляет", () => {
+  it("forgetUser: активную — на отзыв без шифровки и ника; учтённые в лимите — обезличены и держат лимит", () => {
     const r = repo();
     r.touchUser(5, "x", "X");
     const active = r.createRecRequest({ userId: 5, username: "x", groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", envelopeJson: ENV });
     r.setRecRequestState(active, "active", { dropEnvelope: true });
     const old = r.createRecRequest({ userId: 5, username: "x", groupKey: "виш-13-23", groupTitle: "ВИШ-13-23", envelopeJson: ENV });
     r.setRecRequestState(old, "rejected_auth");
+    const approved = r.createRecRequest({ userId: 5, username: "x", groupKey: "виш-12-23", groupTitle: "ВИШ-12-23", envelopeJson: ENV });
+    r.setRecRequestState(approved, "approved");
+    const expired = r.createRecRequest({ userId: 5, username: "x", groupKey: "виш-11-23", groupTitle: "ВИШ-11-23", envelopeJson: ENV });
+    r.setRecRequestState(expired, "expired", { dropEnvelope: true });
     r.forgetUser(5);
-    expect(r.recRequest(active)).toMatchObject({ state: "revoking" });
-    expect(r.recRequest(old)).toBeNull();
+    expect(r.recRequest(active)).toMatchObject({ state: "revoking", username: null });
+    expect(r.recRequest(approved)).toMatchObject({ state: "revoking", envelopeJson: null, username: null });
+    expect(r.recRequest(old)).toMatchObject({ state: "forgotten", username: null, groupKey: "", envelopeJson: null });
+    expect(r.recRequest(expired)).toBeNull();
+    // /soon не обнуляет месячный лимит: обе на отзыве и обезличенная rejected_auth считаются, истёкшая — нет.
+    expect(r.recRequestsSince(5, "2000-01-01T00:00:00Z")).toBe(3);
   });
 });

@@ -49,6 +49,15 @@ export const GENERAL_SLOT_TITLE = "Общая учётка (.env)";
 /** Подпись владельца у слота без заявки, если он ещё не писал боту: метка «owner:<группа>». */
 export const OWNER_PREFIX = "owner:";
 
+/**
+ * Кабинет ответил «лежит» на проверку заявки — следующая попытка не раньше,
+ * чем через VERIFY_WAIT_MS (метка «vwait:<номер>» = ISO-время). Иначе
+ * записывалка входила бы под логином студента каждую минуту, до 1440 раз в
+ * сутки, — так недолго получить блокировку учётки или IP сервера.
+ */
+export const VERIFY_WAIT_PREFIX = "vwait:";
+export const VERIFY_WAIT_MS = 30 * 60 * 1000;
+
 /** Метка «проверить слот заново» в recorder_state; она же — id задания recheck. */
 export const RECHECK_PREFIX = "recheck:";
 
@@ -58,7 +67,7 @@ export const RECHECK_PREFIX = "recheck:";
  * по группе. Замена учётки группы (старая заявка — на отзыв, новая одобрена)
  * иначе поставила бы новую и тут же её убрала.
  */
-export function recorderTasks(repo: Repo): RecTask[] {
+export function recorderTasks(repo: Repo, now = Date.now()): RecTask[] {
   const tasks: RecTask[] = [];
   const envelope = (r: RecRequestRow): unknown => {
     try {
@@ -71,6 +80,8 @@ export function recorderTasks(repo: Repo): RecTask[] {
     tasks.push({ id: `${r.id}:remove`, kind: "remove", requestId: r.id, userId: r.userId, group: r.groupTitle, codes: [groupCode(r.groupTitle)] });
   }
   for (const r of repo.recRequestsByState(["pending_verify"])) {
+    const wait = repo.recorderMarkValue(`${VERIFY_WAIT_PREFIX}${r.id}`);
+    if (wait && Date.parse(wait) > now) continue;
     const env = envelope(r);
     if (env) tasks.push({ id: `${r.id}:verify`, kind: "verify", requestId: r.id, userId: r.userId, group: r.groupTitle, codes: [groupCode(r.groupTitle)], envelope: env });
   }
@@ -190,6 +201,13 @@ export function applyRecorderReport(repo: Repo, report: RecReport, now = Date.no
       repo.setRecRequestState(req.id, "expired", { dropEnvelope: true });
       effect.transitions.push(transition(req, "expired"));
     }
+    // Пауза проверки нужна, только пока заявка ждёт проверки.
+    for (const key of repo.recorderMarkKeys(VERIFY_WAIT_PREFIX)) {
+      const req = repo.recRequest(Number(key.slice(VERIFY_WAIT_PREFIX.length)));
+      if (!req || req.state !== "pending_verify") repo.clearRecorderMark(key);
+    }
+    // Следы /soon держат месячный лимит — после 30 дней они больше не нужны.
+    repo.purgeForgottenRecRequests(new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString());
     if (report.portal) repo.recorderMark("portal", report.portal);
     repo.recorderMark("last_report_at", new Date().toISOString());
   });
@@ -220,7 +238,9 @@ function nextState(repo: Repo, req: RecRequestRow, res: RecResult): string | nul
       if (req.state === "approved") repo.removeRecSlot(req.groupKey);
       return "rejected_bad_envelope";
     case "portal_down":
-      return null; // остаёмся pending_verify, повторим на следующем sync
+      // Остаёмся pending_verify, но следующую попытку — через полчаса.
+      if (req.state === "pending_verify") repo.recorderMark(`${VERIFY_WAIT_PREFIX}${req.id}`, new Date(Date.now() + VERIFY_WAIT_MS).toISOString());
+      return null;
     case "installed":
       if (req.state !== "approved") return null;
       repo.setRecRequestState(req.id, "active", { dropEnvelope: true });
