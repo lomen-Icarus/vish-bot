@@ -46,6 +46,9 @@ export const REQUEST_TTL_DAYS = 7;
 /** Строка общей учётки (профиль 1 из .env) в отчёте записывалки — не слот студента. */
 export const GENERAL_SLOT_TITLE = "Общая учётка (.env)";
 
+/** Подпись владельца у слота без заявки, если он ещё не писал боту: метка «owner:<группа>». */
+export const OWNER_PREFIX = "owner:";
+
 /** Метка «проверить слот заново» в recorder_state; она же — id задания recheck. */
 export const RECHECK_PREFIX = "recheck:";
 
@@ -175,7 +178,11 @@ export function applyRecorderReport(repo: Repo, report: RecReport, now = Date.no
         repo.upsertRecSlot({ groupKey: key, groupTitle: s.group, requestId: req?.id ?? null, status: s.status, lastOkAt: s.lastOkAt ?? null });
       }
       // Записывалка присылает все слоты: чего нет в отчёте, того нет и у неё.
-      for (const key of before.keys()) if (!seen.has(key)) repo.removeRecSlot(key);
+      for (const key of before.keys()) {
+        if (seen.has(key)) continue;
+        repo.removeRecSlot(key);
+        repo.clearRecorderMark(`${OWNER_PREFIX}${key}`);
+      }
     }
     // Заявки, которые неделю не проверились или не решены, — истекают; шифровку стираем.
     const olderThan = new Date(now - REQUEST_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -296,6 +303,30 @@ export function revokeSlotWithoutRequest(repo: Repo, groupKey: string, adminId: 
   const id = repo.createRecRequest({ userId: 0, username: null, groupKey, groupTitle: slot.groupTitle, envelopeJson: "" });
   repo.setRecRequestState(id, "revoking", { dropEnvelope: true, decidedBy: adminId });
   return true;
+}
+
+/** Чем закончилась привязка слота к человеку. */
+export type AdoptResult = { ok: true; slotTitle: string; linked: boolean } | { ok: false; reason: "no_slot" | "taken" };
+
+/**
+ * Подписать слот без заявки (учётка из .env) владельцем. Знаком боту —
+ * становится обычной «стоящей в слоте» заявкой: вести ему, «Отозвать» сам.
+ * Не знаком — только подпись в /slots, пока он не напишет боту.
+ */
+export function adoptSlot(repo: Repo, groupCodeArg: string, username: string, adminId: number): AdoptResult {
+  const code = groupCode(groupCodeArg);
+  const slot = repo.recSlots().find((s) => s.groupTitle !== GENERAL_SLOT_TITLE && groupCode(s.groupTitle) === code);
+  if (!slot) return { ok: false, reason: "no_slot" };
+  if (repo.activeRecRequest(slot.groupKey)) return { ok: false, reason: "taken" };
+  const nick = username.replace(/^@/, "");
+  const user = repo.userByUsername(nick);
+  if (user) {
+    repo.adoptRecSlot({ userId: user.id, username: user.username ?? nick, groupKey: slot.groupKey, groupTitle: slot.groupTitle, adminId });
+    repo.clearRecorderMark(`${OWNER_PREFIX}${slot.groupKey}`);
+    return { ok: true, slotTitle: slot.groupTitle, linked: true };
+  }
+  repo.recorderMark(`${OWNER_PREFIX}${slot.groupKey}`, nick);
+  return { ok: true, slotTitle: slot.groupTitle, linked: false };
 }
 
 /** «Проверить снова» потерянный слот: на следующем обмене записывалка зайдёт в кабинет. */
