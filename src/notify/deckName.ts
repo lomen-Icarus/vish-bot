@@ -24,3 +24,12 @@ export function deckPartLabel(title: string | null | undefined): string {
   const part = deckPart(title);
   return part ? ` · ч. ${part.index}/${part.count}` : "";
 }
+
+/**
+ * Новые раньше — по дате пары, а не по порядку записи: недоставленная пачка
+ * бывает добавлена позже. Части одной пары — подряд и по порядку: 1, 2, 3
+ * (по id последней шла бы часть 3). Общий для «слайды…» в личке и в чате.
+ */
+export function newestFirst<T extends { id: number; date: string; subject: string; title?: string | null }>(decks: T[]): T[] {
+  return [...decks].sort((a, b) => b.date.localeCompare(a.date) || a.subject.localeCompare(b.subject) || (deckPart(a.title)?.index ?? 0) - (deckPart(b.title)?.index ?? 0) || b.id - a.id);
+}

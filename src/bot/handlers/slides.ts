@@ -16,7 +16,9 @@ import { BTN, panelRef } from "../keyboards.js";
 import { logicalKeyFor, type LogicalGroup } from "../../schedule/groups.js";
 import { matchSubjectsLoose, sameSubject } from "../../chat/social.js";
 import { addDays, fmtDDMM, parseDayWord, parseRuDate, todayMsk, type LocalDate } from "../../time.js";
-import { deckPart, deckPartLabel } from "../../notify/deckName.js";
+import { deckPartLabel, newestFirst } from "../../notify/deckName.js";
+
+export { newestFirst };
 import { sendDeck } from "../deck.js";
 
 export const slidesHandlers = new Composer<BotContext>();
@@ -122,13 +124,6 @@ function recentFor(ctx: BotContext, all: SlideDeckRow[]): SlideDeckRow[] {
   const key = ctx.user.groupKey;
   return (key ? all.filter((d) => ofGroup(d, key)) : all).slice(0, 8);
 }
-
-/**
- * Новые раньше — по дате пары, а не по порядку записи: недоставленная пачка
- * бывает добавлена позже. Части одной пары — подряд и по порядку: 1, 2, 3.
- */
-export const newestFirst = (decks: SlideDeckRow[]): SlideDeckRow[] =>
-  [...decks].sort((a, b) => b.date.localeCompare(a.date) || a.subject.localeCompare(b.subject) || (deckPart(a.title)?.index ?? 0) - (deckPart(b.title)?.index ?? 0) || b.id - a.id);
 
 slidesHandlers.chatType("private").hears(/^\s*(?:скинь|скиньте|пришли|пришлите|дай|дайте|отправь|хочу)?\s*слайд(?:ы|ов|ик\p{L}*)?(?:\s+(.*))?$/isu, async (ctx, next) => {
   // Бот ждёт ввод (фамилию, обращение, вопрос ИИ) — «слайды по физике» и есть этот ввод.
