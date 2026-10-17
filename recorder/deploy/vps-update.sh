@@ -62,7 +62,9 @@ fi
 # Свои флаги docker run (например, --add-host, пока у домена бота лежит DNS) —
 # в $DIR/docker.extra одной строкой: так они переживают каждый деплой.
 EXTRA=()
-[ -f "$DIR/docker.extra" ] && read -r -a EXTRA < "$DIR/docker.extra"
+# «|| true»: без перевода строки в конце (или в пустом файле) read возвращает 1,
+# и set -e молча обрывал деплой между сборкой и запуском контейнера.
+[ -f "$DIR/docker.extra" ] && { read -r -a EXTRA < "$DIR/docker.extra" || true; }
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --restart unless-stopped --init \

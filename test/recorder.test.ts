@@ -72,10 +72,29 @@ describe("записывалка вебинаров: планировщик", ()
     expect(planRecording([r], at(690), cfg, fresh(), 0).start).toEqual([]);
   });
 
-  it("одна пара двумя строками (поток, комната на группу) — один бот, а не два", () => {
+  it("одна пара двумя строками (поток, комната на группу) — один бот; группы слиты, вторая комната — запасная", () => {
     const a = row("Экономика", 600, 690, { joinId: "j1", groups: ["ВИШ-11-23"] });
     const b = row("Экономика", 600, 690, { joinId: "j2", groups: ["ВИШ-12-23"] });
-    expect(planRecording([a, b], at(600), cfg, fresh(), 0).start).toEqual([a]);
+    const start = planRecording([a, b], at(600), cfg, fresh(), 0).start;
+    expect(start).toHaveLength(1);
+    expect(start[0]).toMatchObject({ joinId: "j1", groups: ["ВИШ-11-23", "ВИШ-12-23"], alts: [b] });
+  });
+
+  it("у первой строки пары ещё нет кнопки входа — основной становится открытая комната", () => {
+    const a = row("Экономика", 600, 690, { joinId: "", groups: ["ВИШ-11-23"] });
+    const b = row("Экономика", 600, 690, { joinId: "j2", groups: ["ВИШ-12-23"] });
+    const start = planRecording([a, b], at(600), cfg, fresh(), 0).start;
+    expect(start).toEqual([expect.objectContaining({ joinId: "j2", groups: ["ВИШ-11-23", "ВИШ-12-23"], alts: [] })]);
+  });
+
+  it("слитая пара с группой, у которой своя учётка, — идёт первой и пробует эту учётку", () => {
+    const other = row("Физика", 600, 690, { joinId: "x", groups: ["ВИШ-14-25"] });
+    const a = row("Экономика", 600, 690, { joinId: "j1", groups: ["ВИШ-11-23"] });
+    const b = row("Экономика", 600, 690, { joinId: "j2", groups: ["ВИШ-15-25"] });
+    const profiles = [{ name: "slot:ВИШ-15-25", authMode: "1" as const, login: "l", password: "p", groups: ["15-25"] }];
+    const start = planRecording([other, a, b], at(600), { ...cfg, maxParallel: 1, profiles }, fresh(), 0).start;
+    expect(start[0]!.subject).toBe("Экономика");
+    expect(profilesFor(start[0]!, profiles).map((p) => p.name)).toEqual(["slot:ВИШ-15-25"]);
   });
 
   it("неудачная попытка повторяется, пока пара идёт, а не теряется после трёх осечек", () => {
@@ -144,6 +163,9 @@ describe("записывалка вебинаров: планировщик", ()
     expect(deckBaseName("2026-09-21", 13 * 60, "Физика")).not.toBe(deckBaseName("2026-09-21", 9 * 60 + 5, "Физика"));
     expect(deckBaseName("2026-09-21", null, "Мат/анализ: часть 1")).toBe("2026-09-21-xxxx-Матанализ-часть-1");
     expect(deckBaseName("2026-09-21", 600, "///")).toBe("2026-09-21-1000-вебинар");
+    // Одна пара в одно время у двух потоков — разные папки и PDF.
+    expect(deckBaseName("2026-09-21", 600, "Иностранный язык", "Иванова А. Б.")).toBe("2026-09-21-1000-Иностранный-язык-Иванова");
+    expect(deckBaseName("2026-09-21", 600, "Иностранный язык", "Петров В. Г.")).not.toBe(deckBaseName("2026-09-21", 600, "Иностранный язык", "Иванова А. Б."));
   });
 
   it("пустое значение в .env — это «не задано», а не ноль", () => {

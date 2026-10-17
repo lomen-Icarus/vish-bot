@@ -142,7 +142,7 @@ adminOnly.callbackQuery(/^rq:ok:(\d+)$/, async (ctx) => {
   const id = Number(ctx.match[1]);
   const res = approveRecRequest(ctx.deps.repo, id, ctx.from.id);
   logger.info({ request: id, admin: ctx.from.id, ok: res.ok, replaced: res.ok ? (res.replaced?.id ?? null) : null }, "заявка на запись: одобрение");
-  await ctx.answerCallbackQuery({ text: res.ok ? (res.replaced ? "Одобрено: прежнюю учётку уберу, новую поставлю" : "Одобрено: поставлю в слот в ближайшую минуту") : failText(res) });
+  await ctx.answerCallbackQuery({ text: res.ok ? (res.replaced || res.replacedEnv ? "Одобрено: прежнюю учётку уберу, новую поставлю" : "Одобрено: поставлю в слот в ближайшую минуту") : failText(res) });
   await refreshCard(ctx, id);
   // Тому, чью учётку заменили, — почему её убирают (иначе «учётка убрана» без объяснений).
   const old = res.ok ? res.replaced : null;
@@ -210,10 +210,16 @@ adminOnly.callbackQuery(/^rq:rvgy:(.+)$/, async (ctx) => {
 
 /** «/slot_owner 14-25 @ник» — подписать слот из .env владельцем. */
 adminOnly.command("slot_owner", async (ctx) => {
-  const [group, nick] = String(ctx.match ?? "").trim().split(/\s+/);
+  // Ник — последнее слово, группа — всё до него («ВИШ-11-23 (ЭиЭА) @ник»).
+  const words = String(ctx.match ?? "").trim().split(/\s+/).filter(Boolean);
+  const nick = words.length >= 2 ? words.pop()! : "";
+  const group = words.join(" ");
   if (!group || !nick) return void (await ctx.reply("Подписать слот из .env владельцем: <code>/slot_owner 14-25 @ник</code>", { parse_mode: "HTML" }));
   const res = adoptSlot(ctx.deps.repo, group, nick, ctx.from!.id);
-  if (!res.ok) return void (await ctx.reply(res.reason === "taken" ? "У этого слота уже есть владелец — смотри /slots." : `Слота группы ${esc(group)} из .env нет — смотри /slots.`, { parse_mode: "HTML" }));
+  if (!res.ok) {
+    const why = res.reason === "taken" ? "У этого слота уже есть владелец — смотри /slots." : res.reason === "ambiguous" ? `Под «${esc(group)}» подходит несколько слотов — напиши группу полностью, например ОЗВИШ-14-25.` : `Слота группы ${esc(group)} из .env нет — смотри /slots.`;
+    return void (await ctx.reply(why, { parse_mode: "HTML" }));
+  }
   logger.info({ admin: ctx.from!.id, linked: res.linked }, "слот записи: подписан владелец");
   const name = `@${esc(nick.replace(/^@/, ""))}`;
   if (!res.linked) return void (await ctx.reply(`Подписал ${esc(res.slotTitle)} — ${name}. Боту он ещё не писал, поэтому вести ему не придут. Когда нажмёт /start, повтори команду — тогда сможет и сам отозвать.`, { parse_mode: "HTML" }));
@@ -273,7 +279,12 @@ recSlotsHandlers.callbackQuery("rqme:rvy", async (ctx) => {
   logger.info({ request: req.id, user: ctx.user.id, ok: res.ok }, "заявка на запись: отозвана студентом");
   await ctx.answerCallbackQuery();
   if (!res.ok) return void (await ctx.editMessageText("Уже убираю учётку — подожди минуту.").catch(() => undefined));
-  await ctx.editMessageText(placed ? "🗑 Отзыв принят: учётку уберу в ближайшую минуту, идущая пара доснимется. Когда уберу — напишу." : "🗑 Заявка снята, логин и пароль удалены.").catch(() => undefined);
+  const text = !res.immediate
+    ? "🗑 Отзыв принят: учётку уберу в ближайшую минуту, идущая пара доснимется. Когда уберу — напишу."
+    : req.state === "approved"
+      ? "🗑 Отозвано: учётку ещё не поставили — логин и пароль удалены."
+      : "🗑 Заявка снята, логин и пароль удалены.";
+  await ctx.editMessageText(text).catch(() => undefined);
   const note = placed ? `🗑 ${who(req)} отозвал(а) учётку из записи группы ${esc(req.groupTitle)}.` : `🗑 ${who(req)} снял(а) заявку №${req.id} (${esc(req.groupTitle)}).`;
   for (const id of ctx.deps.config.ADMIN_IDS) await ctx.api.sendMessage(id, note, { parse_mode: "HTML" }).catch(() => undefined);
 });

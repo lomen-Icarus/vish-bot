@@ -68,22 +68,28 @@ export class AccountStore {
     const old = this.slots.get(entry.group);
     if (old && old.requestId === entry.requestId) return old;
     const slot: Slot = { ...entry, installedAt: new Date(now).toISOString(), status: "ok", lastOkAt: new Date(now).toISOString(), failures: 0, nextCheckAt: now + CHECK_EVERY_MS };
-    this.slots.set(entry.group, slot);
-    this.save();
+    this.commit(new Map(this.slots).set(entry.group, slot));
     return slot;
   }
 
   remove(group: string): boolean {
-    const had = this.slots.delete(group);
-    if (had) this.save();
-    return had;
+    if (!this.slots.has(group)) return false;
+    const next = new Map(this.slots);
+    next.delete(group);
+    this.commit(next);
+    return true;
   }
 
-  update(group: string, patch: Partial<Pick<Slot, "status" | "lastOkAt" | "failures" | "nextCheckAt">>): void {
+  /**
+   * Поправить состояние слота. installedAt — «тот ли это слот»: проверка
+   * «жива ли» и заход на пару берут слот в начале и пишут итог по имени
+   * группы; если слот за это время заменили, итог по старой учётке не должен
+   * лечь на новую (иначе свежий слот мог сразу стать «не пускает»).
+   */
+  update(group: string, patch: Partial<Pick<Slot, "status" | "lastOkAt" | "failures" | "nextCheckAt">>, installedAt?: string): void {
     const slot = this.slots.get(group);
-    if (!slot) return;
-    Object.assign(slot, patch);
-    this.save();
+    if (!slot || (installedAt !== undefined && slot.installedAt !== installedAt)) return;
+    this.commit(new Map(this.slots).set(group, { ...slot, ...patch }));
   }
 
   /** Профили для захода на пары: только живые слоты; «потерянные» не пробуем, пока их не проверят заново. */
@@ -93,11 +99,18 @@ export class AccountStore {
       .map((s) => ({ name: `${SLOT_PREFIX}${s.group}`, authMode: "1", login: s.login, password: s.password, groups: s.codes }));
   }
 
-  private save(): void {
+  /**
+   * Сначала файл, потом память. Наоборот — при неудачной записи (кончился
+   * диск) повтор задания стал бы пустой операцией с ответом «готово», а на
+   * диске осталась бы прежняя учётка: отозванная «воскресла» бы после перезапуска.
+   */
+  private commit(next: Map<string, Slot>): void {
     mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp`;
-    writeFileSync(tmp, JSON.stringify({ v: 1, slots: this.list() } satisfies FileShape, null, 1), { mode: 0o600 });
+    const slots = [...next.values()].sort((a, b) => a.group.localeCompare(b.group));
+    writeFileSync(tmp, JSON.stringify({ v: 1, slots } satisfies FileShape, null, 1), { mode: 0o600 });
     renameSync(tmp, this.file);
+    this.slots = next;
   }
 }
 

@@ -59,7 +59,7 @@ export class GeneralWatch {
 
   /** Цель для проверки «аккаунт жив» вместе со слотами. */
   target(): LiveTarget {
-    return { key: GENERAL_KEY, login: this.profile.login, password: this.profile.password, state: this.current, save: (patch) => this.update(patch) };
+    return { key: GENERAL_KEY, login: this.profile.login, password: this.profile.password, state: this.current, save: (patch) => this.update(patch), fresh: () => this.current };
   }
 
   /** Строка для отчёта боту. */

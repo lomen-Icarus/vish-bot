@@ -63,7 +63,13 @@ export function slidesEndpoint(url: string): string {
   return trimmed;
 }
 
-/** Отдать PDF боту. true — бот принял. */
+/** До бота не достучались (DNS, обрыв) — только в этом случае есть смысл идти на запасной адрес. */
+export class BotUnreachableError extends Error {}
+
+/**
+ * Отдать PDF боту. true — бот принял, false — бот ответил отказом (запасной
+ * адрес — тот же бот, он ответит так же). Не достучались — BotUnreachableError.
+ */
 export async function uploadDeck(opts: UploadOptions): Promise<boolean> {
   const partBytes = opts.partBytes ?? PART_BYTES;
   const delay = opts.retryDelayMs ?? 2000;
@@ -71,6 +77,7 @@ export async function uploadDeck(opts: UploadOptions): Promise<boolean> {
   const auth = { Authorization: `Bearer ${opts.token}` };
   const whole = await postWithRetry(base, { ...auth, "Content-Type": "application/pdf", "X-Slides-Meta": opts.meta }, opts.pdf, delay);
   if (whole.status >= 200 && whole.status < 300) return true;
+  if (whole.status === 0) throw new BotUnreachableError(whole.text);
   // 413 на маленьком PDF кусками не лечится; на большом — это лимит прокси.
   if (whole.status !== 413 || opts.pdf.length <= partBytes) {
     log.warn({ status: whole.status, body: whole.text, ...(whole.status === 405 ? { hint: "BOT_SLIDES_URL должен вести на …/slides" } : {}) }, "бот не принял слайды");
@@ -82,6 +89,7 @@ export async function uploadDeck(opts: UploadOptions): Promise<boolean> {
   for (let i = 0; i < count; i++) {
     const chunk = opts.pdf.subarray(i * partBytes, (i + 1) * partBytes);
     const r = await postWithRetry(`${base}/part`, { ...auth, "Content-Type": "application/octet-stream", "X-Upload-Id": id, "X-Part-Index": String(i) }, chunk, delay);
+    if (r.status === 0) throw new BotUnreachableError(r.text);
     if (r.status < 200 || r.status >= 300) {
       log.warn({ status: r.status, body: r.text, part: i, parts: count }, "кусок слайдов не принят");
       return false;
@@ -90,6 +98,7 @@ export async function uploadDeck(opts: UploadOptions): Promise<boolean> {
   const sha = createHash("sha256").update(opts.pdf).digest("hex");
   const done = await postWithRetry(`${base}/complete`, { ...auth, "X-Upload-Id": id, "X-Part-Count": String(count), "X-Sha256": sha, "X-Slides-Meta": opts.meta }, undefined, delay);
   if (done.status >= 200 && done.status < 300) return true;
+  if (done.status === 0) throw new BotUnreachableError(done.text);
   log.warn({ status: done.status, body: done.text, parts: count }, "бот не собрал слайды из кусков");
   return false;
 }

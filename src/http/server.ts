@@ -10,7 +10,7 @@ import path from "node:path";
 import type { Repo } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { groupCalendar } from "../schedule/calendar.js";
-import { applyRecorderReport, recorderTasks, type RecReport, type RecReportEffect } from "../bot/recorder.js";
+import { applyRecorderReport, GENERAL_SLOT_TITLE, recorderTasks, type RecReport, type RecReportEffect } from "../bot/recorder.js";
 import { tmaContext, tmaSubmit } from "../bot/tma.js";
 import { verifyInitData } from "./initData.js";
 import { TMA_PAGE } from "./tmaPage.js";
@@ -329,7 +329,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       // вебинара было видно снаружи, дошёл ли PDF от записывалки.
       const last = deps.repo.recentSlideDecks(1)[0];
       const slides = deps.slidesToken ? { decks: deps.repo.slideDeckCount(), last: last ? { date: last.date, subject: last.subject, slides: last.slides, receivedAt: last.createdAt } : null } : null;
-      const rec = deps.slidesToken ? { lastReportAt: deps.repo.recorderMarkValue("last_report_at"), portal: deps.repo.recorderMarkValue("portal"), slots: deps.repo.recSlots().length } : null;
+      const rec = deps.slidesToken ? { lastReportAt: deps.repo.recorderMarkValue("last_report_at"), portal: deps.repo.recorderMarkValue("portal"), slots: deps.repo.recSlots().filter((s) => s.groupTitle !== GENERAL_SLOT_TITLE).length } : null;
       send(200, JSON.stringify({ ok: true, lastPoll: p?.finishedAt ?? null, groups: deps.service.groups().length, slides, recorder: rec }), "application/json; charset=utf-8", { "Cache-Control": "no-store" });
       return;
     }
