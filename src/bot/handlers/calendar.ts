@@ -13,13 +13,14 @@ import type { ChangeEvent } from "../../schedule/diff.js";
 import { esc, plural } from "../../schedule/format.js";
 import { calendarPath } from "../../http/server.js";
 import { fmtDDMM, todayMsk } from "../../time.js";
+import { publicBase } from "../../http/publicUrl.js";
 
 export const calendarHandlers = new Composer<BotContext>();
 
 function subscriptionsEnabled(ctx: BotContext): boolean {
   // A busy port or a failed listen() must not leave the bot handing out dead links.
   // Лента подписки строится по группе, поэтому в режиме преподавателя — только файл.
-  return !!ctx.deps.config.PUBLIC_URL && ctx.deps.http?.listening === true && !ctx.user.teacherMode;
+  return !!publicBase(ctx.deps) && ctx.deps.http?.listening === true && !ctx.user.teacherMode;
 }
 
 /** Календарь преподавателя (режим преподавателя): его пары до конца семестра. */
@@ -152,7 +153,7 @@ async function sendSubscription(ctx: BotContext, alarm: number): Promise<void> {
   if (!group || !subscriptionsEnabled(ctx)) return void (await ctx.reply(group ? "Подписка пока не настроена." : groupRequiredText()));
   ctx.deps.repo.updateUser(ctx.user.id, { calAlarmMin: alarm > 0 ? alarm : null });
   const token = ctx.deps.repo.ensureCalToken(ctx.user.id);
-  const base = ctx.deps.config.PUBLIC_URL!;
+  const base = publicBase(ctx.deps)!;
   const http = `${base}${calendarPath(token)}`;
   const webcal = http.replace(/^https?:\/\//, "webcal://");
   await ctx.reply(

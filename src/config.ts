@@ -55,6 +55,17 @@ const idList = z
 const blankToUndefined = (v: unknown): unknown => (typeof v === "string" && !v.trim() ? undefined : v);
 const num = <T extends z.ZodTypeAny>(inner: T) => z.preprocess(blankToUndefined, inner);
 
+/** Публичный адрес: без схемы — опечатка, а не повод не стартовать; хвостовой «/» срезаем. */
+const publicUrl = z
+  .string()
+  .optional()
+  .transform((v) => {
+    const raw = v?.trim().replace(/\/+$/, "");
+    if (!raw) return undefined;
+    const url = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+    return /^https?:\/\/\S+$/i.test(url) ? url : undefined;
+  });
+
 const schema = z.object({
   BOT_TOKEN: z.string().min(20, "BOT_TOKEN is required"),
   ADMIN_IDS: idList,
@@ -170,17 +181,13 @@ const schema = z.object({
    */
   HTTP_PORT: num(z.coerce.number().int().min(0).max(65535).catch(0)),
   SERVER_PORT: num(z.coerce.number().int().min(0).max(65535).catch(0)).optional(),
-  /** Public base URL of that server, e.g. http://srv3.frienworld.space:40070 — enables calendar subscription links. */
-  PUBLIC_URL: z
-    .string()
-    .optional()
-    .transform((v) => {
-      const raw = v?.trim().replace(/\/+$/, "");
-      if (!raw) return undefined;
-      // A missing scheme is a typo worth fixing, not a reason to refuse to start.
-      const url = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
-      return /^https?:\/\/[^\s/]+$/i.test(url.replace(/\/.*$/, (m) => (m === "/" ? "" : m))) || /^https?:\/\/\S+$/i.test(url) ? url : undefined;
-    }),
+  /** Public base URL of that server, e.g. https://slides.example.ru — enables calendar subscription links. */
+  PUBLIC_URL: publicUrl,
+  /**
+   * Запасной публичный адрес (тоже HTTPS): если основной домен лёг, ссылки
+   * подписки на календарь бот выдаёт через него (см. src/http/publicUrl.ts).
+   */
+  PUBLIC_URL_FALLBACK: publicUrl,
 });
 
 export type Config = z.infer<typeof schema>;
