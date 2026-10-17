@@ -11,6 +11,8 @@ import type { Repo } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import { groupCalendar } from "../schedule/calendar.js";
 import { applyRecorderReport, recorderTasks, type RecReport, type RecReportEffect } from "../bot/recorder.js";
+import { tmaContext, tmaSubmit } from "../bot/tma.js";
+import { TMA_PAGE } from "./tmaPage.js";
 import { logger } from "../logger.js";
 
 /** Сравнение секрета за постоянное время: по задержке ответа токен не подобрать. */
@@ -240,6 +242,39 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
   };
 
+  // Простой лимит частоты формы по IP: защита от перебора.
+  const tmaHits = new Map<string, number[]>();
+  const tmaRateOk = (ip: string): boolean => {
+    const now = Date.now();
+    const hits = (tmaHits.get(ip) ?? []).filter((t) => now - t < 60_000);
+    hits.push(now);
+    tmaHits.set(ip, hits);
+    if (tmaHits.size > 500) for (const [k, v] of tmaHits) if (!v.some((t) => now - t < 60_000)) tmaHits.delete(k);
+    return hits.length <= 20;
+  };
+
+  /** Mini App: форма «подключить мою группу». Доступ — по подписи Telegram, не по токену. */
+  const handleTma = async (req: IncomingMessage, res: ServerResponse, kind: "context" | "submit"): Promise<void> => {
+    const reply = (status: number, json: Record<string, unknown>): void => {
+      const buf = Buffer.from(JSON.stringify(json), "utf8");
+      res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Content-Length": String(buf.length) });
+      res.end(buf);
+    };
+    if (!deps.botToken) return reply(404, { error: "форма выключена" });
+    const ip = String(req.socket.remoteAddress ?? "");
+    if (!tmaRateOk(ip)) return reply(429, { error: "слишком часто, подожди минуту" });
+    try {
+      const body = JSON.parse((await readBody(req, 64 * 1024)).toString("utf8") || "{}") as Record<string, unknown>;
+      const tdeps = { repo: deps.repo, groups: () => deps.service.groups(), botToken: deps.botToken };
+      const r = kind === "context" ? tmaContext(tdeps, String(body.initData ?? "")) : tmaSubmit(tdeps, body);
+      if (kind === "submit" && r.status === 200) logger.info({ requestId: (r.json as { requestId?: number }).requestId }, "новая заявка на запись");
+      return reply(r.status, r.json);
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 150), kind }, "форма записи споткнулась");
+      return reply(400, { error: "не разобрано" });
+    }
+  };
+
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
     // Порт открыт всему интернету: «GET //[» или «GET http://a:b/» Node пропускает,
     // а new URL на них бросает — без этой проверки один такой запрос ронял весь бот.
@@ -258,6 +293,10 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
     if (method === "POST" && url.pathname === "/rec/report") {
       void handleRec(req, res, "report");
+      return;
+    }
+    if (method === "POST" && (url.pathname === "/tma/context" || url.pathname === "/tma/submit")) {
+      void handleTma(req, res, url.pathname === "/tma/submit" ? "submit" : "context");
       return;
     }
     if (method !== "GET" && method !== "HEAD") {
@@ -282,6 +321,10 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
     if (url.pathname === "/rec/sync") {
       void handleRec(req, res, "sync");
+      return;
+    }
+    if (url.pathname === "/tma" && deps.botToken) {
+      send(200, TMA_PAGE, "text/html; charset=utf-8", { "Cache-Control": "no-store" });
       return;
     }
     const m = /^\/cal\/([A-Za-z0-9_-]{8,64})\.ics$/.exec(url.pathname);
