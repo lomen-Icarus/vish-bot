@@ -8,7 +8,7 @@
  */
 import { InlineKeyboard } from "grammy";
 import type { Repo, RecRequestRow } from "../db/repo.js";
-import { GENERAL_SLOT_TITLE, type RecReportEffect, type RecSlotChange, type RecTransition } from "./recorder.js";
+import { GENERAL_SLOT_TITLE, OWNER_PREFIX, type RecReportEffect, type RecSlotChange, type RecTransition } from "./recorder.js";
 import { requestsLeft } from "./tma.js";
 import { esc } from "../schedule/format.js";
 import { fmtDDMM, fmtHHMM, wallClock } from "../time.js";
@@ -163,7 +163,8 @@ export async function notifyRecorderEffect(api: SendApi, repo: Repo, adminIds: n
       admins("⚠️ Общая учётка (.env, профиль 1) перестала пускать в кабинет — похоже, сменился пароль. Поправь WEBINAR_PASSWORD в .env и пересоздай контейнер (vps-update.sh --recreate). На пары пробую её как раньше.", slotKb(c));
       continue;
     }
-    admins(`⚠️ Слот ${esc(c.groupTitle)} (${who(c.username, c.userId)}): портал перестал пускать — на пары под этой учёткой не захожу.`, slotKb(c));
+    const label = c.requestId === null ? repo.recorderMarkValue(`${OWNER_PREFIX}${c.groupKey}`) : null;
+    admins(`⚠️ Слот ${esc(c.groupTitle)} (${label ? `@${esc(label)}, из .env` : who(c.username, c.userId)}): портал перестал пускать — на пары под этой учёткой не захожу.`, slotKb(c));
     student(c.userId, `⏸ Запись пар группы ${esc(c.groupTitle)} приостановлена: портал перестал пускать под твоей учёткой (например, сменился пароль).\nЕсли менял пароль — отзови старую учётку и подай заявку заново: ${FORM_PATH}.`);
   }
   for (const c of effect.recovered) {

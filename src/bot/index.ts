@@ -203,6 +203,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "subjects", description: "Предметы: сколько и когда пар (тест)" },
     { command: "chats", description: "Болталка в группах: чаты и лимиты" },
     { command: "slots", description: "Слоты записи: учётки студентов и заявки" },
+    { command: "slot_owner", description: "Подписать слот из .env: /slot_owner 14-25 @ник" },
     { command: "qa", description: "Сценарий болталки: вопрос → ответ" },
     { command: "reply_add", description: "Добавить в сценарий: вопрос => ответ" },
     { command: "chatlimit", description: "Лимиты болталки в группах" },

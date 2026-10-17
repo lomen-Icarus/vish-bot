@@ -16,7 +16,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { esc } from "../../schedule/format.js";
-import { approveRecRequest, GENERAL_SLOT_TITLE, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, type RecActionResult } from "../recorder.js";
+import { adoptSlot, approveRecRequest, GENERAL_SLOT_TITLE, OWNER_PREFIX, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, type RecActionResult } from "../recorder.js";
 import { mskStamp, requestCard, slotButtons, stateLabel } from "../recNotify.js";
 import { studentGroupList } from "../tma.js";
 import type { Repo, RecRequestRow } from "../../db/repo.js";
@@ -57,7 +57,8 @@ export function slotsScreen(repo: Repo, groups: LogicalGroup[]): { text: string;
     const req = repo.activeRecRequest(g.key);
     if (slot) {
       filled++;
-      const holder = req ? who(req) : "учётка из .env";
+      const label = req ? null : repo.recorderMarkValue(`${OWNER_PREFIX}${g.key}`);
+      const holder = req ? who(req) : label ? `@${esc(label)} (из .env)` : "учётка из .env";
       const state = rechecks.has(g.key)
         ? "🔁 проверяю заново"
         : slot.status === "lost"
@@ -205,6 +206,20 @@ adminOnly.callbackQuery(/^rq:rvgy:(.+)$/, async (ctx) => {
   logger.info({ admin: ctx.from.id, ok }, "слот записи без заявки: отозван админом");
   await ctx.answerCallbackQuery({ text: ok ? "Отзыв принят: уберу в ближайшую минуту" : "Слота уже нет" });
   await showSlots(ctx, true);
+});
+
+/** «/slot_owner 14-25 @ник» — подписать слот из .env владельцем. */
+adminOnly.command("slot_owner", async (ctx) => {
+  const [group, nick] = String(ctx.match ?? "").trim().split(/\s+/);
+  if (!group || !nick) return void (await ctx.reply("Подписать слот из .env владельцем: <code>/slot_owner 14-25 @ник</code>", { parse_mode: "HTML" }));
+  const res = adoptSlot(ctx.deps.repo, group, nick, ctx.from!.id);
+  if (!res.ok) return void (await ctx.reply(res.reason === "taken" ? "У этого слота уже есть владелец — смотри /slots." : `Слота группы ${esc(group)} из .env нет — смотри /slots.`, { parse_mode: "HTML" }));
+  logger.info({ admin: ctx.from!.id, linked: res.linked }, "слот записи: подписан владелец");
+  const name = `@${esc(nick.replace(/^@/, ""))}`;
+  if (!res.linked) return void (await ctx.reply(`Подписал ${esc(res.slotTitle)} — ${name}. Боту он ещё не писал, поэтому вести ему не придут. Когда нажмёт /start, повтори команду — тогда сможет и сам отозвать.`, { parse_mode: "HTML" }));
+  await ctx.reply(`✅ ${esc(res.slotTitle)} теперь за ${name}: ему будут приходить вести о записи, отозвать он может сам (🗂 Ещё → 🎥 Запись моей группы).`, { parse_mode: "HTML" });
+  const user = ctx.deps.repo.userByUsername(nick);
+  if (user) await ctx.api.sendMessage(user.id, `🎥 Твоя учётка записывает пары группы ${esc(res.slotTitle)}: бот заходит под ней на онлайн-пары и присылает слайды всем в группе. Спасибо!\nСтатус и отзыв: 🗂 Ещё → 🎥 Запись моей группы.`, { parse_mode: "HTML" }).catch(() => undefined);
 });
 
 // ---- экран студента ----
