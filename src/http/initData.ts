@@ -26,14 +26,9 @@ export interface InitDataResult {
 const MAX_AGE_SEC = 10 * 60;
 
 export function verifyInitData(initData: string, botToken: string, now = Date.now()): InitDataResult {
-  let params: URLSearchParams;
-  try {
-    params = new URLSearchParams(initData);
-  } catch {
-    return { ok: false, reason: "malformed" };
-  }
+  const params = new URLSearchParams(initData);
   const hash = params.get("hash");
-  if (!hash) return { ok: false, reason: "malformed" };
+  if (!hash || !/^[0-9a-f]{64}$/i.test(hash)) return { ok: false, reason: "malformed" };
   const pairs: string[] = [];
   for (const [k, v] of params) if (k !== "hash") pairs.push(`${k}=${v}`);
   pairs.sort();
@@ -41,7 +36,7 @@ export function verifyInitData(initData: string, botToken: string, now = Date.no
   const secret = createHmac("sha256", "WebAppData").update(botToken).digest();
   const expected = createHmac("sha256", secret).update(dataCheckString).digest("hex");
   const got = hash.toLowerCase();
-  if (got.length !== expected.length || !timingSafeEqual(Buffer.from(got, "hex"), Buffer.from(expected, "hex"))) return { ok: false, reason: "bad_hash" };
+  if (!timingSafeEqual(Buffer.from(got, "hex"), Buffer.from(expected, "hex"))) return { ok: false, reason: "bad_hash" };
   const authDate = Number(params.get("auth_date"));
   if (!Number.isFinite(authDate) || now / 1000 - authDate > MAX_AGE_SEC) return { ok: false, reason: "stale" };
   let user: InitDataUser;

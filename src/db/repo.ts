@@ -920,6 +920,11 @@ export class Repo {
   /** Erase everything the bot knows about a person; /start then starts over. */
   forgetUser(userId: number): void {
     this.db.transaction(() => {
+      // Заявки на запись — данные человека. Учтённый слот (active/approved)
+      // сперва помечаем на отзыв, чтобы записывалка убрала учётку; остальное
+      // стираем сразу. Строку revoking удалит отчёт «removed».
+      this.db.prepare("UPDATE rec_requests SET state = 'revoking', updated_at = ? WHERE user_id = ? AND state IN ('active','approved')").run(nowIso(), userId);
+      this.db.prepare("DELETE FROM rec_requests WHERE user_id = ? AND state != 'revoking'").run(userId);
       // Знакомство «@ник это …» про этого человека — по id или по нику, пока
       // запись о нём ещё есть. Кого знакомил он сам — остаётся, но без него.
       this.db.prepare("DELETE FROM people_intros WHERE user_id = ? OR username = (SELECT lower(username) FROM users WHERE id = ?)").run(userId, userId);
@@ -942,10 +947,6 @@ export class Repo {
         // Обращения — чтобы ответ на старое не нашёл человека; блок от спама
         // (support_blocks) остаётся, как ai_usage.
         "DELETE FROM support_tickets WHERE user_id = ?",
-        // Заявки на запись — данные человека. Активный слот сперва помечаем на
-        // отзыв, чтобы записывалка перестала им пользоваться (см. forgetUser ниже).
-        "UPDATE rec_requests SET state = 'revoking', updated_at = datetime('now') WHERE user_id = ? AND state = 'active'",
-        "DELETE FROM rec_requests WHERE user_id = ? AND state != 'revoking'",
         "DELETE FROM users WHERE id = ?",
       ]) {
         this.db.prepare(sql).run(userId);
@@ -1646,6 +1647,15 @@ export class Repo {
 
   removeRecSlot(groupKey: string): void {
     this.db.prepare("DELETE FROM rec_slots WHERE group_key = ?").run(groupKey);
+  }
+
+  deleteRecRequest(id: number): void {
+    this.db.prepare("DELETE FROM rec_requests WHERE id = ?").run(id);
+  }
+
+  /** Выполнить несколько записей одной транзакцией (для применения отчёта записывалки). */
+  transaction(fn: () => void): void {
+    this.db.transaction(fn)();
   }
 }
 

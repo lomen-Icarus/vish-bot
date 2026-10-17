@@ -34,6 +34,10 @@ describe("initData: подпись Telegram Mini App", () => {
     const old = { auth_date: String(Math.floor(Date.now() / 1000) - 3600), user: JSON.stringify({ id: 42 }) };
     expect(verifyInitData(sign(old), TOKEN)).toMatchObject({ ok: false, reason: "stale" });
   });
+  it("64 не-hex символа в hash — malformed, без исключения", () => {
+    const data = sign(fresh()).replace(/hash=[a-f0-9]+/, "hash=" + "z".repeat(64));
+    expect(verifyInitData(data, TOKEN)).toMatchObject({ ok: false, reason: "malformed" });
+  });
   it("нет user — no_user", () => {
     const f = { auth_date: String(Math.floor(Date.now() / 1000)) };
     expect(verifyInitData(sign(f), TOKEN)).toMatchObject({ ok: false, reason: "no_user" });
@@ -106,8 +110,28 @@ describe("применение отчёта записывалки", () => {
       ],
     });
     expect(r.recRequest(inst)).toMatchObject({ state: "active", envelopeJson: null });
-    expect(r.recRequest(rev)).toMatchObject({ state: "revoked" });
+    expect(r.recRequest(rev)).toBeNull();
     expect(r.recSlots()).toEqual([]);
+  });
+
+  it("установка не прошла (bad_envelope/login_failed у approved) — заявка не застревает, слот убран", () => {
+    const r = repo();
+    for (const code of ["bad_envelope", "login_failed"] as const) {
+      const id = r.createRecRequest({ userId: 1, username: "a", groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", envelopeJson: ENV });
+      r.setRecRequestState(id, "approved");
+      r.upsertRecSlot({ groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", requestId: id, status: "ok", lastOkAt: null });
+      applyRecorderReport(r, { results: [{ id: `${id}:install`, requestId: id, code }] });
+      expect(r.recRequest(id)!.state).toBe(code === "bad_envelope" ? "rejected_bad_envelope" : "rejected_auth");
+      expect(r.recSlots()).toEqual([]);
+    }
+  });
+
+  it("битый конверт в базе не ломает выдачу заданий", () => {
+    const r = repo();
+    r.createRecRequest({ userId: 1, username: "a", groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", envelopeJson: "{не json" });
+    const good = r.createRecRequest({ userId: 2, username: "b", groupKey: "виш-13-23", groupTitle: "ВИШ-13-23", envelopeJson: ENV });
+    const tasks = recorderTasks(r);
+    expect(tasks.map((t) => t.requestId)).toEqual([good]);
   });
 
   it("смена ключа после первого отчёта — keyChanged", () => {
