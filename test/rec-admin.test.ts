@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
-import { applyRecorderReport, approveRecRequest, recorderTasks, rejectRecRequest, requestRecheck, revokeRecRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
+import { applyRecorderReport, approveRecRequest, recorderTasks, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
 import { notifyRecorderEffect, requestCard, type SendApi } from "../src/bot/recNotify.js";
 import { myRecordingScreen, slotsScreen } from "../src/bot/handlers/recSlots.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
@@ -253,5 +253,41 @@ describe("экраны", () => {
     r.setRecRequestState(a, "revoking");
     expect(myRecordingScreen(r, r.recRequest(a)!).kb).toBeUndefined();
     expect(r.liveRecRequest(1)!.state).toBe("revoking");
+  });
+});
+
+describe("слот без заявки (учётка перенесена из .env)", () => {
+  it("/slots: «учётка из .env» и кнопки по группе", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-13-23", status: "lost", lastOkAt: null }] });
+    const { text, kb } = slotsScreen(r, GROUPS);
+    expect(text).toContain("⚠️ ВИШ-13-23 — учётка из .env");
+    const data = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
+    expect(data.slice(0, 2)).toEqual(["rq:rcg:виш-13-23", "rq:rvg:виш-13-23"]);
+  });
+
+  it("отзыв: служебная заявка на отзыв → remove → removed убирает слот, студенту писать некому", async () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-13-23", status: "ok" }] });
+    expect(revokeSlotWithoutRequest(r, "виш-13-23", 99)).toBe(true);
+    expect(revokeSlotWithoutRequest(r, "виш-13-23", 99)).toBe(true); // повтор — без второй заявки
+    const tasks = recorderTasks(r);
+    expect(tasks).toEqual([expect.objectContaining({ kind: "remove", group: "ВИШ-13-23", userId: 0 })]);
+    const eff = applyRecorderReport(r, { results: [{ id: tasks[0]!.id, requestId: tasks[0]!.requestId, code: "removed" }], slots: [] });
+    expect(r.recSlots()).toEqual([]);
+    const api = fakeApi();
+    await notifyRecorderEffect(api, r, [100], eff);
+    expect(api.sent).toEqual([]);
+    expect(revokeSlotWithoutRequest(r, "виш-13-23", 99)).toBe(false);
+  });
+
+  it("потеря доступа у такого слота — кнопки по группе", async () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-13-23", status: "ok" }] });
+    const eff = applyRecorderReport(r, { slots: [{ group: "ВИШ-13-23", status: "lost" }] });
+    const api = fakeApi();
+    await notifyRecorderEffect(api, r, [100], eff);
+    expect(api.sent).toEqual([expect.objectContaining({ to: 100, buttons: ["rq:rcg:виш-13-23", "rq:rvg:виш-13-23"] })]);
+    expect(api.sent[0]!.text).toContain("учётка из .env");
   });
 });

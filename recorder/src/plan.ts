@@ -105,8 +105,13 @@ export function planRecording(
   nowMs: number,
 ): DuePlan {
   const inWindow = rows.filter((r) => wanted(r, cfg) && r.startMinutes != null && now.minutes >= r.startMinutes - cfg.leadMinutes && (r.endMinutes == null || now.minutes < r.endMinutes));
+  // Одна пара — один бот: если портал покажет одну лекцию двумя строками
+  // (например, поток — по комнате на группу), ключ у них один, берём первую.
+  const seen = new Set<string>();
   const open = inWindow.filter((r) => {
     const key = keyOf(now.date, r);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return !state.done.has(key) && !state.active.has(key);
   });
   // Сначала пары, для групп которых заведён свой профиль (поток, куда пускают
