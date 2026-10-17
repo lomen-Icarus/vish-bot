@@ -2,17 +2,21 @@
 # Обновление записывалки на VPS. Запускает GitHub Actions по SSH после каждого
 # мёржа в main (шаг «Deploy recorder to the VPS»), можно и руками:
 #   bash vps-update.sh /tmp/recorder-src.tar.gz
+# Только пересоздать контейнер из уже собранного образа (после правки .env):
+#   bash vps-update.sh --recreate
 # Нужно один раз: Docker на сервере и файл $RECORDER_DIR/.env (по образцу
 # recorder/.env.example, значения без кавычек — docker их не снимает).
 set -euo pipefail
 
 DIR="${RECORDER_DIR:-/opt/vish-recorder}"
+RECREATE=0
+[ "${1:-}" = "--recreate" ] && RECREATE=1
 ARCHIVE="${1:-/tmp/recorder-src.tar.gz}"
 NAME=vish-recorder
 IMAGE=vish-recorder:latest
 
 [ -f "$DIR/.env" ] || { echo "Нет $DIR/.env — положи его по образцу recorder/.env.example и запусти деплой снова" >&2; exit 1; }
-[ -f "$ARCHIVE" ] || { echo "Нет архива с кодом: $ARCHIVE" >&2; exit 1; }
+[ "$RECREATE" = 1 ] || [ -f "$ARCHIVE" ] || { echo "Нет архива с кодом: $ARCHIVE" >&2; exit 1; }
 # Шаблон VPS склонирован с другой машины: grub-pc помнит диск, которого здесь
 # нет, его настройка падает, и с ней падает любой apt. Загрузчик уже стоит
 # (система грузится), поэтому пакету достаточно ответить «продолжать без
@@ -43,13 +47,17 @@ systemctl is-active --quiet docker 2>/dev/null || systemctl start docker 2>/dev/
 docker info >/dev/null 2>&1 || { echo "Docker установлен, но не запущен (docker info не отвечает): systemctl status docker" >&2; exit 1; }
 
 # Собираем рядом, пока старая версия работает: сломанная сборка её не трогает.
-rm -rf "$DIR/app.new"
-mkdir -p "$DIR/app.new" "$DIR/data"
-tar -xzf "$ARCHIVE" -C "$DIR/app.new"
-docker build -t "$IMAGE" "$DIR/app.new"
-rm -rf "$DIR/app"
-mv "$DIR/app.new" "$DIR/app"
-rm -f "$ARCHIVE"
+if [ "$RECREATE" = 1 ]; then
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || { echo "Образа $IMAGE нет — сначала обычный деплой" >&2; exit 1; }
+else
+  rm -rf "$DIR/app.new"
+  mkdir -p "$DIR/app.new" "$DIR/data"
+  tar -xzf "$ARCHIVE" -C "$DIR/app.new"
+  docker build -t "$IMAGE" "$DIR/app.new"
+  rm -rf "$DIR/app"
+  mv "$DIR/app.new" "$DIR/app"
+  rm -f "$ARCHIVE"
+fi
 
 # Свои флаги docker run (например, --add-host, пока у домена бота лежит DNS) —
 # в $DIR/docker.extra одной строкой: так они переживают каждый деплой.
