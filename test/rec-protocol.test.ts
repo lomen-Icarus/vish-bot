@@ -108,6 +108,8 @@ describe("применение отчёта записывалки", () => {
         { id: `${inst}:install`, requestId: inst, code: "installed" },
         { id: `${rev}:remove`, requestId: rev, code: "removed" },
       ],
+      // Записывалка присылает все свои слоты — убранного среди них уже нет.
+      slots: [],
     });
     expect(r.recRequest(inst)).toMatchObject({ state: "active", envelopeJson: null });
     expect(r.recRequest(rev)).toBeNull();
@@ -120,7 +122,7 @@ describe("применение отчёта записывалки", () => {
       const id = r.createRecRequest({ userId: 1, username: "a", groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", envelopeJson: ENV });
       r.setRecRequestState(id, "approved");
       r.upsertRecSlot({ groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", requestId: id, status: "ok", lastOkAt: null });
-      applyRecorderReport(r, { results: [{ id: `${id}:install`, requestId: id, code }] });
+      applyRecorderReport(r, { results: [{ id: `${id}:install`, requestId: id, code }], slots: [] });
       expect(r.recRequest(id)!.state).toBe(code === "bad_envelope" ? "rejected_bad_envelope" : "rejected_auth");
       expect(r.recSlots()).toEqual([]);
     }
@@ -179,7 +181,8 @@ describe("лимит заявок и /soon", () => {
     r.setRecRequestState(expired, "expired", { dropEnvelope: true });
     r.forgetUser(5);
     expect(r.recRequest(active)).toMatchObject({ state: "revoking", username: null });
-    expect(r.recRequest(approved)).toMatchObject({ state: "revoking", envelopeJson: null, username: null });
+    // Одобренную, но не поставленную — без задания remove (оно снесло бы чужую учётку в слоте).
+    expect(r.recRequest(approved)).toMatchObject({ state: "revoked_early", envelopeJson: null, username: null, groupKey: "виш-12-23" });
     expect(r.recRequest(old)).toMatchObject({ state: "forgotten", username: null, groupKey: "", envelopeJson: null });
     expect(r.recRequest(expired)).toBeNull();
     // /soon не обнуляет месячный лимит: обе на отзыве и обезличенная rejected_auth считаются, истёкшая — нет.

@@ -920,17 +920,22 @@ export class Repo {
   /** Erase everything the bot knows about a person; /start then starts over. */
   forgetUser(userId: number): void {
     this.db.transaction(() => {
-      // Заявки на запись — данные человека. Учтённый слот (active/approved)
+      // Заявки на запись — данные человека. Стоящую в слоте (active)
       // помечаем на отзыв, чтобы записывалка убрала учётку (строку удалит
       // отчёт «removed»); шифровку и ник стираем сразу. Заявки, что идут в
       // месячный лимит, остаются обезличенными (только id и дата, как
       // ai_usage): иначе /soon обнулял бы лимит, и форма стала бы бесконечным
       // перебором чужих паролей через наш VPS. Остальное удаляем.
       const now = nowIso();
-      this.db.prepare("UPDATE rec_requests SET state = 'revoking', envelope_json = NULL, username = NULL, updated_at = ? WHERE user_id = ? AND state IN ('active','approved')").run(now, userId);
+      // Сначала обезличиваем то, что уже не в слоте и идёт в лимит.
       this.db
-        .prepare("UPDATE rec_requests SET state = 'forgotten', envelope_json = NULL, username = NULL, group_key = '', group_title = '', actual_group = NULL, updated_at = ? WHERE user_id = ? AND state NOT IN ('revoking','forgotten','rejected_bad_envelope','expired','revoked')")
+        .prepare("UPDATE rec_requests SET state = 'forgotten', envelope_json = NULL, username = NULL, group_key = '', group_title = '', actual_group = NULL, updated_at = ? WHERE user_id = ? AND state NOT IN ('active','approved','revoking','forgotten','rejected_bad_envelope','expired','revoked')")
         .run(now, userId);
+      this.db.prepare("UPDATE rec_requests SET state = 'revoking', envelope_json = NULL, username = NULL, updated_at = ? WHERE user_id = ? AND state = 'active'").run(now, userId);
+      // Одобренная, но не поставленная — без задания remove (оно снесло бы
+      // чужую учётку в слоте группы); группа остаётся на случай, если отчёт
+      // об установке уже в пути (nextState переведёт её на отзыв).
+      this.db.prepare("UPDATE rec_requests SET state = 'revoked_early', envelope_json = NULL, username = NULL, updated_at = ? WHERE user_id = ? AND state = 'approved'").run(now, userId);
       this.db.prepare("DELETE FROM rec_requests WHERE user_id = ? AND state IN ('rejected_bad_envelope','expired','revoked')").run(userId);
       // Знакомство «@ник это …» про этого человека — по id или по нику, пока
       // запись о нём ещё есть. Кого знакомил он сам — остаётся, но без него.
@@ -1658,7 +1663,7 @@ export class Repo {
 
   /** Обезличенные после /soon заявки старше окна лимита больше не нужны. */
   purgeForgottenRecRequests(olderThan: string): void {
-    this.db.prepare("DELETE FROM rec_requests WHERE state = 'forgotten' AND created_at < ?").run(olderThan);
+    this.db.prepare("DELETE FROM rec_requests WHERE (state = 'forgotten' OR (state = 'revoked_early' AND username IS NULL)) AND created_at < ?").run(olderThan);
   }
 
   /** Заявки, которым пора истечь (не решены за ttlDays). */
