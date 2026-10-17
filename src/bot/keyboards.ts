@@ -26,7 +26,8 @@ export const BTN = {
   // Новое нижнее меню (2 × 3): «Найти» и «Ещё» открывают панели под сообщением.
   find: "🔍 Найти",
   more: "🗂 Ещё",
-  complaint: "💬 Поддержка",
+  /** 🙋, а не 💬: 💬 — у «Спросить ИИ», одна иконка на два раздела путала, куда писать вопрос. */
+  complaint: "🙋 Поддержка",
   // stream mode
   streamYesterday: "Поток: вчера",
   streamToday: "Поток: сегодня",
@@ -46,7 +47,7 @@ export const BTN = {
 export const LEGACY_BTN = {
   search: ["🔍 Поиск"],
   teachers: ["👨‍🏫 Преподаватели"],
-  complaint: ["🏛 Жалоба", "👥 Поддержка"],
+  complaint: ["🏛 Жалоба", "👥 Поддержка", "💬 Поддержка"],
   more: ["☰ Ещё"],
 } as const satisfies Partial<Record<keyof typeof BTN, readonly string[]>>;
 
