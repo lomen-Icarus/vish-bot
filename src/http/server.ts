@@ -12,6 +12,7 @@ import type { ScheduleService } from "../schedule/service.js";
 import { groupCalendar } from "../schedule/calendar.js";
 import { applyRecorderReport, recorderTasks, type RecReport, type RecReportEffect } from "../bot/recorder.js";
 import { tmaContext, tmaSubmit } from "../bot/tma.js";
+import { verifyInitData } from "./initData.js";
 import { TMA_PAGE } from "./tmaPage.js";
 import { logger } from "../logger.js";
 
@@ -64,18 +65,24 @@ const STALE_PARTS_MS = 24 * 60 * 60 * 1000;
 const UPLOAD_ID = /^[a-f0-9]{16,64}$/;
 
 /**
- * Тело запроса не больше limit. Лишнее дочитываем впустую, а не рвём
- * соединение: оборванное nginx хостинга отдаёт записывалке как 502, и она
- * не понимает, что файл просто велик, — с 413 понимает.
+ * Тело запроса не больше limit. drain — лишнее дочитать впустую, а не рвать
+ * соединение: оборванное nginx хостинга отдаёт записывалке как 502, и она не
+ * понимает, что файл просто велик, — с 413 понимает. Только для слайдов (там
+ * уже проверен токен): открытые ручки (/tma) рвут сразу, иначе любой мог бы
+ * держать соединение, заливая гигабайты.
  */
-function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
+function readBody(req: IncomingMessage, limit: number, drain = false): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
-      if (size <= limit) chunks.push(chunk);
-      else chunks.length = 0;
+      if (size <= limit) return void chunks.push(chunk);
+      chunks.length = 0;
+      if (!drain) {
+        reject(new Error("too large"));
+        req.destroy();
+      }
     });
     req.on("end", () => (size > limit ? reject(new Error("too large")) : resolve(Buffer.concat(chunks))));
     req.on("error", reject);
@@ -173,7 +180,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (!token || !sameSecret(auth, `Bearer ${token}`)) return reply(token ? 403 : 404, "нет доступа");
     try {
       if (kind === "whole") {
-        const body = await readBody(req, MAX_DECK_BYTES);
+        const body = await readBody(req, MAX_DECK_BYTES, true);
         const r = acceptDeck(req.headers["x-slides-meta"], body);
         return reply(r.status, r.text);
       }
@@ -182,7 +189,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (kind === "part") {
         const index = Number(req.headers["x-part-index"]);
         if (!Number.isInteger(index) || index < 0 || index >= MAX_PARTS) return reply(400, `X-Part-Index: целое от 0 до ${MAX_PARTS - 1}`);
-        const body = await readBody(req, MAX_PART_BYTES);
+        const body = await readBody(req, MAX_PART_BYTES, true);
         if (!body.length) return reply(400, "пустой кусок");
         sweepParts();
         mkdirSync(partsDir(id), { recursive: true });
@@ -237,18 +244,19 @@ export function createHttpServer(deps: HttpDeps): Server {
       deps.onRecorderReport?.(effect);
       return reply(200, { ok: true });
     } catch (err) {
-      logger.warn({ err: String(err).slice(0, 150), kind }, "обмен заявками с записывалкой споткнулся");
+      // Только тип ошибки: текст JSON-разбора может содержать кусок отчёта (группы).
+      logger.warn({ err: (err as Error).name, kind }, "обмен заявками с записывалкой споткнулся");
       return reply(kind === "sync" ? 500 : 400, { error: "ошибка" });
     }
   };
 
-  // Простой лимит частоты формы по IP: защита от перебора.
-  const tmaHits = new Map<string, number[]>();
-  const tmaRateOk = (ip: string): boolean => {
+  // Лимит частоты формы — по проверенному id Telegram (см. handleTma).
+  const tmaHits = new Map<number, number[]>();
+  const tmaRateOk = (userId: number): boolean => {
     const now = Date.now();
-    const hits = (tmaHits.get(ip) ?? []).filter((t) => now - t < 60_000);
+    const hits = (tmaHits.get(userId) ?? []).filter((t) => now - t < 60_000);
     hits.push(now);
-    tmaHits.set(ip, hits);
+    tmaHits.set(userId, hits);
     if (tmaHits.size > 500) for (const [k, v] of tmaHits) if (!v.some((t) => now - t < 60_000)) tmaHits.delete(k);
     return hits.length <= 20;
   };
@@ -263,11 +271,13 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (!deps.botToken) return reply(404, { error: "форма выключена" });
     try {
       const body = JSON.parse((await readBody(req, 64 * 1024)).toString("utf8") || "{}") as Record<string, unknown>;
-      // Лимит частоты по id из initData (а не по IP): за HTTPS-прокси у всех
-      // один IP, и общий лимит стал бы отказом в обслуживании для всех.
-      // Подпись проверяется дальше; подделка id лишь заводит свою корзину.
-      const who = new URLSearchParams(String(body.initData ?? "")).get("user") ?? String(req.socket.remoteAddress ?? "");
-      if (!tmaRateOk(who)) return reply(429, { error: "слишком часто, подожди минуту" });
+      // Сначала подпись Telegram (одна HMAC), потом лимит частоты — по
+      // проверенному числовому id. Не по IP: за HTTPS-прокси у всех один IP.
+      // Не по сырому полю user: каждая подделка заводила бы новую корзину, и
+      // таблица лимитов росла бы, пока бот не упадёт по памяти.
+      const check = verifyInitData(String(body.initData ?? ""), deps.botToken);
+      if (!check.ok || !check.user) return reply(401, { error: "подпись не подтвердилась" });
+      if (!tmaRateOk(check.user.id)) return reply(429, { error: "слишком часто, подожди минуту" });
       const tdeps = { repo: deps.repo, groups: () => deps.service.groups(), botToken: deps.botToken };
       const r = kind === "context" ? tmaContext(tdeps, String(body.initData ?? "")) : tmaSubmit(tdeps, body);
       if (kind === "submit" && r.status === 200) logger.info({ requestId: (r.json as { requestId?: number }).requestId }, "новая заявка на запись");
