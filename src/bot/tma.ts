@@ -49,6 +49,7 @@ export function tmaContext(deps: TmaDeps, initData: string, now = Date.now()): T
       myGroupKey: user?.groupKey ?? null,
       userId: check.user.id,
       remaining: Math.max(0, REQUEST_LIMIT - used),
+      limit: REQUEST_LIMIT,
     },
   };
 }
