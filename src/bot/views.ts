@@ -2,6 +2,7 @@ import { InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext, Deps } from "./context.js";
 import { BTN, dayNav, FIND_BTN, weekNav } from "./keyboards.js";
 import { addDeckButtons } from "./handlers/slides.js";
+import { publicBase } from "../http/publicUrl.js";
 import { captionFits, clampHtml, esc, filterSubgroup, formatDay, formatWeek, type TeacherView } from "../schedule/format.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { addDays, mondayOf, todayMsk, wallClock, type LocalDate } from "../time.js";
@@ -207,7 +208,7 @@ function pollCadence(deps: Deps): string {
 
 /** Calendar subscriptions need both a public address and a listening feed server. */
 function subscriptionsLive(deps: Deps): boolean {
-  return !!deps.config.PUBLIC_URL && deps.http?.listening === true;
+  return !!publicBase(deps) && deps.http?.listening === true;
 }
 
 /**
