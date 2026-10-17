@@ -111,7 +111,7 @@ describe("режим преподавателя", () => {
     // Меню у преподавателя то же, что у всех: «Студенты» — в «🔍 Найти».
     expect(menu).toContain(BTN.find);
     expect(menu).not.toContain(BTN.otherGroups);
-    expect(all(on)).toContain("🔍 Найти → 👥 Студенты");
+    expect(all(on)).toContain("🔍 Найти → 👥 Группы");
     const u = deps.repo.getUser(7)!;
     expect(u.teacherMode).toBe(true);
     expect(u.teacherName).toBe("Петрова Анна Сергеевна");

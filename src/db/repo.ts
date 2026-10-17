@@ -1747,6 +1747,8 @@ export interface SlideDeckRow {
   date: string;
   subject: string;
   teacher: string | null;
+  /** Тема с портала; у частей большого PDF — «… · часть 2 из 3». */
+  title: string | null;
   groups: string[];
   slides: number;
   file: string;
@@ -1769,6 +1771,7 @@ function slideDeckRow(r: Record<string, unknown>): SlideDeckRow {
     date: String(r.date),
     subject: String(r.subject),
     teacher: r.teacher == null ? null : String(r.teacher),
+    title: r.title == null ? null : String(r.title),
     groups,
     slides: Number(r.slides),
     file: String(r.file),

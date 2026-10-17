@@ -18,7 +18,8 @@ import type { BotContext } from "../context.js";
 import { esc } from "../../schedule/format.js";
 import { adoptSlot, approveRecRequest, GENERAL_SLOT_TITLE, OWNER_PREFIX, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, type RecActionResult } from "../recorder.js";
 import { mskStamp, requestCard, slotButtons, stateLabel } from "../recNotify.js";
-import { studentGroupList } from "../tma.js";
+import { REQUEST_LIMIT, studentGroupList } from "../tma.js";
+import { FORM_PATH, STATUS_PATH } from "../keyboards.js";
 import type { Repo, RecRequestRow } from "../../db/repo.js";
 import type { LogicalGroup } from "../../schedule/groups.js";
 import { logger } from "../../logger.js";
@@ -151,7 +152,27 @@ adminOnly.callbackQuery(/^rq:ok:(\d+)$/, async (ctx) => {
   }
 });
 
+// «Отклонить» — с подтверждением, как «Отозвать»: шифровка стирается, студенту
+// уходит весть и заявка засчитывается в его лимит, а промахнуться мимо
+// «Одобрить» в соседней кнопке легко.
 adminOnly.callbackQuery(/^rq:no:(\d+)$/, async (ctx) => {
+  const id = Number(ctx.match[1]);
+  const req = ctx.deps.repo.recRequest(id);
+  await ctx.answerCallbackQuery();
+  if (!req || req.state !== "verified") return refreshCard(ctx, id);
+  const card = requestCard(ctx.deps.repo, req);
+  const kb = new InlineKeyboard().text("❌ Да, отклонить", `rq:noy:${id}`).text("◀️ Назад", `rq:card:${id}`);
+  await ctx.editMessageText(`${card.text}
+
+Отклонить? Логин и пароль сотрутся, студенту придёт весть, заявка засчитается в его лимит (${REQUEST_LIMIT} в месяц).`, { parse_mode: "HTML", reply_markup: kb }).catch(() => undefined);
+});
+
+adminOnly.callbackQuery(/^rq:card:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await refreshCard(ctx, Number(ctx.match[1]));
+});
+
+adminOnly.callbackQuery(/^rq:noy:(\d+)$/, async (ctx) => {
   const id = Number(ctx.match[1]);
   const req = ctx.deps.repo.recRequest(id);
   const res = rejectRecRequest(ctx.deps.repo, id, ctx.from.id);
@@ -223,9 +244,9 @@ adminOnly.command("slot_owner", async (ctx) => {
   logger.info({ admin: ctx.from!.id, linked: res.linked }, "слот записи: подписан владелец");
   const name = `@${esc(nick.replace(/^@/, ""))}`;
   if (!res.linked) return void (await ctx.reply(`Подписал ${esc(res.slotTitle)} — ${name}. Боту он ещё не писал, поэтому вести ему не придут. Когда нажмёт /start, повтори команду — тогда сможет и сам отозвать.`, { parse_mode: "HTML" }));
-  await ctx.reply(`✅ ${esc(res.slotTitle)} теперь за ${name}: ему будут приходить вести о записи, отозвать он может сам (🗂 Ещё → 🎥 Запись моей группы).`, { parse_mode: "HTML" });
+  await ctx.reply(`✅ ${esc(res.slotTitle)} теперь за ${name}: ему будут приходить вести о записи, отозвать он может сам (${STATUS_PATH}).`, { parse_mode: "HTML" });
   const user = ctx.deps.repo.userByUsername(nick);
-  if (user) await ctx.api.sendMessage(user.id, `🎥 Твоя учётка записывает пары группы ${esc(res.slotTitle)}: бот заходит под ней на онлайн-пары и присылает слайды всем в группе. Спасибо!\nСтатус и отзыв: 🗂 Ещё → 🎥 Запись моей группы.`, { parse_mode: "HTML" }).catch(() => undefined);
+  if (user) await ctx.api.sendMessage(user.id, `🎥 Твоя учётка записывает пары группы ${esc(res.slotTitle)}: бот заходит под ней на онлайн-пары и присылает слайды всем в группе. Спасибо!\nСтатус и отзыв: ${STATUS_PATH}.`, { parse_mode: "HTML" }).catch(() => undefined);
 });
 
 // ---- экран студента ----
@@ -243,7 +264,7 @@ export function myRecordingScreen(repo: Repo, req: RecRequestRow): { text: strin
 recSlotsHandlers.callbackQuery("rqme", async (ctx) => {
   await ctx.answerCallbackQuery();
   const req = ctx.deps.repo.liveRecRequest(ctx.user.id);
-  if (!req) return void (await ctx.reply("Заявки на запись сейчас нет. Подать: 🗂 Ещё → 🎥 Записывать мою группу."));
+  if (!req) return void (await ctx.reply(`Заявки на запись сейчас нет. Подать: ${FORM_PATH}.`));
   const s = myRecordingScreen(ctx.deps.repo, req);
   await ctx.reply(s.text, { parse_mode: "HTML", ...(s.kb ? { reply_markup: s.kb } : {}) });
 });

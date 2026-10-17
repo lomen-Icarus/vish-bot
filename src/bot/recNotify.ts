@@ -20,8 +20,8 @@ export interface SendApi {
   sendMessage(chatId: number, text: string, other?: { parse_mode?: "HTML"; reply_markup?: InlineKeyboard }): Promise<unknown>;
 }
 
-/** Где студент подаёт и смотрит заявку — одна дорожка во всех текстах. */
-export const FORM_PATH = "🗂 Ещё → 🎥 Записывать мою группу";
+import { FORM_PATH } from "./keyboards.js";
+export { FORM_PATH };
 
 const who = (username: string | null, userId: number | null): string => (username ? `@${esc(username)}` : userId ? `id ${userId}` : "учётка из .env");
 

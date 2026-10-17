@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import type { BotContext } from "./context.js";
 import { plural } from "../schedule/format.js";
 import { fmtDDMM } from "../time.js";
-import { deckFileName } from "../notify/deckName.js";
+import { deckFileName, deckPartLabel } from "../notify/deckName.js";
 import { logger } from "../logger.js";
 
 export interface DeckToSend {
@@ -19,6 +19,8 @@ export interface DeckToSend {
   file: string;
   fileId: string | null;
   slides: number;
+  /** Тема; по ней видно, что это часть большого PDF. */
+  title?: string | null;
 }
 
 export async function sendDeck(ctx: BotContext, deck: DeckToSend): Promise<void> {
@@ -31,7 +33,7 @@ export async function sendDeck(ctx: BotContext, deck: DeckToSend): Promise<void>
     return;
   }
   try {
-    const sent = await ctx.replyWithDocument(doc, { caption: `📎 ${deck.subject} · ${fmtDDMM(deck.date)} · ${deck.slides} ${plural(deck.slides, "слайд", "слайда", "слайдов")}` });
+    const sent = await ctx.replyWithDocument(doc, { caption: `📎 ${deck.subject} · ${fmtDDMM(deck.date)}${deckPartLabel(deck.title)} · ${deck.slides} ${plural(deck.slides, "слайд", "слайда", "слайдов")}` });
     // Только file_id: отметку «разослано» и число получателей ставит рассылка.
     if (!deck.fileId && sent.document?.file_id) ctx.deps.repo.setDeckFileId(deck.id, sent.document.file_id);
   } catch (err) {

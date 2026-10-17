@@ -98,9 +98,9 @@ const all = (calls: Call[]): string => calls.map((c) => String(c.payload.text ??
 describe("кнопка «🔍 ИИ поисковик»", () => {
   it("новая подпись, старая «🔍 Поиск» из прежнего меню тоже работает", async () => {
     expect(BTN.search).toBe("🔍 ИИ поисковик");
-    expect(isMenuText(LEGACY_BTN.search)).toBe(true);
+    expect(isMenuText(LEGACY_BTN.search[0])).toBe(true);
     const deps = makeDeps();
-    for (const label of [BTN.search, LEGACY_BTN.search]) {
+    for (const label of [BTN.search, ...LEGACY_BTN.search]) {
       const out = all(await run(text(label), deps));
       expect(out).toMatch(/Что ищем\?/);
     }
@@ -118,7 +118,7 @@ describe("преподаватель из реестра на /start", () => {
     expect(out).toMatch(/Включить напоминания/);
     // Новое меню: «Студенты» — в панели «🔍 Найти», приветствие ведёт туда.
     expect(JSON.stringify(calls.map((c) => c.payload.reply_markup))).toContain(BTN.find);
-    expect(out).toContain("🔍 Найти → 👥 Студенты");
+    expect(out).toContain("🔍 Найти → 👥 Группы");
     expect(JSON.stringify(calls.map((c) => c.payload.reply_markup))).toContain("ob:on");
     const u = deps.repo.getUser(7)!;
     expect(u.teacherMode).toBe(true);

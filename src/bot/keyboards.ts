@@ -10,7 +10,7 @@ export const BTN = {
   today: "📅 Сегодня",
   tomorrow: "📅 Завтра",
   otherGroups: "👥 Др. группы",
-  /** Та же кнопка в режиме преподавателя: расписание любой группы. */
+  /** Та же кнопка в режиме преподавателя (старое нижнее меню): расписание любой группы. */
   students: "👥 Студенты",
   week: "🗓 Неделя",
   nextWeek: "🗓 Следующая",
@@ -40,14 +40,26 @@ export const BTN = {
 /**
  * Старые подписи кнопок. Нижнее меню живёт в чате, пока его не заменит новое,
  * поэтому у кого-то ещё висит прежняя кнопка — она должна работать как раньше.
+ * Ключ — кнопка в BTN, которую старая подпись заменяет: обработчик слушает все
+ * подписи сразу (btnLabels), а счётчики в /stats сводят их в одну строку.
  */
 export const LEGACY_BTN = {
-  search: "🔍 Поиск",
-  teachers: "👨‍🏫 Преподаватели",
-  complaint: "🏛 Жалоба",
-  complaint2: "👥 Поддержка",
-  more: "☰ Ещё",
-} as const;
+  search: ["🔍 Поиск"],
+  teachers: ["👨‍🏫 Преподаватели"],
+  complaint: ["🏛 Жалоба", "👥 Поддержка"],
+  more: ["☰ Ещё"],
+} as const satisfies Partial<Record<keyof typeof BTN, readonly string[]>>;
+
+/** Подпись кнопки и все её старые подписи — для hears. */
+export function btnLabels(key: keyof typeof LEGACY_BTN): string[] {
+  return [BTN[key], ...LEGACY_BTN[key]];
+}
+
+/** Старая подпись → нынешняя (для счётчиков: «☰ Ещё» и «🗂 Ещё» — одна кнопка). */
+export function currentLabel(text: string): string {
+  for (const [key, old] of Object.entries(LEGACY_BTN) as Array<[keyof typeof LEGACY_BTN, readonly string[]]>) if (old.includes(text)) return BTN[key];
+  return text;
+}
 
 /**
  * Кнопки панели «🔍 Найти». Это кнопки под сообщением, а не нижнее меню,
@@ -55,16 +67,32 @@ export const LEGACY_BTN = {
  * той же подписью, что видна в панели.
  */
 export const FIND_BTN = {
-  groups: "👥 Группы",
-  students: "👥 Студенты",
+  /** «Другие», чтобы не путать с «👥 Группа» в настройках (там — сменить свою). */
+  groups: "👥 Другие группы",
+  /** То же место у преподавателя: расписание любой группы. */
+  teacherGroups: "👥 Группы",
   stream: "🎓 Поток",
   teachers: "👨‍🏫 Где препод",
   poisk: "🕵️ Где студент",
   ask: "💬 Спросить ИИ",
 } as const;
 
+/** Кнопки панели «🗂 Ещё» — по той же причине, что FIND_BTN. */
+export const MORE_BTN = {
+  changes: "🔔 Изменения и объявления",
+  calendar: "📆 Календарь телефона",
+  settings: "⚙️ Настройки",
+  help: "❓ Как пользоваться",
+  recordMe: "🎥 Запись моей группы",
+  recordNew: "🎥 Записывать мою группу",
+} as const;
+
+/** Где студент подаёт заявку на запись и где смотрит её статус — одна дорожка во всех текстах. */
+export const FORM_PATH = `${BTN.more} → ${MORE_BTN.recordNew}`;
+export const STATUS_PATH = `${BTN.more} → ${MORE_BTN.recordMe}`;
+
 /** Every label of the reply keyboards; a pending flow must never swallow one. */
-export const MENU_TEXTS: ReadonlySet<string> = new Set([...Object.values(BTN), ...Object.values(LEGACY_BTN)]);
+export const MENU_TEXTS: ReadonlySet<string> = new Set([...Object.values(BTN), ...Object.values(LEGACY_BTN).flat()]);
 
 export function isMenuText(text: string | undefined): boolean {
   return !!text && MENU_TEXTS.has(text.trim());
@@ -107,7 +135,7 @@ export function mainKeyboard(mode: MenuMode = "collapsible"): Keyboard {
 
 /**
  * Меню режима преподавателя — те же кнопки: «Сегодня / Неделя» — его
- * собственные пары, а «🔍 Найти» начинается с «👥 Студенты» (расписание любой группы).
+ * собственные пары, а «🔍 Найти» начинается с «👥 Группы» (расписание любой группы).
  */
 export function teacherKeyboard(mode: MenuMode = "collapsible"): Keyboard {
   return mainKeyboard(mode);
