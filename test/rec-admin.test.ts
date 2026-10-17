@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
-import { applyRecorderReport, approveRecRequest, recorderTasks, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
+import { adoptSlot, applyRecorderReport, approveRecRequest, recorderTasks, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, REQUEST_TTL_DAYS } from "../src/bot/recorder.js";
 import { notifyRecorderEffect, requestCard, type SendApi } from "../src/bot/recNotify.js";
 import { myRecordingScreen, slotsScreen } from "../src/bot/handlers/recSlots.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
@@ -319,5 +319,37 @@ describe("общая учётка (.env) в /slots", () => {
     expect(revokeSlotWithoutRequest(r, "общая учётка (.env)", 99)).toBe(false);
     expect(requestRecheck(r, "общая учётка (.env)")).toBe(true);
     expect(recorderTasks(r)).toEqual([expect.objectContaining({ kind: "recheck", group: GEN })]);
+  });
+});
+
+describe("подписать слот из .env владельцем (/slot_owner)", () => {
+  it("знаком боту — обычная «в слоте»: @ник в /slots, кнопки по заявке, лимит не тронут, отозвать может сам", () => {
+    const r = repo();
+    r.touchUser(7, "Smerch9809", "S");
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok", lastOkAt: "2026-10-17T12:40:00Z" }] });
+    expect(adoptSlot(r, "14-25", "@smerch9809", 99)).toEqual({ ok: true, slotTitle: "ВИШ-14-25", linked: true });
+    const req = r.liveRecRequest(7)!;
+    expect(req).toMatchObject({ state: "active", groupKey: "виш-14-25", username: "Smerch9809" });
+    expect(r.recRequestsSince(7, "2000-01-01T00:00:00Z")).toBe(0);
+    const { text } = slotsScreen(r, GROUPS);
+    expect(text).toContain("✅ ВИШ-14-25 — @Smerch9809 · пускало 17.10 15:40");
+    expect(adoptSlot(r, "14-25", "@other", 99)).toEqual({ ok: false, reason: "taken" });
+    expect(revokeRecRequest(r, req.id).ok).toBe(true);
+    expect(recorderTasks(r)).toEqual([expect.objectContaining({ kind: "remove", group: "ВИШ-14-25", userId: 7 })]);
+  });
+
+  it("не знаком боту — только подпись «@ник (из .env)», кнопки по группе; слот пропал — подпись тоже", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-13-23", status: "ok" }] });
+    expect(adoptSlot(r, "13-23", "boretszajizn", 99)).toEqual({ ok: true, slotTitle: "ВИШ-13-23", linked: false });
+    expect(slotsScreen(r, GROUPS).text).toContain("ВИШ-13-23 — @boretszajizn (из .env)");
+    applyRecorderReport(r, { slots: [] });
+    expect(r.recorderMarkValue("owner:виш-13-23")).toBeNull();
+  });
+
+  it("нет такого слота или это общая учётка — отказ", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "Общая учётка (.env)", status: "ok" }] });
+    expect(adoptSlot(r, "14-25", "@x", 99)).toEqual({ ok: false, reason: "no_slot" });
   });
 });
