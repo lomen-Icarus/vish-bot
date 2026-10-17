@@ -125,6 +125,16 @@ docker exec vish-recorder node dist/probe-account.js 3
 ```
 (3 — номер профиля: `WEBINAR_LOGIN_3`). «Кабинет не ответил как обычно» — это сбой портала, а не неверный пароль.
 
+**Вход для России (nginx на VPS).** Российские провайдеры режут соединения к хостингу бота (OVH, Франкфурт): кнопка формы в Telegram давала `ERR_CONNECTION_RESET`. Поэтому люди заходят через этот VPS (Москва): nginx принимает HTTPS на имена бота и пересылает запросы боту по HTTPS. Бот и база остаются на хостинге; меняется только A-запись имени.
+1. Секреты на VPS (права 0600, в чат и репозиторий не класть):
+   - `/root/.secrets/cloudflare.ini` — строка `dns_cloudflare_api_token = …` (Cloudflare → My Profile → API Tokens → шаблон «Edit zone DNS» на зону `frienworld.com`);
+   - `/root/.secrets/selectel.env` — для `secretvish.ru` на DNS Selectel (actual): `SL_Ver=v2`, `SL_Login_ID=<номер аккаунта>`, `SL_Project_Name=<проект с зоной>`, `SL_Login_Name=<сервисный пользователь>`, `SL_Pswd=<его пароль>`. Пользователю — роль «Администратор проекта» только в проекте с зоной; лучше отдельный проект под DNS.
+2. `bash /opt/vish-recorder/app/deploy/setup-front.sh` (скрипт приезжает с деплоем записывалки). Ставит nginx, certbot, acme.sh, выпускает сертификаты через DNS (до смены A-записи — без простоя) и проверяет `/health` и `/tma` через сам VPS. В конце — `OK …` по каждому имени. Повторный запуск безопасен; контейнер записывалки не трогает. Сертификат для имени Selectel выпустится, когда NS домена в публичном DNS уже Selectel; раньше — «ещё не делегирован», перезапустить позже.
+3. После `OK` — A-запись имени на `77.91.92.142` (в Cloudflare облако **серое**: адреса Cloudflare в России тоже режут). Откат — вернуть прежний IP (`135.125.188.210`).
+4. Когда у `calendar.secretvish.ru` появится сертификат — в `.env` бота `PUBLIC_URL=https://calendar.secretvish.ru`: новые ссылки пойдут по HTTPS, старые http-ссылки (`/cal/…`, и с портом `:40070`) VPS обслуживает как раньше.
+
+Продление — само (таймер certbot, cron acme.sh). Лог: `/var/log/nginx/error.log`. Имена и адрес хостинга меняются переменными: `CF_NAMES`, `SEL_NAMES`, `BOT_IP`, `BOT_NAME`, `LEGACY_HTTP_PORT` (см. начало скрипта).
+
 **Вариант Б — сервер в панели Pterodactyl.** Обычный Node-egg не годится: Chromium нужны системные библиотеки, а `npx playwright install --with-deps` ставит их через `apt` от root, которого в контейнере панели нет; к тому же yolks `nodejs_21` — это Node 21 (записывалке нужен ≥ 22.19), а `npx playwright` тянет чужую версию, не совпадающую с закреплённым `playwright-core`. Поэтому для панели есть свой образ — `ghcr.io/lomen-icarus/vish-recorder:latest` (`recorder/Dockerfile.ptero`: образ Playwright с Chromium и Node 24 плюс точка входа под Wings; кода в нём нет, код заливает workflow). Его собирает workflow «Recorder image» при изменении Dockerfile, точки входа или версии `playwright-core` (и вручную: Actions → Recorder image → Run workflow). Настройка:
 
 1. Пакет `vish-recorder` в GitHub Packages должен быть публичным (Packages → vish-recorder → Package settings → Change visibility → Public), иначе узел панели его не скачает.
