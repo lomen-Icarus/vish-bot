@@ -19,6 +19,8 @@ import { whereNowPlain } from "../people/profile.js";
 import type { ChatTool } from "../chat/service.js";
 import { meetingVerdict } from "../chat/meeting.js";
 import { REFUSAL_PHRASE } from "../chat/social.js";
+import { subjectKey } from "../schedule/subjects.js";
+import type { PpaItem } from "../portal/ppa.js";
 
 export interface AskOptions {
   model: string;
@@ -78,6 +80,7 @@ const SYSTEM = `Ты — помощник по расписанию Высшей
 Как отвечать:
 - Студенты называют предметы разговорно: «математика»/«матан» = «Математический анализ», «Алгебра и геометрия» тоже математика; «физра» = «Физическая культура и спорт»; «инфа» = «Информатика»; «прога» = «Программирование»/«Основы программирования»; «англ» = «Иностранный язык»; «история» = «История России»; «ОРГ» = «Основы российской государственности». Если точного предмета нет — ищи по смыслу инструментом find_subject и предлагай ближайшие совпадения.
 - Если спрашивают про другую группу (например «у 14-26») — используй get_schedule для неё; названия групп вида «14-26» = «ВИШ-14-26».
+- Про все или несколько групп сразу («когда кончаются пары у групп завтра», «у кого нет пар в субботу») — один вызов groups_day, а не get_schedule по каждой. Ответ — списком, по строке на группу.
 - Спрашивают и о самом боте: «как включить анонимность», «как убрать своё имя», «как поменять оформление», «как сменить группу», «как посмотреть расписание другой группы», «как включить напоминания». Это нормальные вопросы — вызови bot_help и ответь по нему конкретными кнопками и командами. Не выдумывай пунктов, которых там нет.
 - Вопрос могут задать как угодно: «как дела у беляева», «что там у беляева», «где сейчас Беляев», «в какой группе Беляева» — во всех этих случаях речь о студенте, вызывай find_student. Про успеваемость, настроение и личную жизнь бот не знает ничего: скажи это одной фразой и покажи то, что знаешь, — группу и где человек должен быть по расписанию.
 - В поиск пишут что угодно одной строкой: фамилию преподавателя, ФИО студента, номер группы, название предмета, «кто ведёт физику», «где Иванов». Сначала пойми, о ком или о чём речь, и используй нужный инструмент — не отказывай только потому, что это не похоже на вопрос о расписании. Обязательно помечай, кого нашёл: «преподаватель (ВИШ)», «студент ВИШ, группа 12-23», «группа», «предмет». Если под запрос подходит и преподаватель, и студент — покажи оба варианта.
@@ -86,6 +89,7 @@ const SYSTEM = `Ты — помощник по расписанию Высшей
 - Вопросы про преподавателя («кто такая Иванова», «что ведёт Петров», «когда у Сидорова пары», «кто ведёт физику») — это вопросы о расписании. Используй find_teacher: он ищет по фамилии или имени в любом порядке и возвращает предметы, группы и ближайшие пары. Отвечай тем, что есть в расписании: какие предметы ведёт, у каких групп, когда ближайшие пары. Биографию, должность и контакты бот не знает — так и скажи, если спросят.
 - В расписании групп портал НЕ указывает преподавателя. Преподаватели известны по онлайн-парам (страница вебинаров) и, если у бота есть учётка портала, по справочнику преподавателей. Отвечая про человека, опирайся только на то, что вернул find_teacher, и честно говори, если данных нет. Не угадывай.
 - Расписание своей группы на две недели уже дано в сообщении; для других дат и групп используй инструменты. Не выдумывай пары и людей.
+- Пересдачи (ППА) портал выкладывает, и бот их знает: «пересдача», «ППА», «долги», «хвосты», «когда пересдавать», в том числе с опечатками («передсача»), — вызови get_ppa и ответь по нему. Никогда не говори, что портал пересдачи не выкладывает или что их назначает только деканат, если get_ppa их вернул. Отметить свои долги, чтобы пересдачи встали в расписание и напоминания, — /ppa или «🗂 Ещё → 📋 Пересдачи (ППА)».
 - Отвечай кратко, по-русски, на «ты». Формат Telegram HTML: только теги <b>, <i>, <code>. Без Markdown, без списков через «*».
 - Про сам бот отвечай инструментом bot_help: там точный список кнопок и возможностей. Не выдумывай кнопок, которых там нет.
 - Если группа пользователя не выбрана, скажи, что её нужно выбрать командой /group (или «🗂 Ещё → ⚙️ Настройки → 👥 Группа»), и всё равно ответь тем, что можешь.
@@ -165,7 +169,7 @@ export class AskService {
     return found.length === 1 ? found[0]! : found.length > 1 ? (found.find((g) => g.key === fallback.key) ?? found[0]!) : null;
   }
 
-  private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined, mentions: AskMentions, userId: number, mode: "private" | "group" = "private") {
+  private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined, mentions: AskMentions, userId: number, mode: "private" | "group" = "private", ppaMarked: ReadonlySet<string> = new Set()) {
     const service = this.service;
     const teachers = this.teachers;
     const webinars = this.webinars;
@@ -213,6 +217,30 @@ export class AskService {
         }
         if (!bySubject.size) return `В расписании ${g.title} ничего похожего на «${input.query}» нет. Все предметы: ${[...new Set(list.map((o) => o.subject))].join("; ")}`;
         return [...bySubject.entries()].map(([subject, occ]) => `${subject}:\n${fmtLessons(occ.slice(0, 6), today)}`).join("\n\n");
+      },
+    });
+
+    // «Когда кончаются пары у всех групп завтра» — одним вызовом, а не двадцатью get_schedule.
+    const groupsDay = betaZodTool({
+      name: "groups_day",
+      description: "Пары ВСЕХ групп ВИШ на одну дату одним списком: для каждой группы — начало первой и конец последней пары и сколько пар (или «пар нет»). Используй, когда спрашивают про все или несколько групп сразу: «когда кончаются пары у групп завтра», «у кого завтра нет пар», «кто учится в субботу». Можно ограничить курсом.",
+      inputSchema: z.object({
+        date: z.string().describe("Дата YYYY-MM-DD"),
+        course: z.number().int().min(1).max(6).optional().describe("Только этот курс (1–6)"),
+      }),
+      run: async (input) => {
+        if (!isLocalDate(input.date)) return "Дата нужна в формате YYYY-MM-DD";
+        const groups = service.groups().filter((g) => input.course == null || g.course === input.course);
+        if (!groups.length) return input.course ? `Групп ${input.course} курса нет.` : "Список групп пуст.";
+        const lines = groups.map((g) => {
+          const day = service.lessonsOn(g, input.date).filter((o) => o.status !== "moved" && o.start != null);
+          if (!day.length) return `${g.title}: пар нет`;
+          const start = Math.min(...day.map((o) => o.start!));
+          const end = Math.max(...day.map((o) => o.end ?? o.start!));
+          const n = new Set(day.map((o) => `${o.start}|${o.subject}`)).size;
+          return `${g.title}: ${fmtHHMM(start)}–${fmtHHMM(end)}, пар: ${n}`;
+        });
+        return `Пары групп ВИШ на ${input.date} (${weekdayName(input.date)})${input.course ? `, ${input.course} курс` : ""}:\n${lines.join("\n")}`;
       },
     });
 
@@ -309,6 +337,30 @@ export class AskService {
       },
     });
 
+    // Пересдачи (ППА) группы. Отметки долгов — только свои и только в личке:
+    // в общем чате бот не знает и не говорит, кто что пересдаёт.
+    const getPpa = betaZodTool({
+      name: "get_ppa",
+      description: "Пересдачи (ППА) группы ВИШ с портала: дата, время, предмет, форма (зачёт, экзамен, курсовой), номер попытки, аудитория. По умолчанию своя группа.",
+      inputSchema: z.object({
+        group: z.string().optional().describe("Группа, например 14-24; по умолчанию своя"),
+      }),
+      run: async (input) => {
+        const g = resolve(input.group ?? "");
+        if (!g) return `Группа «${input.group ?? ""}» не найдена. Назови её, например 14-24.`;
+        remember(mentions.groupKeys, g.key, (a, b) => a === b);
+        const all = service.ppaItems(g);
+        const ahead = all.filter((i) => i.date >= today);
+        const mine = mode === "private" && own && g.key === own.key ? ppaMarked : new Set<string>();
+        const line = (i: PpaItem): string =>
+          `  ${i.date} ${weekdayName(i.date)}${i.start != null && i.end != null ? ` | ${fmtHHMM(i.start)}-${fmtHHMM(i.end)}` : ""} | ${i.subject} (${lessonTypeLabel(i.kind)})${i.attempt ? ` | ${i.attempt} ППА` : ""}${i.isDistance ? " | дистанционно" : i.room ? ` | ауд. ${i.room}` : ""}${mine.has(subjectKey(i.subject)) ? " | отмечен твой долг" : ""}`;
+        const hint = mode === "private" ? "\nОтметить свои долги (их пересдачи встанут в расписание и напоминания, о переносе бот напишет) — /ppa или «🗂 Ещё → 📋 Пересдачи (ППА)»." : "\nСвои долги каждый отмечает в личке с ботом: /ppa.";
+        if (!all.length) return `У ${g.title} на портале пересдач (ППА) сейчас нет.${hint}`;
+        const past = all.length - ahead.length;
+        return `Пересдачи (ППА) ${g.title}${ahead.length ? ` впереди:\n${ahead.map(line).join("\n")}` : ": впереди нет."}${past ? `\nУже прошли в этой волне: ${past}.` : ""}${hint}`;
+      },
+    });
+
     const botHelpTool = betaZodTool({
       name: "bot_help",
       description: "Что умеет бот и какие у него кнопки и команды. Используй для любых вопросов о боте и о том, как им пользоваться.",
@@ -339,7 +391,11 @@ export class AskService {
 
     // В общем чате про конкретных людей не говорим вовсе: «где сейчас Беляев»
     // в группе на сорок человек — это уже не расписание, а слежка на публике.
-    return students && mode === "private" ? [getSchedule, findSubject, listGroups, findTeacher, findStudent, botHelpTool] : mode === "group" ? [getSchedule, findSubject, listGroups, findTeacher, botHelpTool, meetingSlot] : [getSchedule, findSubject, listGroups, findTeacher, botHelpTool];
+    return students && mode === "private"
+      ? [getSchedule, groupsDay, findSubject, getPpa, listGroups, findTeacher, findStudent, botHelpTool]
+      : mode === "group"
+        ? [getSchedule, groupsDay, findSubject, getPpa, listGroups, findTeacher, botHelpTool, meetingSlot]
+        : [getSchedule, groupsDay, findSubject, getPpa, listGroups, findTeacher, botHelpTool];
   }
 
   /**
@@ -352,7 +408,7 @@ export class AskService {
     return this.tools(input.group, input.subgroup, input.botHelp, emptyMentions(), input.userId, "group") as unknown as ChatTool[];
   }
 
-  async answer(input: { question: string; group: LogicalGroup | null; subgroup: number | null; userId: number; botHelp?: string; self?: { name: string; lessons: Occurrence[] } }): Promise<AskResult> {
+  async answer(input: { question: string; group: LogicalGroup | null; subgroup: number | null; userId: number; botHelp?: string; self?: { name: string; lessons: Occurrence[] }; ppaMarked?: string[] }): Promise<AskResult> {
     const question = input.question.slice(0, 500);
     const today = todayMsk();
     const from = mondayOf(today);
@@ -375,7 +431,7 @@ export class AskService {
       max_iterations: 6,
       system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
       output_config: { effort: "medium" },
-      tools: this.tools(input.group, input.subgroup, input.botHelp, mentions, input.userId),
+      tools: this.tools(input.group, input.subgroup, input.botHelp, mentions, input.userId, "private", new Set(input.ppaMarked ?? [])),
       messages: [
         {
           role: "user",
