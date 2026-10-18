@@ -276,6 +276,24 @@ describe("слайды", () => {
     expect(parseSlidesQuery("вчера 2 пара", "2026-10-17")).toMatchObject({ subject: "", date: "2026-10-16" });
   });
 
+  it("число рядом с «пара» — номер пары в любом порядке, а не число месяца", () => {
+    expect(parseSlidesQuery("2 пара вчера", "2026-10-17")).toMatchObject({ subject: "", date: "2026-10-16", day: null });
+    expect(parseSlidesQuery("вчера 2-ю пару", "2026-10-17")).toMatchObject({ subject: "", date: "2026-10-16" });
+    expect(parseSlidesQuery("физика 2 пара", "2026-10-17")).toMatchObject({ subject: "физика", date: null, day: null });
+    // Без «пары» число по-прежнему — число месяца.
+    expect(parseSlidesQuery("физика 2", "2026-10-17")).toMatchObject({ subject: "физика", day: 2 });
+    expect(parseSlidesQuery("физика с пары 9 числа", "2026-10-17")).toMatchObject({ subject: "физика", day: 9 });
+  });
+
+  it("две «Математики» в один день у разных групп — разные пары: позже записанная первой, части подряд", () => {
+    const early = { ...deck(20, "2026-10-16", "Математика"), groups: ["ВИШ-12-23"] };
+    const late = [21, 22].map((id, i) => ({ ...deck(id, "2026-10-16", "Математика", `часть ${i + 1} из 2`), groups: ["ВИШ-14-25"] }));
+    expect(newestFirst([early, ...late]).map((d) => d.id)).toEqual([21, 22, 20]);
+    const a = [10, 12].map((id, i) => ({ ...deck(id, "2026-10-16", "Физика", `часть ${i + 1} из 2`), groups: ["ВИШ-12-23"] }));
+    const b = [11, 13].map((id, i) => ({ ...deck(id, "2026-10-16", "Физика", `часть ${i + 1} из 2`), groups: ["ВИШ-14-25"] }));
+    expect(newestFirst([...a, ...b]).map((d) => d.id)).toEqual([11, 13, 10, 12]);
+  });
+
   it("части большого PDF: подписи «ч. 2/3», своё имя файла, по порядку 1, 2, 3", () => {
     const parts = [deck(12, "2026-10-09", "Физика", "Тема · часть 3 из 3"), deck(11, "2026-10-09", "Физика", "Тема · часть 2 из 3"), deck(10, "2026-10-09", "Физика", "Тема · часть 1 из 3"), deck(9, "2026-10-10", "Химия")];
     expect(newestFirst(parts).map((d) => d.id)).toEqual([9, 10, 11, 12]);
@@ -308,6 +326,35 @@ describe("«💬 Спросить ИИ» под ответом поиска", ()
     expect(asked).toEqual(["когда матан"]);
     // Кнопка из прошлой версии (без номера) не падает.
     await run(deps, press("fx:ai"));
+  });
+
+  it("второе нажатие — подсказка, а не второй вопрос и не режим «спрашивай что угодно»", async () => {
+    let release = (): void => undefined;
+    const { deps, asked } = makeDeps({ answer: (q) => `ответ на ${q}` });
+    // Ответ ИИ «печатается», пока не отпустим.
+    const ask = deps.ask as unknown as { answer: (a: { question: string }) => Promise<unknown> };
+    const answer = ask.answer;
+    ask.answer = async (a) => (await new Promise<void>((r) => (release = r)), answer(a));
+    let markup = "";
+    const api = new Api("123:FAKE");
+    api.config.use(async (_p, method, payload) => {
+      if (method === "sendMessage") markup = JSON.stringify((payload as { reply_markup?: unknown }).reply_markup);
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: USER, type: "private" } } as never };
+    });
+    const ctx = new Context(text("когда матан"), api, ME) as BotContext;
+    Object.assign(ctx, { deps, user: deps.repo.getUser(USER)!, isAdmin: false });
+    await freeTextSearch(ctx, "когда матан");
+    const btn = /fx:ai:\d+/.exec(markup)![0];
+    const first = run(deps, press(btn));
+    await new Promise((r) => setTimeout(r, 10));
+    const again = await run(deps, press(btn));
+    expect(JSON.stringify(again.find((c) => c.method === "answerCallbackQuery")!.payload)).toContain("Уже спрашиваю");
+    release();
+    await first;
+    const after = await run(deps, press(btn));
+    expect(JSON.stringify(after.find((c) => c.method === "answerCallbackQuery")!.payload)).toContain("уже ответил");
+    expect(asked).toEqual(["когда матан"]);
+    expect(deps.pending.get(USER)).toBeUndefined();
   });
 });
 

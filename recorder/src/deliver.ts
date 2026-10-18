@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "no
 import path from "node:path";
 import { deckBaseName } from "./plan.js";
 import { PDFDocument } from "pdf-lib";
-import { BotUnreachableError, uploadDeck } from "./upload.js";
+import { uploadDeck } from "./upload.js";
 import { log } from "./log.js";
 
 export interface DeckMeta {
@@ -61,12 +61,8 @@ export async function deliver(opts: { urls: string[]; token: string; pdf: Buffer
       log.info({ slides: opts.slides, bytes: opts.pdf.length, via: i === 0 ? "основной" : "резерв" }, "слайды отданы боту");
       return true;
     } catch (err) {
-      // Только «не достучались» ведёт на запасной адрес; любая другая ошибка
-      // (сбой сборки запроса) — не сеть, и запасной ей не поможет.
-      if (!(err instanceof BotUnreachableError)) {
-        log.error({ err: (err as Error).name, via: i }, "слайды не отправились: ошибка не сетевая");
-        return false;
-      }
+      // uploadDeck бросает только «не достучались» (BotUnreachableError) —
+      // пробуем запасной адрес. Опечатку в основном адресе он тоже спасёт.
       log.warn({ err: String(err).slice(0, 150), via: i }, "не достучался до бота со слайдами");
     }
   }
@@ -133,9 +129,23 @@ export async function splitDeckFile(pdfPath: string, pdf: Buffer, meta: DeckMeta
       savePending(p.pdfPath, p.meta, p.slides);
     }
   } catch (err) {
-    // Диск кончился на середине — уже записанные части отдаст повторная
-    // отправка; «занятыми» до перезапуска они оставаться не должны.
-    for (const p of out) inFlight.delete(p.pdfPath);
+    // Диск кончился на середине — записанные части стираем, а в очередь
+    // ставим целый PDF: иначе повтор отдал бы только части 1..k-1, а k..n
+    // не ушли бы никогда. Следующая попытка поделит его заново.
+    // Уборка не должна заслонять исходную ошибку: что не стёрлось — не страшно.
+    const quietly = (fn: () => void): void => {
+      try {
+        fn();
+      } catch {
+        // пропускаем
+      }
+    };
+    for (const p of out) {
+      inFlight.delete(p.pdfPath);
+      quietly(() => rmSync(p.pdfPath, { force: true }));
+      quietly(() => rmSync(`${p.pdfPath}${PENDING}`, { force: true }));
+    }
+    quietly(() => savePending(pdfPath, meta, slides));
     throw err;
   }
   rmSync(`${pdfPath}${PENDING}`, { force: true });

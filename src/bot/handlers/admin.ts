@@ -24,7 +24,7 @@ const adminOnly = adminHandlers.filter((ctx) => ctx.isAdmin);
 function panelClick(key: string): string | undefined {
   const [, panel, item = ""] = key.split(":");
   const items: Record<string, string> | null = panel === "hub" ? FIND_BTN : panel === "more" ? MORE_BTN : null;
-  return items && item in items ? `${panel === "hub" ? BTN.find : BTN.more} → ${items[item]}` : undefined;
+  return items && Object.hasOwn(items, item) ? `${panel === "hub" ? BTN.find : BTN.more} → ${items[item]}` : undefined;
 }
 
 /** How long a broadcast stays on the "Объявления" board inside «Изменения». */

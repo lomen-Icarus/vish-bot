@@ -61,11 +61,17 @@ export function parseSlidesQuery(rest: string, today: LocalDate = todayMsk()): S
     .replace(/(?<!\d)\.|\.(?!\d)|[^\p{L}\p{N}./-]+/gu, " ")
     .split(/\s+/)
     .filter(Boolean);
+  // Число перед словом «пара» — номер пары, а не число месяца и не предмет:
+  // «2 пара вчера», «вчера 2-ю пару», «физика 2 пара». После «пары» — дата:
+  // «с пары 9 числа».
+  const isPair = (w: string | undefined): boolean => !!w && /^пар(?:а|у|ы|е|ой)?$/.test(w);
+  const pairNo = new Set(words.flatMap((w, i) => (/^\d{1,2}(?:-?(?:я|ая|ю|ую|ой))?$/.test(w) && isPair(words[i + 1]) ? [i] : [])));
   let date: LocalDate | null = null;
   let day: number | null = null;
   let month: number | null = null;
   const subject: string[] = [];
-  for (const w of words) {
+  for (const [i, w] of words.entries()) {
+    if (pairNo.has(i)) continue;
     const found: boolean = date != null || day != null;
     const shift = found ? null : parseDayWord(w);
     if (shift != null) {

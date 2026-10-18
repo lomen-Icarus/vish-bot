@@ -50,17 +50,17 @@ const buttons = (markup: unknown): string[] => ((markup as { inline_keyboard?: A
 
 describe("teacher search scoring", () => {
   it("matches surname, name-first order, initials and prefixes; rejects unrelated words", () => {
-    expect(teacherMatchScore("Троишестова Д.А.", "троишестова")).toBeGreaterThan(0);
-    expect(teacherMatchScore("Троишестова Д.А.", "Дарья Троишестова")).toBeGreaterThan(0);
-    expect(teacherMatchScore("Троишестова Дарья Александровна", "троишестова дарья")).toBeGreaterThan(0);
-    expect(teacherMatchScore("Троишестова Д.А.", "Троиш")).toBeGreaterThan(0);
-    expect(teacherMatchScore("Троишестова Д.А.", "Троишестова Д.")).toBeGreaterThan(0);
-    expect(teacherMatchScore("Иванов И.И.", "Дарья Троишестова")).toBe(0);
+    expect(teacherMatchScore("Пятиплетова Д.А.", "пятиплетова")).toBeGreaterThan(0);
+    expect(teacherMatchScore("Пятиплетова Д.А.", "Дарья Пятиплетова")).toBeGreaterThan(0);
+    expect(teacherMatchScore("Пятиплетова Дарья Александровна", "пятиплетова дарья")).toBeGreaterThan(0);
+    expect(teacherMatchScore("Пятиплетова Д.А.", "Пятип")).toBeGreaterThan(0);
+    expect(teacherMatchScore("Пятиплетова Д.А.", "Пятиплетова Д.")).toBeGreaterThan(0);
+    expect(teacherMatchScore("Иванов И.И.", "Дарья Пятиплетова")).toBe(0);
     expect(teacherMatchScore("Иванов И.И.", "Петров")).toBe(0);
-    // An initial must never carry a match on its own: "Т." is not "Троишестова".
-    expect(teacherMatchScore("Кожина Т. Н.", "Троишестова")).toBe(0);
+    // An initial must never carry a match on its own: "П." is not "Пятиплетова".
+    expect(teacherMatchScore("Образцова П. Н.", "Пятиплетова")).toBe(0);
     expect(teacherMatchScore("Иванова К. Ю.", "к ю")).toBe(0);
-    expect(teacherMatchScore("Троишестова Дарья Александровна", "дарья")).toBeGreaterThan(0);
+    expect(teacherMatchScore("Пятиплетова Дарья Александровна", "дарья")).toBeGreaterThan(0);
     // Exact surname beats a prefix hit on another entry.
     expect(teacherMatchScore("Иванов И.И.", "иванов")).toBeGreaterThan(teacherMatchScore("Иванова А.А.", "иванов"));
   });

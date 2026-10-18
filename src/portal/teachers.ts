@@ -158,7 +158,7 @@ export class TeacherService {
     // спросим портал: там может найтись тот, кого в суточном кеше ещё нет.
     if (scored.some((x) => !x.fuzzy)) return scored.slice(0, limit);
     // The portal search box understands a surname. People type it first
-    // ("Троишестова Дарья"), so try that word first and only then the others,
+    // ("Пятиплетова Дарья"), so try that word first and only then the others,
     // longest first, until the portal returns something.
     const words = norm(q).split(" ").filter((w) => w.length >= 3);
     const candidates = [...new Set([words[0], ...words.slice(1).sort((a, b) => b.length - a.length)].filter(Boolean) as string[])];

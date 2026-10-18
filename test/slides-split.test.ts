@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { request, type Server } from "node:http";
 import { once } from "node:events";
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
@@ -11,7 +11,8 @@ import { Repo } from "../src/db/repo.js";
 import { createHttpServer, type SlideDeckUpload } from "../src/http/server.js";
 import type { ScheduleService } from "../src/schedule/service.js";
 import { slidesEndpoint } from "../recorder/src/upload.js";
-import { deliverDeck, retryPending, splitPdfPages, type DeckMeta } from "../recorder/src/deliver.js";
+import { deliverDeck, retryPending, splitDeckFile, splitPdfPages, type DeckMeta } from "../recorder/src/deliver.js";
+import { errName } from "../recorder/src/log.js";
 
 const TOKEN = "t".repeat(24);
 const servers: Server[] = [];
@@ -121,5 +122,31 @@ describe("слайды: PDF больше лимита бота", () => {
     expect(sent).toBe(1);
     expect(got.length).toBe(1);
     expect(readdirSync(out).filter((f) => f.endsWith(".pending.json"))).toEqual([]);
+  });
+
+  it("запись части не удалась (диск кончился) — записанные части стёрты, в очереди целый PDF, а не половина", async () => {
+    const out = mkdtempSync(path.join(tmpdir(), "vish-rec-"));
+    const pdf = await makePdf(6);
+    const pdfPath = path.join(out, "2026-10-09-1810-Экономика.pdf");
+    writeFileSync(pdfPath, pdf);
+    // Вместо файла второй части — папка: запись падает на середине, как при ENOSPC.
+    mkdirSync(path.join(out, "2026-10-09-1810-Экономика-часть-2.pdf"));
+    await expect(splitDeckFile(pdfPath, pdf, meta, 6, Math.ceil(pdf.length / 2.5))).rejects.toThrow();
+    const left = readdirSync(out).sort();
+    expect(left).toContain("2026-10-09-1810-Экономика.pdf.pending.json");
+    expect(left.filter((f) => f.includes("-часть-1"))).toEqual([]);
+  });
+});
+
+describe("errName: ошибка для лога без путей", () => {
+  it("путь в кавычках и с начала слова — прочь; «Мат/анализ» и код — как есть, без дубля", () => {
+    const fsErr = Object.assign(new Error("ENOENT: no such file or directory, open '/out/2026-10-09-1000-Физика-Иванов-ИИ/slide-1.png'"), { code: "ENOENT" });
+    expect(errName(fsErr)).toBe("ENOENT: no such file or directory, open '<путь>'");
+    const spaceErr = Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
+    expect(errName(spaceErr)).toBe("ENOSPC: no space left on device, write");
+    expect(errName(new Error("нет кадров у Мат/анализ"))).toBe("Error: нет кадров у Мат/анализ");
+    expect(errName(new Error("не открылась /tmp/x/y.pdf"))).toBe("Error: не открылась <путь>");
+    // У DOMException код числовой — пишем имя.
+    expect(errName(new DOMException("The operation was aborted due to timeout", "TimeoutError"))).toBe("TimeoutError: The operation was aborted due to timeout");
   });
 });

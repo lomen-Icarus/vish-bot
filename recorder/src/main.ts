@@ -22,7 +22,7 @@ import { lkAlive, checkStudentLogin } from "./lk.js";
 import { runLiveness, type LiveTarget } from "./liveness.js";
 import { syncOnce } from "./sync.js";
 import { GeneralWatch } from "./general.js";
-import { log } from "./log.js";
+import { errName, log } from "./log.js";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -48,16 +48,6 @@ const botUrls = (cfg: Pick<RecorderConfig, "botUrl" | "botFallbackUrl">): string
  * в разы. Открылась — номер остаётся: после сбоя съёмки начнём с неё же.
  */
 const roomTurn = new Map<string, number>();
-
-/**
- * Ошибка для лога без путей: в тексте ошибки файла — путь к папке пары, а в
- * нём фамилия преподавателя, хвост же лога печатается в публичный лог деплоя.
- */
-const errName = (err: unknown): string => {
-  const e = err as NodeJS.ErrnoException;
-  const text = String(e?.message ?? err).replace(/(['"]?)\/[^'"\s]*\1/g, "<путь>").slice(0, 200);
-  return `${e?.code ?? e?.name ?? "Error"}: ${text}`;
-};
 
 async function recordOne(cfg: RecorderConfig, store: AccountStore, general: GeneralWatch | null, portal: Portal, date: string, row: WebinarRow): Promise<Outcome> {
   const meta: DeckMeta = {

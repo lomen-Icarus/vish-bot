@@ -15,3 +15,21 @@ export const log = {
   warn: (obj: unknown, msg?: string) => emit("warn", obj, msg),
   error: (obj: unknown, msg?: string) => emit("error", obj, msg),
 };
+
+/**
+ * Ошибка для лога без путей: в тексте ошибки файла — путь к папке пары, а в
+ * нём фамилия преподавателя, хвост же лога печатается в публичный лог деплоя.
+ * Путь — только с начала слова или в кавычках: «Мат/анализ» и адреса не трогаем.
+ * Код ошибки — только строковый (ENOSPC); у DOMException он числовой — там имя
+ * (TimeoutError). Код уже в начале текста — второй раз не пишем.
+ */
+export function errName(err: unknown): string {
+  const e = err as { code?: unknown; name?: unknown; message?: unknown } | null;
+  const text = String(e?.message ?? err)
+    .replace(/'\/[^']*'/g, "'<путь>'")
+    .replace(/"\/[^"]*"/g, '"<путь>"')
+    .replace(/(^|[\s(=])\/[^\s'"),]*/g, "$1<путь>")
+    .slice(0, 200);
+  const kind = typeof e?.code === "string" ? e.code : typeof e?.name === "string" ? e.name : "Error";
+  return text.startsWith(kind) ? text : `${kind}: ${text}`;
+}

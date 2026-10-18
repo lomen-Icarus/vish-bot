@@ -97,7 +97,7 @@ describe("напоминания о парах — в выбранном фор�
     const repo = new Repo(openDatabase(":memory:"));
     repo.touchUser(1, "u", "U");
     repo.updateUser(1, { format: "image" });
-    repo.toggleWatchTeacher(1, 55, "Путевская И. В.");
+    repo.toggleWatchTeacher(1, 55, "Придумская И. В.");
     const sent: Sent[] = [];
     const api = {
       sendMessage: async (_id: number, text: string) => (sent.push({ method: "sendMessage", text }), { message_id: 1 }),
@@ -105,11 +105,11 @@ describe("напоминания о парах — в выбранном фор�
     } as never;
     let labels: unknown;
     const renderer = { renderDay: async (a: { labels?: unknown }) => ((labels = a.labels), Buffer.from("png")) } as unknown as Renderer;
-    const teachers = { lessons: async (_t: unknown, from: string) => ({ lessons: [lesson(from, 4, 13 * 60 + 30, "ЭВМ")], fullName: "Путевская Ирина Владимировна" }) } as unknown as TeacherService;
+    const teachers = { lessons: async (_t: unknown, from: string) => ({ lessons: [lesson(from, 4, 13 * 60 + 30, "ЭВМ")], fullName: "Придумская Ирина Владимировна" }) } as unknown as TeacherService;
     const n = new Notifier(api, repo, service, renderer, [], null, teachers);
     expect(await n.tickTeacherWatches(clock(DAY, 11, 30))).toBe(1);
     expect(sent[0]!.method).toBe("sendPhoto");
-    expect(sent[0]!.caption).toBe("👨‍🏫 Через 2 часа первая пара у <b>Путевская Ирина Владимировна</b>");
+    expect(sent[0]!.caption).toBe("👨‍🏫 Через 2 часа первая пара у <b>Придумская Ирина Владимировна</b>");
     expect(sent[0]!.markup).toContain("twf:55");
     expect(labels).toBe("groups");
   });

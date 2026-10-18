@@ -56,7 +56,7 @@ function tempFile(name: string, content: string): string {
   return file;
 }
 
-const CSV = ["ФИО;Группа;Телефон", "Троишестов Иван Сергеевич;ВИШ-12-23;79990000000", "Иванова Мария Петровна;ВИШ-12-23;79990000001", "Кузнецов Пётр Ильич;ОЗВИШ-11-25;79990000002"].join("\n");
+const CSV = ["ФИО;Группа;Телефон", "Пятиплетов Иван Сергеевич;ВИШ-12-23;79990000000", "Иванова Мария Петровна;ВИШ-12-23;79990000001", "Кузнецов Пётр Ильич;ОЗВИШ-11-25;79990000002"].join("\n");
 
 function makeDeps(opts: { poisk?: boolean; students?: StudentDirectory | null; admin?: boolean } = {}): Deps {
   const repo = new Repo(openDatabase(":memory:"));
@@ -115,17 +115,17 @@ const texts = (calls: Call[]): string => calls.map((c) => String(c.payload.text 
 
 describe("name matching with typos", () => {
   it("forgives a typo but marks the match as a guess", () => {
-    expect(nameMatch("Троишестова Д.А.", "троишестова").score).toBeGreaterThan(0);
-    expect(nameMatch("Троишестова Д.А.", "троишестова").fuzzy).toBe(false);
-    const typo = nameMatch("Троишестова Д.А.", "троишестава");
+    expect(nameMatch("Пятиплетова Д.А.", "пятиплетова").score).toBeGreaterThan(0);
+    expect(nameMatch("Пятиплетова Д.А.", "пятиплетова").fuzzy).toBe(false);
+    const typo = nameMatch("Пятиплетова Д.А.", "пятиплетава");
     expect(typo.score).toBeGreaterThan(0);
     expect(typo.fuzzy).toBe(true);
-    expect(nameMatch("Троишестова Д.А.", "трошиестова").score).toBeGreaterThan(0);
+    expect(nameMatch("Пятиплетова Д.А.", "пяитплетова").score).toBeGreaterThan(0);
   });
 
   it("still refuses people who are simply different", () => {
     expect(nameMatch("Иванов И.И.", "Петров").score).toBe(0);
-    expect(nameMatch("Кожина Т. Н.", "Троишестова").score).toBe(0);
+    expect(nameMatch("Образцова П. Н.", "Пятиплетова").score).toBe(0);
     expect(nameMatch("Иванова К. Ю.", "к ю").score).toBe(0);
     // Три буквы — слишком коротко, чтобы прощать опечатку.
     expect(nameMatch("Ким А.А.", "Кин").score).toBe(0);
@@ -136,15 +136,15 @@ describe("student directory", () => {
   it("reads ФИО and группа and ignores every other column", () => {
     const dir = new StudentDirectory(tempFile("students.csv", CSV));
     expect(dir.count()).toBe(3);
-    const hit = dir.search("Троишестов")[0]!;
+    const hit = dir.search("Пятиплетов")[0]!;
     expect(hit.student.groupTitle).toBe("ВИШ-12-23");
     expect(JSON.stringify(hit.student)).not.toContain("7999");
   });
 
   it("finds a person through a typo and says it is a guess", () => {
     const dir = new StudentDirectory(tempFile("students.csv", CSV));
-    const hit = dir.search("Троишестав")[0]!;
-    expect(hit.student.name).toContain("Троишестов");
+    const hit = dir.search("Пятиплетав")[0]!;
+    expect(hit.student.name).toContain("Пятиплетов");
     expect(dir.search("Ктототамнесуществует")).toEqual([]);
   });
 
@@ -208,9 +208,9 @@ describe("AI limit steps", () => {
 
 describe("student directory, tricky files", () => {
   it("reads «Фамилия;Имя;Отчество;Группа» and does not import the header as a person", () => {
-    const dir = new StudentDirectory(tempFile("students.csv", ["Фамилия;Имя;Отчество;Группа", "Троишестов;Иван;Сергеевич;ВИШ-12-23"].join("\n")));
+    const dir = new StudentDirectory(tempFile("students.csv", ["Фамилия;Имя;Отчество;Группа", "Пятиплетов;Иван;Сергеевич;ВИШ-12-23"].join("\n")));
     expect(dir.count()).toBe(1);
-    expect(dir.search("Троишестов")[0]!.student.name).toBe("Троишестов Иван Сергеевич");
+    expect(dir.search("Пятиплетов")[0]!.student.name).toBe("Пятиплетов Иван Сергеевич");
   });
 
   it("does not trip over commas inside a quoted header", () => {
@@ -260,9 +260,9 @@ describe("global student search", () => {
     expect(texts(intro)).toMatch(/Глобальный поиск студента/);
     expect(texts(intro)).toMatch(/2, 3, 4 курсы|В реестре/);
 
-    const card = await run(textUpdate("Троишестов"), deps);
+    const card = await run(textUpdate("Пятиплетов"), deps);
     const out = texts(card);
-    expect(out).toContain("Троишестов Иван Сергеевич");
+    expect(out).toContain("Пятиплетов Иван Сергеевич");
     expect(out).toContain("ВИШ-12-23");
     expect(out).toMatch(/📍/);
     expect(out).toMatch(/Патентоведение/);
@@ -280,7 +280,7 @@ describe("global student search", () => {
   it("does not open a schedule silently when only a typo matched", async () => {
     const deps = makeDeps({ poisk: true, students: new StudentDirectory(tempFile("students.csv", CSV)) });
     await run(textUpdate("/poisk"), deps);
-    const calls = await run(textUpdate("Троишестав"), deps);
+    const calls = await run(textUpdate("Пятиплетав"), deps);
     const out = texts(calls);
     // Предлагаем кнопками, а не показываем «где он сейчас» как факт.
     expect(out).toMatch(/Точного совпадения/);
@@ -307,8 +307,8 @@ describe("global student search", () => {
     const deps = makeDeps({ poisk: true, students: new StudentDirectory(tempFile("students.csv", CSV)) });
     const day = todayMsk();
     // Локальный поиск и инструмент ИИ по одному запросу — это один поиск.
-    deps.repo.logPoisk(7, day, "поиск: Троишестов", null);
-    deps.repo.logPoisk(7, day, "ии: Троишестов", "abc");
+    deps.repo.logPoisk(7, day, "поиск: Пятиплетов", null);
+    deps.repo.logPoisk(7, day, "ии: Пятиплетов", "abc");
     expect(deps.repo.poiskUsage(7, day)).toBe(1);
     deps.repo.logPoisk(7, day, "поиск: Иванова", null);
     expect(deps.repo.poiskUsage(7, day)).toBe(2);
