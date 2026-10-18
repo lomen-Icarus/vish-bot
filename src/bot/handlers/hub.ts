@@ -201,8 +201,9 @@ hubHandlers.on("message", async (ctx, next) => {
   // Пока шёл ответ, обращение могло измениться: дописалось следующее фото
   // альбома, сменился режим, обращение ушло или отменено. Тогда наш вопрос
   // устарел — убираем его; актуальный задаст (или уже задал) другой апдейт.
+  // Отложенное (нажал кнопку меню) — не устарело: «Отправить» под ним нужен.
   const now = takePending(ctx.deps, ctx.user.id);
-  if (now?.kind !== "support" || now.messageIds?.length !== messageIds.length || !!now.anon !== anon || now.parked) {
+  if (now?.kind !== "support" || now.messageIds?.length !== messageIds.length || !!now.anon !== anon) {
     await ctx.api.deleteMessage(ctx.chat.id, confirm.message_id).catch(() => undefined);
     return;
   }
