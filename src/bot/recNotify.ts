@@ -21,7 +21,6 @@ export interface SendApi {
 }
 
 import { FORM_PATH } from "./keyboards.js";
-export { FORM_PATH };
 
 const who = (username: string | null, userId: number | null): string => (username ? `@${esc(username)}` : userId ? `id ${userId}` : "учётка из .env");
 

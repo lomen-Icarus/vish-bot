@@ -17,18 +17,15 @@ export const adminHandlers = new Composer<BotContext>();
 
 const adminOnly = adminHandlers.filter((ctx) => ctx.isAdmin);
 
-/** Кнопки панелей в /stats — подписями, как их видит человек. */
-const PANEL_CLICKS: Record<string, string> = {
-  "cb:hub:groups": `${BTN.find} → ${FIND_BTN.groups}`,
-  "cb:hub:stream": `${BTN.find} → ${FIND_BTN.stream}`,
-  "cb:hub:teachers": `${BTN.find} → ${FIND_BTN.teachers}`,
-  "cb:hub:poisk": `${BTN.find} → ${FIND_BTN.poisk}`,
-  "cb:hub:ask": `${BTN.find} → ${FIND_BTN.ask}`,
-  "cb:more:changes": `${BTN.more} → ${MORE_BTN.changes}`,
-  "cb:more:calendar": `${BTN.more} → ${MORE_BTN.calendar}`,
-  "cb:more:settings": `${BTN.more} → ${MORE_BTN.settings}`,
-  "cb:more:help": `${BTN.more} → ${MORE_BTN.help}`,
-};
+/**
+ * Кнопка панели в /stats — подписью, как её видит человек: колбэк hub:<ключ>
+ * или more:<ключ>, а ключ — тот же, что в FIND_BTN / MORE_BTN (hub.ts).
+ */
+function panelClick(key: string): string | undefined {
+  const [, panel, item = ""] = key.split(":");
+  const items: Record<string, string> | null = panel === "hub" ? FIND_BTN : panel === "more" ? MORE_BTN : null;
+  return items && item in items ? `${panel === "hub" ? BTN.find : BTN.more} → ${items[item]}` : undefined;
+}
 
 /** How long a broadcast stays on the "Объявления" board inside «Изменения». */
 export const BOARD_HOURS = 24;
@@ -67,7 +64,7 @@ function statsText(ctx: BotContext): string {
   ];
   // Что жмут: кнопки меню, кнопки под сообщениями и команды за неделю (без id людей).
   const clicks = repo.countersSince(addDays(todayMsk(), -6));
-  if (clicks.length) lines.push("", "<b>Нажатия за 7 дней</b>", ...clicks.slice(0, 20).map((c) => `${esc((PANEL_CLICKS[c.key] ?? c.key).replace(/^btn:/, "").replace(/^cb:/, "под сообщением: ").replace(/^cmd:/, "").replace(/^text:found$/, "текст → нашёл").replace(/^text:miss$/, "текст → не нашёл"))} — ${c.n}`));
+  if (clicks.length) lines.push("", "<b>Нажатия за 7 дней</b>", ...clicks.slice(0, 20).map((c) => `${esc((panelClick(c.key) ?? c.key).replace(/^btn:/, "").replace(/^cb:/, "под сообщением: ").replace(/^cmd:/, "").replace(/^text:found$/, "текст → нашёл").replace(/^text:miss$/, "текст → не нашёл"))} — ${c.n}`));
   return lines.join("\n");
 }
 

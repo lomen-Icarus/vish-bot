@@ -11,7 +11,7 @@ import { Repo } from "../src/db/repo.js";
 import { createHttpServer, type SlideDeckUpload } from "../src/http/server.js";
 import type { ScheduleService } from "../src/schedule/service.js";
 import { slidesEndpoint } from "../recorder/src/upload.js";
-import { deliverDeck, retryPending, splitPdf, type DeckMeta } from "../recorder/src/deliver.js";
+import { deliverDeck, retryPending, splitPdfPages, type DeckMeta } from "../recorder/src/deliver.js";
 
 const TOKEN = "t".repeat(24);
 const servers: Server[] = [];
@@ -64,10 +64,10 @@ describe("слайды: PDF больше лимита бота", () => {
     expect(status).toBe(413);
   });
 
-  it("splitPdf: части не больше лимита, страницы все и по порядку", async () => {
+  it("splitPdfPages: части не больше лимита, страницы все и по порядку", async () => {
     const pdf = await makePdf(6);
-    expect(await splitPdf(pdf, pdf.length + 1)).toEqual([pdf]);
-    const parts = await splitPdf(pdf, Math.ceil(pdf.length / 2.5));
+    expect((await splitPdfPages(pdf, pdf.length + 1)).map((p) => p.pdf)).toEqual([pdf]);
+    const parts = (await splitPdfPages(pdf, Math.ceil(pdf.length / 2.5))).map((p) => p.pdf);
     expect(parts.length).toBeGreaterThan(1);
     let pages = 0;
     for (const p of parts) {
