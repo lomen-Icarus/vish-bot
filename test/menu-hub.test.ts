@@ -36,6 +36,7 @@ async function run(deps: Deps, update: Update, from = USER): Promise<Call[]> {
   const api = new Api("123:FAKE");
   api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
+    if (method === "copyMessages") return { ok: true, result: (payload as { message_ids: number[] }).message_ids.map((m) => ({ message_id: m + 1000 })) as never };
     return { ok: true, result: { message_id: 50, date: 0, chat: { id: from, type: "private" } } as never };
   });
   const ctx = new Context(update, api, ME) as BotContext;
@@ -108,9 +109,9 @@ describe("🏛 Министерство Жалоб", () => {
     const header = sent.find((c) => c.method === "sendMessage" && c.payload.chat_id === ADMIN)!;
     expect(String(header.payload.text)).toContain("Обращение #1");
     expect(String(header.payload.text)).toContain("@student_u");
-    const copy = sent.find((c) => c.method === "copyMessage")!;
+    const copy = sent.find((c) => c.method === "copyMessages")!;
     expect(copy.payload.chat_id).toBe(ADMIN);
-    expect(markup(copy)).toContain("supa:r:1");
+    expect(markup(header)).toContain("supa:r:1");
     expect(sent.some((c) => c.method === "forwardMessage")).toBe(false);
     expect(String(sent.find((c) => c.method === "editMessageText")!.payload.text)).toContain("Обращение #1");
   });
@@ -126,7 +127,7 @@ describe("🏛 Министерство Жалоб", () => {
     expect(header).toContain("анонимно");
     expect(header).not.toContain("student_u");
     expect(header).not.toContain(String(USER));
-    expect(sent.some((c) => c.method === "copyMessage")).toBe(true);
+    expect(sent.some((c) => c.method === "copyMessages")).toBe(true);
     expect(sent.some((c) => c.method === "forwardMessage")).toBe(false);
   });
 
@@ -254,6 +255,7 @@ describe("весь бот (createBot): порядок обработчиков, 
     const calls: Call[] = [];
     bot.api.config.use(async (_prev, method, payload) => {
       calls.push({ method, payload: payload as Record<string, unknown> });
+      if (method === "copyMessages") return { ok: true, result: [{ message_id: 78 }] as never };
       return { ok: true, result: { message_id: 77, date: 0, chat: { id: USER, type: "private" } } as never };
     });
     return { bot, calls };
@@ -286,6 +288,6 @@ describe("весь бот (createBot): порядок обработчиков, 
     await bot.handleUpdate(text("в расписании ошибка"));
     expect(calls.some((c) => c.payload.chat_id === ADMIN)).toBe(false);
     await bot.handleUpdate(press("sup:send"));
-    expect(calls.find((c) => c.method === "copyMessage" && c.payload.chat_id === ADMIN)).toBeTruthy();
+    expect(calls.find((c) => c.method === "copyMessages" && c.payload.chat_id === ADMIN)).toBeTruthy();
   });
 });

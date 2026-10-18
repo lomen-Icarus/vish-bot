@@ -84,6 +84,14 @@ export interface BotContextFlavor {
 
 export type BotContext = Context & BotContextFlavor & SessionFlavor<Record<string, never>>;
 
+/**
+ * Ожидания, которые ждут от человека текст или сообщение. Кнопка нижнего меню
+ * или команда — он ушёл в другое место: такое ожидание снимается. Ожидания
+ * кнопок под сообщением (выбор аудитории рассылки, «Отправить N чел.?»,
+ * /menu_refresh) и файла (/qa_import) переживают взгляд на «📅 Сегодня».
+ */
+export const TEXT_PENDING: ReadonlySet<PendingState["kind"]> = new Set<PendingState["kind"]>(["suggest", "broadcast", "ask", "teacher", "search", "poisk", "people", "support", "support-reply", "cal-alarm"]);
+
 export function setPending(deps: Deps, userId: number, state: Omit<PendingState, "expiresAt">, ttlMs = 5 * 60_000): void {
   deps.pending.set(userId, { ...state, expiresAt: Date.now() + ttlMs });
 }
