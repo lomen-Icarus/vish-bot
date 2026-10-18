@@ -112,7 +112,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     for (const [k, v] of cache) if (now - v.at >= FEED_CACHE_MS) cache.delete(k);
     const hit = cache.get(key);
     if (hit) return { status: 200, body: hit.body, type: "text/calendar; charset=utf-8" };
-    const { ics } = groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H", stableSequence: true });
+    const { ics } = groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H", stableSequence: true, ppaDebts: deps.repo.ppaDebts(user.id, group.key) });
     for (const k of cache.keys()) if (k.startsWith(`${token}|`)) cache.delete(k);
     if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
     const body = Buffer.from(ics, "utf8");

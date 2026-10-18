@@ -42,6 +42,8 @@ export interface Occurrence {
   weeksHint?: string;
   /** Topic of an online session, from the portal's webinar page (display only, never diffed). */
   topic?: string;
+  /** Пересдача (ППА): номер попытки, 0 — портал не указал. Только у отмеченных долгов человека. */
+  ppa?: number;
 }
 
 /** Identity of a lesson inside one day: what "the same lesson" means for diffing. */
@@ -84,6 +86,7 @@ export const LESSON_TYPE_LABELS: Record<string, string> = {
   экз: "экзамен",
   конс: "консультация",
   кп: "курсовой проект",
+  кр: "курсовая работа",
   крп: "курсовая работа",
   из: "инд. занятие",
   гз: "групповое занятие",
@@ -92,6 +95,12 @@ export const LESSON_TYPE_LABELS: Record<string, string> = {
 export function lessonTypeLabel(type: string): string {
   const key = type.replace(/\.$/, "").toLowerCase();
   return LESSON_TYPE_LABELS[key] ?? type;
+}
+
+/** Тип занятия для показа; у пересдачи — с пометкой: «экзамен · 1 ППА». */
+export function occTypeLabel(o: { type: string; ppa?: number }): string {
+  const base = lessonTypeLabel(o.type);
+  return o.ppa === undefined ? base : `${base} · ${o.ppa ? `${o.ppa} ` : ""}ППА`;
 }
 
 /** Раскладывает по датам одним проходом, сохраняя исходный порядок внутри дня. */

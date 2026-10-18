@@ -11,7 +11,7 @@
  * STATUS:CANCELLED with the old UID: subscriptions drop them, Google import
  * ignores them, and iOS import shows them as cancelled.
  */
-import { lessonTypeLabel, positionKey, type Occurrence } from "./model.js";
+import { occTypeLabel, positionKey, type Occurrence } from "./model.js";
 import { localToMs, type LocalDate } from "../time.js";
 
 export interface IcsOptions {
@@ -80,7 +80,7 @@ function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: nu
   if (o.start == null || o.end == null) return null;
   const startMs = localToMs(o.date, o.start);
   const endMs = localToMs(o.date, o.end);
-  const summary = `${o.subject} (${lessonTypeLabel(o.type)})`;
+  const summary = `${o.subject} (${occTypeLabel(o)})`;
   const desc: string[] = [opts.name];
   if (o.slot != null) desc.push(`${o.slot} пара`);
   if (o.teacher) desc.push(o.teacher);
@@ -94,7 +94,7 @@ function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: nu
   lines.push(`SUMMARY:${escapeText(cancelled ? `Отменено: ${summary}` : summary)}`);
   if (o.room && !o.isDistance) lines.push(`LOCATION:${escapeText(`ауд. ${o.room}, ЧувГУ`)}`);
   lines.push(`DESCRIPTION:${escapeText(desc.join(" · "))}`);
-  lines.push(`CATEGORIES:${escapeText(lessonTypeLabel(o.type))}`);
+  lines.push(`CATEGORIES:${escapeText(occTypeLabel(o))}`);
   lines.push(`STATUS:${cancelled ? "CANCELLED" : "CONFIRMED"}`);
   if (!cancelled && opts.alarmMinutes != null && opts.alarmMinutes > 0) {
     lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `TRIGGER:-PT${opts.alarmMinutes}M`, `DESCRIPTION:${escapeText(`Через ${opts.alarmMinutes} мин: ${summary}`)}`, "END:VALARM");

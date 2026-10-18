@@ -1,5 +1,6 @@
 import { parseGroupButtons, parseGroupName, parseGroupSchedule, parseTeacherButtons, parseTeacherInfo, parseTeacherSchedule, parseWebinars, type ParsedScheduleDay } from "chuvsu-js/parsers";
 import type { TeacherInfo, Webinar } from "chuvsu-js";
+import { isPpaPage, parsePpaPage, type PpaItem } from "./ppa.js";
 import { PortalHttp, PortalHttpError, type PortalHttpOptions } from "./http.js";
 import { isLoginPage, parseAcademicYear, parseBanner, parsePeriod, parseWeekMarker, type WeekMarker } from "./pageMeta.js";
 import type { Period } from "../schedule/model.js";
@@ -294,6 +295,17 @@ export class PortalClient {
     const groups = parseGroupButtons(html).map((g) => ({ id: g.id, name: g.name.trim() }));
     if (groups.length === 0) throw new PortalHttpError("Faculty page contained no groups");
     return groups;
+  }
+
+  /**
+   * Пересдачи группы (период 11). Страница без отметки периода ППА — главная
+   * или техработы: принять её за «пересдач нет» значило бы снять отметки
+   * долгов и разослать «пересдачу отменили».
+   */
+  async getPpaPage(groupId: number): Promise<{ items: PpaItem[]; htmlHash: string }> {
+    const html = await this.authPost(`${PORTAL_BASE}/index/grouptt/gr/${groupId}`, { htype: "11" });
+    if (!isPpaPage(html)) throw new PortalHttpError(`group ${groupId}: not a PPA page`);
+    return { items: parsePpaPage(html), htmlHash: sha1(html) };
   }
 
   async getGroupPage(groupId: number, period: Period): Promise<GroupPage> {

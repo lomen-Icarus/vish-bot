@@ -91,7 +91,7 @@ async function sendCalendarFile(ctx: BotContext, alarm: number): Promise<void> {
   const group = needGroup(ctx);
   if (!group) return void (await ctx.reply(groupRequiredText()));
   const today = todayMsk();
-  const { ics, count, to } = groupCalendar(ctx.deps.service, group, { subgroup: ctx.user.subgroup, alarmMinutes: alarm > 0 ? alarm : null });
+  const { ics, count, to } = groupCalendar(ctx.deps.service, group, { subgroup: ctx.user.subgroup, alarmMinutes: alarm > 0 ? alarm : null, ppaDebts: ctx.deps.repo.ppaDebts(ctx.user.id, group.key) });
   const tips = subscriptionsEnabled(ctx) ? "Чтобы календарь обновлялся сам, выбери «Подписка» в /calendar." : "Расписание меняется: раз в пару недель обновляй файл, перед этим удалив старые события (удобно держать пары в отдельном календаре).";
   await ctx.replyWithDocument(new InputFile(Buffer.from(ics, "utf8"), icsFileName(group.title, today)), {
     caption: `${group.title}: ${count} ${plural(count, "пара", "пары", "пар")} с ${fmtDDMM(today)} по ${fmtDDMM(to)}${alarm ? `, напоминание за ${alarm} мин` : ""}.\n\nОткрой файл → «Добавить в календарь». ${tips}`,

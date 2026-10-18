@@ -6,6 +6,7 @@ import { scheduleHandlers } from "./handlers/schedule.js";
 import { settingsHandlers } from "./handlers/settings.js";
 import { adminHandlers } from "./handlers/admin.js";
 import { freeTextSearch, miscHandlers } from "./handlers/misc.js";
+import { ppaHandlers } from "./handlers/ppa.js";
 import { hubHandlers } from "./handlers/hub.js";
 import { slidesHandlers } from "./handlers/slides.js";
 import { askHandlers } from "./handlers/ask.js";
@@ -137,6 +138,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
   // «🔍 Найти», «🗂 Ещё», «🙋 Поддержка»: до misc — обращение в Министерство
   // Жалоб может быть фото или документом, не только текстом.
   bot.use(hubHandlers);
+  bot.use(ppaHandlers);
   // «слайды история» в личке и кнопка «📎 Слайды» под днём: до misc, где любой текст — поиск.
   bot.use(slidesHandlers);
   bot.use(miscHandlers);
@@ -198,6 +200,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "teachers", description: "Расписание преподавателя" },
     { command: "search", description: "Найти предмет, группу или преподавателя" },
     { command: "calendar", description: "Пары в календарь телефона (.ics)" },
+    { command: "ppa", description: "Пересдачи (ППА) и мои долги" },
     { command: "stream", description: "Режим потока: все группы курса" },
     { command: "settings", description: "Уведомления и напоминания" },
     { command: "menu", description: "Показать кнопки меню внизу" },

@@ -1,7 +1,7 @@
 import { addDays, fmtDDMM, fmtDayMonth, fmtHHMM, weekdayName, weekdayShort, type LocalDate, type WallClock } from "../time.js";
 import type { ChangeEvent } from "./diff.js";
 import type { LogicalGroup } from "./groups.js";
-import { groupByDate, lessonTypeLabel, type Occurrence } from "./model.js";
+import { groupByDate, lessonTypeLabel, occTypeLabel, type Occurrence } from "./model.js";
 import type { WeekInfo } from "./service.js";
 import { samePerson, shortName } from "../text/match.js";
 
@@ -209,7 +209,7 @@ export function formatLesson(o: MarkedLesson, opts: FormatOptions = {}): string 
     else lines.push(`     ❌ <b>ОТМЕНЕНА</b>${note ? ` — ${note}` : ""}`);
   }
   const meta: string[] = [];
-  meta.push(esc(lessonTypeLabel(o.type)));
+  meta.push(esc(occTypeLabel(o)));
   if (o.isDistance) meta.push("💻 дистанционно");
   else if (o.room) meta.push(`ауд. ${esc(o.room)}`);
   const teacher = teacherLabel(o.teacher, opts.teacherView);
@@ -274,7 +274,7 @@ export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<L
       const moved = o.status === "moved";
       const subj = moved ? `<s>${esc(o.subject)}</s>` : `<b>${esc(o.subject)}</b>`;
       const where = o.isDistance ? "💻 дистанционно" : o.room ? `ауд. ${esc(o.room)}` : "";
-      const meta = [esc(lessonTypeLabel(o.type)), where, teacherLabel(o.teacher, opts.teacherView), o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "↩️ перенос" : "", o.substituted ? "🔁 замена" : ""].filter(Boolean);
+      const meta = [esc(occTypeLabel(o)), where, teacherLabel(o.teacher, opts.teacherView), o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "↩️ перенос" : "", o.substituted ? "🔁 замена" : ""].filter(Boolean);
       // Показываем и конец пары: «когда освобожусь» спрашивают не реже, чем «когда начало».
       return `   ${slotBadge(o)} ${timeRange(o) ? `<code>${timeRange(o)}</code> ` : ""}${subj}\n        <i>${meta.join(" · ")}</i>`;
     });
@@ -286,7 +286,7 @@ export function formatWeek(group: LogicalGroup, monday: LocalDate, byDate: Map<L
 function describe(o: Occurrence, opts: { hideWhere?: boolean } = {}): string {
   const where = opts.hideWhere ? "" : o.isDistance ? "дистанционно" : o.room ? `ауд. ${esc(o.room)}` : "";
   const sg = o.subgroup ? `, ${o.subgroup} подгр.` : "";
-  return `<b>${esc(o.subject)}</b> (${esc(lessonTypeLabel(o.type))}${sg})${where ? ` · ${where}` : ""}`;
+  return `<b>${esc(o.subject)}</b> (${esc(occTypeLabel(o))}${sg})${where ? ` · ${where}` : ""}`;
 }
 
 function when(o: Occurrence): string {

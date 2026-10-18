@@ -3,7 +3,7 @@
  * No browser, no system fonts: Inter is bundled via @fontsource/inter.
  */
 import type { LogicalGroup } from "../schedule/groups.js";
-import { lessonTypeLabel, type Occurrence } from "../schedule/model.js";
+import { occTypeLabel, type Occurrence } from "../schedule/model.js";
 import type { WeekInfo } from "../schedule/service.js";
 import { filterSubgroup, isActiveLesson, markGone, posterTeacher, showMovedFrom, type MarkedLesson, type TeacherView } from "../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallClock } from "../time.js";
@@ -144,7 +144,7 @@ function lessonRow(o: MarkedLesson, opts: { ongoing: boolean; variantCount: numb
   const moved = o.status === "moved" || cancelled;
   const markColor = o.mark ? MARK_STYLE[o.mark.kind].color : null;
   const time = o.start != null && o.end != null ? [fmtHHMM(o.start), fmtHHMM(o.end)] : ["—", ""];
-  const meta: string[] = [lessonTypeLabel(o.type)];
+  const meta: string[] = [occTypeLabel(o)];
   if (o.isDistance) meta.push("дистанционно");
   else if (o.room) meta.push(`ауд. ${o.room}`);
   const teacher = posterTeacher(o.teacher, opts.teacherView);
@@ -313,7 +313,7 @@ export async function createRenderer(): Promise<Renderer | null> {
                   h(
                     "div",
                     { display: "flex", flexDirection: "row", alignItems: "baseline", marginTop: 4 },
-                    text([lessonTypeLabel(r.type), r.isDistance ? "дистанционно" : r.room ? `ауд. ${r.room}` : "", r.subgroup ? `${r.subgroup} подгруппа` : ""].filter(Boolean).join("  ·  "), { fontSize: 22, fontWeight: 500, color: THEME.muted }),
+                    text([occTypeLabel(r), r.isDistance ? "дистанционно" : r.room ? `ауд. ${r.room}` : "", r.subgroup ? `${r.subgroup} подгруппа` : ""].filter(Boolean).join("  ·  "), { fontSize: 22, fontWeight: 500, color: THEME.muted }),
                     posterTeacher(r.teacher, input.teacherView)
                       ? text(`· ${posterTeacher(r.teacher, input.teacherView)}`, { marginLeft: 8, fontSize: 22, fontWeight: input.teacherView === "plain" ? 500 : 700, color: input.teacherView === "plain" ? THEME.muted : THEME.fg })
                       : null,
@@ -362,7 +362,7 @@ export async function createRenderer(): Promise<Renderer | null> {
                   h(
                     "div",
                     { display: "flex", flexDirection: "row", alignItems: "baseline", marginTop: 4 },
-                    text([lessonTypeLabel(o.type), o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "перенос" : "", o.substituted ? "замена" : ""].filter(Boolean).join("  ·  "), { fontSize: 21, color: THEME.muted }),
+                    text([occTypeLabel(o), o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "перенос" : "", o.substituted ? "замена" : ""].filter(Boolean).join("  ·  "), { fontSize: 21, color: THEME.muted }),
                     posterTeacher(o.teacher, input.teacherView)
                       ? text(`· ${posterTeacher(o.teacher, input.teacherView)}`, {
                           marginLeft: 8,
