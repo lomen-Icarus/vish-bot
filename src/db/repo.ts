@@ -1707,6 +1707,11 @@ export class Repo {
     this.db.prepare("DELETE FROM ppa_debts WHERE user_id = ? AND group_key = ?").run(userId, groupKey);
   }
 
+  /** Новая волна ППА: прошлые отметки группы больше не про эти пересдачи. */
+  clearPpaDebtsOfGroup(groupKey: string): void {
+    this.db.prepare("DELETE FROM ppa_debts WHERE group_key = ?").run(groupKey);
+  }
+
   /** Кто отметил долг по предмету — им одним и пишем о переносе пересдачи. */
   ppaDebtors(groupKey: string, subjectKey: string): number[] {
     return (this.db.prepare("SELECT user_id FROM ppa_debts WHERE group_key = ? AND subject_key = ?").all(groupKey, subjectKey) as Array<{ user_id: number }>).map((r) => r.user_id);

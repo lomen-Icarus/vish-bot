@@ -8,6 +8,9 @@ import { mergeVariants } from "./merge.js";
 import { expandDays } from "./expand.js";
 import { diffOccurrences, type ChangeEvent } from "./diff.js";
 import { isSessionPeriod, positionKey, type Occurrence, type Period } from "./model.js";
+import type { PpaItem } from "../portal/ppa.js";
+import { diffPpa, mergePpa, ppaOccurrence, ppaWave, type PpaEvent } from "./ppa.js";
+import { subjectKey } from "./subjects.js";
 
 export interface PollResult {
   groupsTotal: number;
@@ -178,6 +181,70 @@ export class ScheduleService {
 
   lessonsOn(group: LogicalGroup, date: LocalDate): Occurrence[] {
     return this.materialize(group, date, date);
+  }
+
+  // ---------- пересдачи (ППА) ----------
+
+  /** Все пересдачи группы со всех её страниц портала (из базы, без сети). */
+  ppaItems(group: LogicalGroup): PpaItem[] {
+    return mergePpa(group.portalIds.map((id) => this.repo.ppaPage(id)?.items ?? []));
+  }
+
+  /** Пересдачи группы с today и дальше. */
+  ppaUpcoming(group: LogicalGroup, today: LocalDate = todayMsk()): PpaItem[] {
+    return this.ppaItems(group).filter((i) => i.date >= today);
+  }
+
+  /** Пересдачи по отмеченным предметам (ключи subjectKey) как пары расписания за [from, to]. */
+  ppaLessons(group: LogicalGroup, keys: ReadonlySet<string> | readonly string[], from: LocalDate, to: LocalDate): Occurrence[] {
+    const set = keys instanceof Set ? keys : new Set(keys as readonly string[]);
+    if (!set.size) return [];
+    return this.ppaItems(group)
+      .filter((i) => i.date >= from && i.date <= to && set.has(subjectKey(i.subject)))
+      .map((i) => ppaOccurrence(group.key, i, this.sessionFor(this.semesterFor(i.date))));
+  }
+
+  /**
+   * Страницы ППА всех групп. Первый опрос группы — тихий: только запоминаем
+   * (иначе деплой разослал бы «назначена пересдача» и вопрос про долги всем
+   * разом). Новая волна (ППА после следующей сессии) — в newWaves: о ней бот
+   * спросит; прошлые отметки долгов группы сбрасываются. Не забрали страницу —
+   * это не «пересдачи отменили»: группу пропускаем целиком.
+   */
+  async pollPpa(today: LocalDate = todayMsk()): Promise<{ events: PpaEvent[]; newWaves: string[]; fetched: number; failed: number }> {
+    const out = { events: [] as PpaEvent[], newWaves: [] as string[], fetched: 0, failed: 0 };
+    for (const group of this.groups()) {
+      const prev = this.ppaItems(group);
+      const fresh: Array<{ id: number; items: PpaItem[]; htmlHash: string }> = [];
+      for (const id of group.portalIds) {
+        try {
+          fresh.push({ id, ...(await this.portal.getPpaPage(id)) });
+          out.fetched++;
+        } catch (err) {
+          out.failed++;
+          logger.debug({ err: (err as Error).name, portalId: id }, "страница ППА не забралась");
+        }
+      }
+      if (fresh.length < group.portalIds.length) continue;
+      for (const p of fresh) if (this.repo.ppaPage(p.id)?.htmlHash !== p.htmlHash) this.repo.savePpaPage(p.id, p.htmlHash, p.items);
+      const next = mergePpa(fresh.map((p) => p.items));
+      const seenKey = `ppa:seen:${group.key}`;
+      const seen = this.repo.getMeta(seenKey);
+      const wave = ppaWave(next);
+      if (seen === null) {
+        this.repo.setMeta(seenKey, wave ?? "");
+        continue;
+      }
+      if (wave && wave !== seen) {
+        this.repo.setMeta(seenKey, wave);
+        this.repo.setMeta(`ppa:ask:${group.key}`, wave);
+        this.repo.clearPpaDebtsOfGroup(group.key);
+        out.newWaves.push(group.key);
+        continue;
+      }
+      out.events.push(...diffPpa(group.key, prev, next, today));
+    }
+    return out;
   }
 
   // ---------- polling ----------

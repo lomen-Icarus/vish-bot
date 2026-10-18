@@ -64,3 +64,122 @@ describe("хранение и долги", () => {
     expect(repo.ppaAskedWave(7, "виш-14-24")).toBeNull();
   });
 });
+
+import { ScheduleService } from "../src/schedule/service.js";
+import { diffPpa } from "../src/schedule/ppa.js";
+import { subjectKey } from "../src/schedule/subjects.js";
+import { dispatchPpaEvents, tickPpaAsk, type PpaSender } from "../src/notify/ppa.js";
+import type { PpaItem } from "../src/portal/ppa.js";
+import type { User } from "../src/db/repo.js";
+
+const item = (over: Partial<PpaItem> = {}): PpaItem => ({ date: "2026-10-22", start: 900, end: 980, room: "Г-303", subject: "Философия", kind: "Экз", attempt: 1, isDistance: false, ...over });
+
+/** Сервис с одной группой ВИШ-14-24 (две страницы: основная и «иот»), портал отдаёт pages[id]. */
+function setup(pages: Record<number, PpaItem[] | Error>) {
+  const repo = new Repo(openDatabase(":memory:"));
+  repo.upsertPortalGroups([
+    { id: 8824, name: "ВИШ-14-24", groupKey: "виш-14-24" },
+    { id: 10679, name: "ВИШ-14-24иот", groupKey: "виш-14-24" },
+  ]);
+  const portal = {
+    getPpaPage: async (id: number) => {
+      const p = pages[id];
+      if (p instanceof Error) throw p;
+      return { items: p ?? [], htmlHash: JSON.stringify(p ?? []) };
+    },
+  };
+  const svc = new ScheduleService(repo, portal as never, { facultyId: 32, hiddenPrefixes: [] });
+  return { repo, svc, pages };
+}
+
+function sender(quiet = false): PpaSender & { sent: Array<{ to: number; text: string; kind: string }> } {
+  const sent: Array<{ to: number; text: string; kind: string }> = [];
+  return {
+    sent,
+    async send(user: User, html: string, opts: { kind: string }) {
+      sent.push({ to: user.id, text: html, kind: opts.kind });
+      return true;
+    },
+    inQuietHours: () => quiet,
+  };
+}
+
+const NOON = { date: "2026-10-18", minutes: 12 * 60 } as never;
+
+describe("опрос ППА", () => {
+  it("первый опрос — тихо; потом перенос даёт событие; сбой страницы — не «отменили»", async () => {
+    const { repo, svc, pages } = setup({ 8824: [item()], 10679: [] });
+    expect(await svc.pollPpa("2026-10-18")).toMatchObject({ events: [], newWaves: [], fetched: 2, failed: 0 });
+    expect(svc.ppaItems(svc.group("виш-14-24")!)).toHaveLength(1);
+    pages[8824] = [item({ date: "2026-10-23", start: 810 })];
+    const r = await svc.pollPpa("2026-10-18");
+    expect(r.events).toEqual([expect.objectContaining({ change: "changed", subjectKey: subjectKey("Философия"), before: expect.objectContaining({ date: "2026-10-22" }), after: expect.objectContaining({ date: "2026-10-23" }) })]);
+    pages[8824] = new Error("портал лёг");
+    expect((await svc.pollPpa("2026-10-18")).events).toEqual([]);
+    expect(svc.ppaItems(svc.group("виш-14-24")!)[0]!.date).toBe("2026-10-23");
+    expect(repo.getMeta("ppa:ask:виш-14-24")).toBeNull();
+  });
+
+  it("новая волна (пусто → пересдачи): метка «спросить», старые отметки группы сброшены", async () => {
+    const { repo, svc, pages } = setup({ 8824: [], 10679: [] });
+    await svc.pollPpa("2027-01-20");
+    repo.touchUser(7, "student_u", "S");
+    repo.setPpaDebt(7, "виш-14-24", "old", true);
+    pages[8824] = [item({ date: "2027-02-10" })];
+    const r = await svc.pollPpa("2027-01-20");
+    expect(r.newWaves).toEqual(["виш-14-24"]);
+    expect(r.events).toEqual([]);
+    expect(repo.getMeta("ppa:ask:виш-14-24")).toBe("2027-весна");
+    expect(repo.ppaDebts(7, "виш-14-24")).toEqual([]);
+  });
+
+  it("diff: новая попытка, пропавшая будущая; прошедшие не шумят", () => {
+    const past = item({ date: "2026-10-01", subject: "Химия" });
+    const ev = diffPpa("g", [item(), past], [item(), item({ attempt: 2, date: "2026-11-05" })], "2026-10-18");
+    expect(ev.map((e) => e.change)).toEqual(["added"]);
+    expect(diffPpa("g", [item()], [], "2026-10-18").map((e) => e.change)).toEqual(["removed"]);
+  });
+
+  it("отмеченный предмет — как пара расписания; чужой — нет", async () => {
+    const { svc } = setup({ 8824: [item(), item({ subject: "Химия", date: "2026-10-20", start: 500 })], 10679: [] });
+    await svc.pollPpa("2026-10-18");
+    const g = svc.group("виш-14-24")!;
+    const lessons = svc.ppaLessons(g, [subjectKey("Философия")], "2026-10-18", "2026-10-31");
+    expect(lessons).toEqual([expect.objectContaining({ date: "2026-10-22", subject: "Философия", type: "экз", ppa: 1, slot: null, start: 900, status: "scheduled" })]);
+  });
+});
+
+describe("рассылка ППА", () => {
+  it("весть о переносе — только отметившим этот предмет", async () => {
+    const { repo } = setup({});
+    repo.touchUser(7, "a_u", "A");
+    repo.touchUser(8, "b_u", "B");
+    repo.updateUser(7, { groupKey: "виш-14-24" });
+    repo.updateUser(8, { groupKey: "виш-14-24" });
+    repo.setPpaDebt(7, "виш-14-24", subjectKey("Философия"), true);
+    const s = sender();
+    const n = await dispatchPpaEvents(s, repo, diffPpa("виш-14-24", [item()], [item({ date: "2026-10-23" })], "2026-10-18"), NOON);
+    expect(n).toBe(1);
+    expect(s.sent.map((x) => x.to)).toEqual([7]);
+    expect(s.sent[0]!.text).toContain("перенесена");
+    expect(s.sent[0]!.text).toContain("23.10");
+  });
+
+  it("вопрос «Есть долги?» — раз за волну, днём, только тем, у кого уведомления включены", async () => {
+    const { repo, svc, pages } = setup({ 8824: [], 10679: [] });
+    await svc.pollPpa("2026-10-18");
+    // Дата далеко впереди: вопрос смотрит на пересдачи от сегодняшнего дня.
+    pages[8824] = [item({ date: "2099-10-22" })];
+    await svc.pollPpa("2026-10-18");
+    repo.touchUser(7, "a_u", "A");
+    repo.touchUser(8, "b_u", "B");
+    repo.updateUser(7, { groupKey: "виш-14-24" });
+    repo.updateUser(8, { groupKey: "виш-14-24", notifyChanges: false, notifySession: false });
+    const s = sender();
+    expect(await tickPpaAsk(s, repo, svc, { date: "2026-10-18", minutes: 9 * 60 } as never)).toBe(0);
+    expect(await tickPpaAsk(s, repo, svc, NOON)).toBe(1);
+    expect(s.sent[0]).toMatchObject({ to: 7, kind: "ppa-ask" });
+    expect(s.sent[0]!.text).toContain("Есть долги?");
+    expect(await tickPpaAsk(s, repo, svc, NOON)).toBe(0);
+  });
+});

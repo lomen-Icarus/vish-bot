@@ -7,6 +7,7 @@ import type { NewsScanner } from "../news/scanner.js";
 import type { TeacherService } from "../portal/teachers.js";
 import type { WebinarService } from "../portal/webinars.js";
 import { logger } from "../logger.js";
+import { dispatchPpaEvents, tickPpaAsk } from "../notify/ppa.js";
 
 const TZ = "Europe/Moscow";
 const MIN_POLL_GAP_MS = 90_000;
@@ -54,6 +55,7 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
         if (backlog) logger.info({ backlog }, "quiet-hours change backlog delivered");
         const watched = await opts.notifier.tickTeacherWatches();
         if (watched) logger.info({ watched }, "teacher watch reminders sent");
+        await tickPpaAsk(opts.notifier, opts.repo, opts.service);
       } catch (err) {
         logger.error({ err }, "reminder tick failed");
       }
@@ -78,6 +80,19 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       logger.info("housekeeping done");
     }),
   ];
+  // Пересдачи (ППА): страница меняется редко — раз в час днём (весть о
+  // переносе тогда не придёт ночью) и вскоре после запуска.
+  const runPpa = async (reason: string): Promise<void> => {
+    try {
+      const r = await opts.service.pollPpa();
+      const sent = await dispatchPpaEvents(opts.notifier, opts.repo, r.events);
+      logger.info({ reason, fetched: r.fetched, failed: r.failed, events: r.events.length, waves: r.newWaves.length, sent }, "ППА опрошены");
+    } catch (err) {
+      logger.warn({ err: (err as Error).name, reason }, "опрос ППА не удался");
+    }
+  };
+  jobs.push(new Cron("23 8-21 * * *", { timezone: TZ, protect: true, name: "ppa" }, () => runPpa("cron")));
+  setTimeout(() => void runPpa("startup"), 90_000).unref();
   if (opts.webinars) {
     const webinars = opts.webinars;
     // Online lessons (teacher, topic) for today and the next two days; one page per day.

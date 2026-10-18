@@ -42,6 +42,8 @@ export interface Occurrence {
   weeksHint?: string;
   /** Topic of an online session, from the portal's webinar page (display only, never diffed). */
   topic?: string;
+  /** Пересдача (ППА): номер попытки, 0 — портал не указал. Только у отмеченных долгов человека. */
+  ppa?: number;
 }
 
 /** Identity of a lesson inside one day: what "the same lesson" means for diffing. */
@@ -84,6 +86,7 @@ export const LESSON_TYPE_LABELS: Record<string, string> = {
   экз: "экзамен",
   конс: "консультация",
   кп: "курсовой проект",
+  кр: "курсовая работа",
   крп: "курсовая работа",
   из: "инд. занятие",
   гз: "групповое занятие",
