@@ -200,6 +200,7 @@ function makeService(lessons: Occurrence[] = []): ScheduleService {
     groups: () => [group, other],
     lessonsOn: () => lessons,
     materialize: () => lessons,
+    weekInfo: () => ({ week: null, parity: null, semester: 1 }),
   } as unknown as ScheduleService;
 }
 
@@ -653,6 +654,49 @@ describe("группа: слайды — разовая просьба, опеч
     expect(systemText(requests[0]!)).not.toContain("не в каждом ответе");
   });
 });
+
+describe("расписание дня в чате — картинкой, как в личке", () => {
+  beforeEach(() => {
+    resetGroupChatState();
+    chatClock.now = () => ({ ...wallClock(), minutes: 12 * 60 });
+  });
+
+  it("модель зовёт show_day — бот шлёт картинку дня, ответ модели — подпись к ней, без отдельного текста", async () => {
+    const lessons = [occ("08:20", "09:40", { date: today, subject: "Компьютерная графика" }), occ("13:30", "14:50", { date: today, subject: "ЭВМ" })];
+    const { deps, requests } = setup({
+      answers: [fakeMessage([{ type: "tool_use", id: "tu1", name: "show_day", input: { date: today, group: "12-23" } } as Anthropic.ToolUseBlock], "tool_use"), textMsg("Две пары, с 08:20 до 14:50 👇")],
+    });
+    const rendered: Array<{ date: string; lessons: number }> = [];
+    Object.assign(deps, { service: makeService(lessons), webinars: null, renderer: { renderDay: async (i: { date: string; lessons: unknown[] }) => (rendered.push({ date: i.date, lessons: i.lessons.length }), Buffer.from("png")) } });
+    const sent = await send(deps, msg("расписание 12-23 на сегодня"));
+    expect(systemText(requests[0]!)).toContain("вызови show_day");
+    expect(JSON.stringify(requests[1]!.messages.at(-1)!.content)).toContain("Факты: 2 пар(ы), 08:20–14:50");
+    expect(rendered).toEqual([{ date: today, lessons: 2 }]);
+    const photo = sent.find((x) => x.method === "sendPhoto")!;
+    expect(photo.payload.caption).toBe("Две пары, с 08:20 до 14:50 👇");
+    expect(sent.some((x) => x.method === "sendMessage")).toBe(false);
+  });
+
+  it("картинок нет (отрисовщик выключен) — день текстом, как в личке, с подписью модели сверху", async () => {
+    const lessons = [occ("08:20", "09:40", { date: today, subject: "Компьютерная графика" })];
+    const { deps } = setup({
+      answers: [fakeMessage([{ type: "tool_use", id: "tu1", name: "show_day", input: { date: today } } as Anthropic.ToolUseBlock], "tool_use"), textMsg("Одна пара")],
+    });
+    Object.assign(deps, { service: makeService(lessons), webinars: null, renderer: null });
+    repoGroup(deps);
+    const sent = await send(deps, msg("что у меня сегодня"));
+    const texts = sent.filter((x) => x.method === "sendMessage").map((x) => String(x.payload.text));
+    expect(texts).toHaveLength(1);
+    expect(texts[0]).toContain("Одна пара");
+    expect(texts[0]).toContain("Компьютерная графика");
+  });
+});
+
+/** Группа спросившего — 12-23 (show_day без группы берёт её). */
+function repoGroup(deps: Deps): void {
+  deps.repo.touchUser(7, "u7", "U");
+  deps.repo.updateUser(7, { groupKey: group.key });
+}
 
 describe("сценарий: ответ гифкой", () => {
   beforeEach(() => {
