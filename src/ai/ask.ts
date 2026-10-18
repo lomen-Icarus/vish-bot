@@ -169,6 +169,15 @@ export class AskService {
     return found.length === 1 ? found[0]! : found.length > 1 ? (found.find((g) => g.key === fallback.key) ?? found[0]!) : null;
   }
 
+  /**
+   * Дата далеко от сегодняшней — почти всегда не тот год («21 октября» без
+   * года модель могла взять прошлогодним): говорим это прямо, а не «пар нет».
+   */
+  private static farDate(date: string, today: LocalDate): string | null {
+    const days = Math.abs(Date.parse(date) - Date.parse(today)) / 86_400_000;
+    return days > 200 ? `Дата ${date} — не этот учебный год: сегодня ${today}. Скорее всего, ошибка в годе — возьми ${today.slice(0, 4)} и спроси инструмент снова.` : null;
+  }
+
   private tools(own: LogicalGroup | null, subgroup: number | null, botHelp: string | undefined, mentions: AskMentions, userId: number, mode: "private" | "group" = "private", ppaMarked: ReadonlySet<string> = new Set()) {
     const service = this.service;
     const teachers = this.teachers;
@@ -189,9 +198,16 @@ export class AskService {
         if (!g) return `Группа «${input.group}» не найдена. Известные группы: ${service.groups().map((x) => x.title).join(", ")}`;
         remember(mentions.groupKeys, g.key, (a, b) => a === b);
         if (!isLocalDate(input.from) || !isLocalDate(input.to)) return "Даты нужны в формате YYYY-MM-DD";
+        const far = AskService.farDate(input.from, today);
+        if (far) return far;
         const to = addDays(input.from, 28) < input.to ? addDays(input.from, 28) : input.to;
         const list = service.materialize(g, input.from, to);
-        return `Расписание ${g.title} с ${input.from} по ${to}:\n${fmtLessons(own && g.key === own.key ? filterSubgroup(list, subgroup) : list, today)}`;
+        const shown = own && g.key === own.key ? filterSubgroup(list, subgroup) : list;
+        // Пустые дни называем явно, с днём недели: модель не угадывает их сама.
+        const busy = new Set(shown.map((o) => o.date));
+        const empty: string[] = [];
+        for (let d = input.from; d <= to; d = addDays(d, 1)) if (!busy.has(d)) empty.push(`${d} ${weekdayName(d)}`);
+        return `Расписание ${g.title} с ${input.from} по ${to}:${shown.length ? `\n${fmtLessons(shown, today)}` : " пар нет."}${shown.length && empty.length ? `\nБез пар: ${empty.join(", ")}.` : ""}`;
       },
     });
 
@@ -230,6 +246,8 @@ export class AskService {
       }),
       run: async (input) => {
         if (!isLocalDate(input.date)) return "Дата нужна в формате YYYY-MM-DD";
+        const far = AskService.farDate(input.date, today);
+        if (far) return far;
         const groups = service.groups().filter((g) => input.course == null || g.course === input.course);
         if (!groups.length) return input.course ? `Групп ${input.course} курса нет.` : "Список групп пуст.";
         const lines = groups.map((g) => {
@@ -381,6 +399,8 @@ export class AskService {
         const g = resolve(input.group);
         if (!g) return `Группа «${input.group}» не найдена. Известные группы: ${service.groups().map((x) => x.title).join(", ")}`;
         if (!isLocalDate(input.date)) return "Дата нужна в формате YYYY-MM-DD";
+        const far = AskService.farDate(input.date, today);
+        if (far) return far;
         const at = parseHHMM(input.time);
         if (at == null) return "Время нужно в формате ЧЧ:ММ";
         remember(mentions.groupKeys, g.key, (a, b) => a === b);
