@@ -392,15 +392,31 @@ describe("ревью: слоты из .env и заявки", () => {
     expect(r.recSlots()).toEqual([expect.objectContaining({ status: "ok" })]);
   });
 
-  it("отзыв одобренной, но не поставленной — без задания remove; пришло «installed» — тогда на отзыв", () => {
+  it("отзыв одобренной, но не поставленной — на отзыв: remove только своего слота (expect), повторяется до «removed»", () => {
     const r = repo();
     applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok" }] }); // учётка из .env
     const id = req(r, 2, "ВИШ-14-25", "approved");
-    expect(revokeRecRequest(r, id)).toEqual({ ok: true, immediate: true });
-    expect(recorderTasks(r)).toEqual([]);
+    expect(revokeRecRequest(r, id)).toEqual({ ok: true });
+    expect(r.recRequest(id)).toMatchObject({ state: "revoking", envelopeJson: null });
+    // Отчёт об установке потерялся — remove всё равно уходит каждый обмен, с номером своей заявки.
+    expect(recorderTasks(r)).toEqual([expect.objectContaining({ kind: "remove", requestId: id, expect: id })]);
     applyRecorderReport(r, { results: [{ id: `${id}:install`, requestId: id, code: "installed" }] });
     expect(r.recRequest(id)!.state).toBe("revoking");
-    expect(recorderTasks(r)).toEqual([expect.objectContaining({ kind: "remove", requestId: id })]);
+    applyRecorderReport(r, { results: [{ id: `${id}:remove`, requestId: id, code: "removed" }], slots: [{ group: "ВИШ-14-25", status: "ok" }] });
+    expect(r.recRequest(id)).toBeNull();
+  });
+
+  it("remove учётки из .env и подписанной владельцем — expect 0 (в слоте записывалки номер заявки 0)", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok" }, { group: "ВИШ-13-23", status: "ok" }] });
+    expect(revokeSlotWithoutRequest(r, "виш-14-25", 99)).toBe(true);
+    r.touchUser(7, "student_one", "S");
+    expect(adoptSlot(r, "13-23", "@student_one", 99)).toMatchObject({ ok: true, linked: true });
+    const adopted = r.activeRecRequest("виш-13-23")!;
+    expect(revokeRecRequest(r, adopted.id).ok).toBe(true);
+    const removes = recorderTasks(r).filter((t) => t.kind === "remove");
+    expect(removes).toHaveLength(2);
+    for (const t of removes) expect(t.expect).toBe(0);
   });
 
   it("слот пропал — его подпись владельца и «проверить снова» тоже", () => {

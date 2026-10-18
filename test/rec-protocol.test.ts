@@ -181,8 +181,8 @@ describe("лимит заявок и /soon", () => {
     r.setRecRequestState(expired, "expired", { dropEnvelope: true });
     r.forgetUser(5);
     expect(r.recRequest(active)).toMatchObject({ state: "revoking", username: null });
-    // Одобренную, но не поставленную — без задания remove (оно снесло бы чужую учётку в слоте).
-    expect(r.recRequest(approved)).toMatchObject({ state: "revoked_early", envelopeJson: null, username: null, groupKey: "виш-12-23" });
+    // Одобренную, но, может быть, ещё не поставленную — тоже на отзыв: remove уберёт только слот этой заявки.
+    expect(r.recRequest(approved)).toMatchObject({ state: "revoking", envelopeJson: null, username: null, groupKey: "виш-12-23" });
     expect(r.recRequest(old)).toMatchObject({ state: "forgotten", username: null, groupKey: "", envelopeJson: null });
     expect(r.recRequest(expired)).toBeNull();
     // /soon не обнуляет месячный лимит: обе на отзыве и обезличенная rejected_auth считаются, истёкшая — нет.

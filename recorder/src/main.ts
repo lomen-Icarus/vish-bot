@@ -54,6 +54,9 @@ async function recordOne(cfg: RecorderConfig, store: AccountStore, general: Gene
   // Профиль для групп этой пары — первым; не пустили — общий. Не пустила
   // основная комната потока — пробуем остальные его комнаты.
   const profiles = [...cfg.profiles, ...store.profiles()];
+  // Какая учётка стояла в слоте, когда снимали профили: заход под ней не
+  // должен отметить «пустило» учётку, которую успели поставить вместо неё.
+  const installedAt = new Map(store.list().map((s) => [s.group, s.installedAt]));
   let join = await joinWithProfiles(portal, row, profiles);
   for (const alt of row.alts ?? []) {
     if (join.url) break;
@@ -68,7 +71,10 @@ async function recordOne(cfg: RecorderConfig, store: AccountStore, general: Gene
   // Без имени преподавателя: хвост лога попадает в публичный лог деплоя (Actions).
   log.info({ subject: row.subject, groups: row.groups, profile: join.profile }, "захожу на вебинар");
   // Заход под учёткой студента — уже проверка «аккаунт жив»: отодвигаем плановую.
-  if (join.profile?.startsWith("slot:")) store.update(join.profile.slice(5), { status: "ok", failures: 0, lastOkAt: new Date().toISOString(), nextCheckAt: Date.now() + CHECK_EVERY_MS });
+  if (join.profile?.startsWith("slot:")) {
+    const group = join.profile.slice(5);
+    store.update(group, { status: "ok", failures: 0, lastOkAt: new Date().toISOString(), nextCheckAt: Date.now() + CHECK_EVERY_MS }, installedAt.get(group));
+  }
   if (join.profile === "1") general?.noteJoin();
   // Папка кадров своя у каждой пары (дата + время + предмет). Если съёмку
   // этой пары прервали (перезапуск, повторный заход), снятое до этого

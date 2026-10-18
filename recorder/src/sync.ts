@@ -15,7 +15,9 @@
  *             ещё не ставим: заявку одобряет человек. Расшифрованное тут же
  *             забываем.
  *   install — расшифровать и поставить учётку в слот группы.
- *   remove  — убрать слот (отзыв студентом или админом).
+ *   remove  — убрать слот, если в нём учётка этой заявки (отзыв студентом
+ *             или админом). Чужую не трогаем, но отвечаем «removed»: бот
+ *             повторяет remove, пока не услышит ответ.
  *   recheck — проверить потерянный слот заново.
  * В логах — только номер заявки, группа и результат.
  */
@@ -37,6 +39,11 @@ export interface Task {
   codes: string[];
   /** Для verify/install. */
   envelope?: Envelope;
+  /**
+   * Для remove: чья учётка должна стоять в слоте (номер заявки; 0 — из .env).
+   * Нет — номер самой заявки (бот старой версии).
+   */
+  expect?: number;
 }
 
 export type ResultCode = "login_ok" | "login_failed" | "group_mismatch" | "portal_down" | "installed" | "removed" | "bad_envelope";
@@ -107,9 +114,14 @@ export async function runTask(task: Task, deps: SyncDeps): Promise<TaskResult> {
       return verifyLogin(task, deps);
     case "install":
       return installSlot(task, deps);
-    case "remove":
-      deps.store.remove(task.group);
+    case "remove": {
+      // Только слот своей заявки: отзыв ещё не поставленной (или повтор
+      // старого remove после замены) иначе снёс бы учётку, которая сейчас
+      // стоит в слоте группы, — чужую или из .env.
+      const slot = deps.store.get(task.group);
+      if (slot && slot.requestId === (task.expect ?? task.requestId)) deps.store.remove(task.group);
       return { id: task.id, requestId: task.requestId, code: "removed" };
+    }
     case "recheck": {
       if (task.group === GENERAL_SLOT && deps.general) {
         const check = await checkStudentLogin(deps.general.profile.login, deps.general.profile.password, { proxyUrl: deps.proxyUrl });

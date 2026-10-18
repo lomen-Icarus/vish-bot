@@ -300,11 +300,7 @@ recSlotsHandlers.callbackQuery("rqme:rvy", async (ctx) => {
   logger.info({ request: req.id, user: ctx.user.id, ok: res.ok }, "заявка на запись: отозвана студентом");
   await ctx.answerCallbackQuery();
   if (!res.ok) return void (await ctx.editMessageText("Уже убираю учётку — подожди минуту.").catch(() => undefined));
-  const text = !res.immediate
-    ? "🗑 Отзыв принят: учётку уберу в ближайшую минуту, идущая пара доснимется. Когда уберу — напишу."
-    : req.state === "approved"
-      ? "🗑 Отозвано: учётку ещё не поставили — логин и пароль удалены."
-      : "🗑 Заявка снята, логин и пароль удалены.";
+  const text = res.immediate ? "🗑 Заявка снята, логин и пароль удалены." : "🗑 Отзыв принят: учётку уберу в ближайшую минуту, идущая пара доснимется. Когда уберу — напишу.";
   await ctx.editMessageText(text).catch(() => undefined);
   const note = placed ? `🗑 ${who(req)} отозвал(а) учётку из записи группы ${esc(req.groupTitle)}.` : `🗑 ${who(req)} снял(а) заявку №${req.id} (${esc(req.groupTitle)}).`;
   for (const id of ctx.deps.config.ADMIN_IDS) await ctx.api.sendMessage(id, note, { parse_mode: "HTML" }).catch(() => undefined);
