@@ -28,6 +28,7 @@ import type { QaMedia } from "../../chat/qa.js";
 import { featureReply, isNight, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, SLEEPY_IDLE_MS, sleepyLine } from "../../chat/social.js";
 import { confirmSlideSub, forgetIntro, handleIntro, handleSlidesRequest, introGroup, introTargets, introTool, knownFirstName, slidesTool, type SlidesReply, type SlidesToolState } from "../social.js";
 import { sendDeck } from "../deck.js";
+import { dayTool, sendDays, type DayToolState } from "../chatDay.js";
 
 export const groupChatHandlers = new Composer<BotContext>();
 
@@ -341,10 +342,13 @@ groupChatHandlers.on("message", async (ctx, next) => {
     const history = deps.repo.recentChat(chatId, userId, 6 * 60 * 60_000, 6).map((h) => ({ question: h.question, answer: h.answer }));
     // Слайды: модель зовёт chat_slides, а кнопки или PDF бот прикладывает к её ответу сам.
     const slides: SlidesToolState = {};
+    // Расписание дня — картинкой, как в личке: бот прикладывает её к ответу сам.
+    const days: DayToolState = {};
     const tools: ChatTool[] = [
       ...(deps.ask?.groupTools({ group, subgroup: needGroup(ctx) ? ctx.user.subgroup : null, userId, botHelp: featuresText(deps) }) ?? []),
       ideaTool(ctx, title),
       slidesTool(ctx, group, slides),
+      dayTool(ctx, group, days),
       // Знакомство в свободной форме: «знакомься, это Фамилия Имя — @ник».
       introTool(ctx, introTargets(msg, me)),
     ];
@@ -370,8 +374,15 @@ groupChatHandlers.on("message", async (ctx, next) => {
     // к ответу нужны кнопки слайдов: у гифки-ответа их не будет.
     const kb = result.refused ? undefined : slides.kb;
     const media = !result.refused && !kb && result.top?.how === "exact" && result.top.entry.media ? result.top.entry.media : null;
-    if (media) await sendMedia(ctx, media, answer);
-    else await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(kb ? { reply_markup: kb } : {}) });
+    // День картинкой: ответ модели — подпись к ней, отдельным текстом не дублируем.
+    const dayFirst = !result.refused && !kb && !media && !!days.days?.length;
+    if (dayFirst && (await sendDays(ctx, days, answer, msg.message_id))) {
+      // подпись ушла вместе с картинкой
+    } else if (media) await sendMedia(ctx, media, answer);
+    else {
+      await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(kb ? { reply_markup: kb } : {}) });
+      if (!result.refused && !dayFirst && days.days?.length) await sendDays(ctx, days, null, msg.message_id);
+    }
     if (!result.refused) for (const deck of slides.decks ?? []) await sendDeck(ctx, deck);
     deps.repo.logChat(chatId, userId, text || "(позвал без текста)", answer);
     service.memory.push(chatId, { at: Date.now(), userId: null, name: me.first_name, text: answer, toUserId: userId });
