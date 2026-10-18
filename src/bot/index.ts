@@ -1,7 +1,8 @@
 import { Bot, GrammyError, HttpError, session } from "grammy";
 import { autoRetry } from "@grammyjs/auto-retry";
+import { sequentialize } from "@grammyjs/runner";
 import type { BotContext, Deps } from "./context.js";
-import { clearPending } from "./context.js";
+import { clearPending, takePending, TEXT_PENDING } from "./context.js";
 import { scheduleHandlers } from "./handlers/schedule.js";
 import { settingsHandlers } from "./handlers/settings.js";
 import { adminHandlers } from "./handlers/admin.js";
@@ -37,6 +38,11 @@ export function createBot(deps: Deps): Bot<BotContext> {
   // Меню человека — с первым его сообщением, если поменялось (menuRefresh.ts).
   bot.api.config.use(menuRefresher(deps.repo));
 
+  // Сообщения одного человека в личке — по очереди: runner обрабатывает
+  // апдейты параллельно, и альбом из двух скриншотов (два апдейта сразу)
+  // иначе дважды читал бы и перезаписывал одно ожидание ввода — второй
+  // скриншот выпадал из обращения. Кнопки и групповые чаты не ждут.
+  bot.use(sequentialize((ctx) => (ctx.msg && !ctx.callbackQuery && ctx.chat?.type === "private" && ctx.from ? `u${ctx.from.id}` : undefined)));
   bot.use(session({ initial: () => ({}) }));
 
   // Attach deps and the user record to every update.
@@ -108,11 +114,18 @@ export function createBot(deps: Deps): Bot<BotContext> {
     await next();
   });
 
-  // Кнопка нижнего меню — человек передумал: ожидание ввода (обращение,
-  // фамилия, вопрос ИИ, своё время календаря) снимаем здесь, один раз для
-  // всех, а не в каждом обработчике — «🔍 Найти» и «🗂 Ещё» стоят раньше них.
+  // Кнопка нижнего меню или команда — человек передумал: ожидание текста
+  // (обращение, фамилия, вопрос ИИ, своё время календаря) снимаем здесь, один
+  // раз для всех, а не в каждом обработчике — «🔍 Найти» и «🗂 Ещё» стоят
+  // раньше них. Команда — для тех, у кого меню скрыто: кнопок у них нет, и
+  // «14-24» после /today иначе ушло бы вопросом ИИ. Ожидания кнопок под
+  // сообщением (рассылка админа) не трогаем — см. TEXT_PENDING.
   bot.on("message:text", async (ctx, next) => {
-    if (isMenuText(ctx.msg.text)) clearPending(deps, ctx.user.id);
+    const text = ctx.msg.text;
+    if (isMenuText(text) || text.startsWith("/")) {
+      const pending = takePending(deps, ctx.user.id);
+      if (pending && TEXT_PENDING.has(pending.kind)) clearPending(deps, ctx.user.id);
+    }
     await next();
   });
 

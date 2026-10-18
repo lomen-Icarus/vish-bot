@@ -15,7 +15,7 @@ import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { BTN, btnLabels, FIND_BTN, isMenuText, MORE_BTN } from "../keyboards.js";
 import { needGroup } from "../views.js";
-import { esc } from "../../schedule/format.js";
+import { esc, plural } from "../../schedule/format.js";
 import { logger } from "../../logger.js";
 import { promptPeople } from "../people.js";
 import { offerCalendar } from "./calendar.js";
@@ -158,7 +158,9 @@ hubHandlers.callbackQuery(/^sup:(anon|named|back)$/, async (ctx) => {
 const MAX_TICKET_MESSAGES = 10;
 
 const confirmText = (anon: boolean, count = 1): string =>
-  `Отправить ${count > 1 ? `эти ${count} сообщения` : "это"} в Министерство Жалоб ${anon ? "🕶 анонимно" : "👤 с твоим ником"}?${count > 1 ? "" : " Можно дописать ещё — уйдёт одним обращением."}`;
+  `Отправить ${count > 1 ? `эти ${count} ${plural(count, "сообщение", "сообщения", "сообщений")}` : "это"} в Министерство Жалоб ${anon ? "🕶 анонимно" : "👤 с твоим ником"}?${
+    count >= MAX_TICKET_MESSAGES ? ` Больше ${MAX_TICKET_MESSAGES} в одно обращение не войдёт — остальное напиши следующим.` : count > 1 ? "" : " Можно дописать ещё — уйдёт одним обращением."
+  }`;
 function confirmKeyboard(anon: boolean): InlineKeyboard {
   return new InlineKeyboard().text("✅ Отправить", "sup:send").text("✖️ Не отправлять", "sup:back").row().text(anon ? "👤 Отправить с ником" : "🕶 Отправить анонимно", anon ? "sup:named" : "sup:anon");
 }
@@ -184,10 +186,20 @@ hubHandlers.on("message", async (ctx, next) => {
     return void (await relayReply(ctx, pending.ticket ?? 0));
   }
   const anon = !!pending.anon;
-  const messageIds = [...(pending.messageIds ?? []), ctx.msg.message_id].slice(-MAX_TICKET_MESSAGES);
-  if (pending.confirmId) await ctx.api.deleteMessage(ctx.chat.id, pending.confirmId).catch(() => undefined);
+  const was = pending.messageIds ?? [];
+  // Сверх лимита — не добавляем: первые сообщения обычно и есть суть жалобы.
+  if (was.length >= MAX_TICKET_MESSAGES) {
+    await ctx.reply(`В одном обращении — до ${MAX_TICKET_MESSAGES} сообщений. Отправь эти кнопкой выше, а это — следующим обращением.`);
+    return;
+  }
+  const messageIds = [...was, ctx.msg.message_id];
+  // Сначала запоминаем сообщение, потом задаём вопрос: не дошёл вопрос —
+  // сообщение всё равно в обращении, кнопка «Отправить» прежнего вопроса работает.
+  setPending(ctx.deps, ctx.user.id, { ...pending, kind: "support", anon, chatId: ctx.chat.id, messageIds }, SUPPORT_TTL_MS);
   const confirm = await ctx.reply(confirmText(anon, messageIds.length), { reply_parameters: { message_id: ctx.msg.message_id, allow_sending_without_reply: true }, reply_markup: confirmKeyboard(anon) });
-  setPending(ctx.deps, ctx.user.id, { kind: "support", anon, chatId: ctx.chat.id, messageIds, confirmId: confirm.message_id }, SUPPORT_TTL_MS);
+  if (pending.confirmId) await ctx.api.deleteMessage(ctx.chat.id, pending.confirmId).catch(() => undefined);
+  const now = takePending(ctx.deps, ctx.user.id);
+  if (now?.kind === "support") setPending(ctx.deps, ctx.user.id, { ...now, confirmId: confirm.message_id }, SUPPORT_TTL_MS);
 });
 
 hubHandlers.callbackQuery("sup:send", async (ctx) => {
@@ -219,10 +231,12 @@ async function sendTicket(ctx: BotContext, chatId: number, messageIds: number[],
   let delivered = 0;
   for (const adminId of ctx.deps.config.ADMIN_IDS) {
     try {
-      await ctx.api.sendMessage(adminId, `🏛 <b>Обращение #${ticket}</b> ${who}`, { parse_mode: "HTML" });
-      // Кнопки «Ответить / Не принимать» — под последним сообщением обращения.
-      for (const [i, messageId] of messageIds.entries()) await ctx.api.copyMessage(adminId, chatId, messageId, i === messageIds.length - 1 ? { reply_markup: kb } : {});
-      delivered++;
+      // Кнопки «Ответить / Не принимать» — под заголовком: у copyMessages их нет.
+      await ctx.api.sendMessage(adminId, `🏛 <b>Обращение #${ticket}</b> ${who}`, { parse_mode: "HTML", reply_markup: kb });
+      // Одним вызовом и по порядку; удалённое человеком сообщение Telegram
+      // просто пропустит, а не оборвёт обращение на середине.
+      const copied = await ctx.api.copyMessages(adminId, chatId, messageIds);
+      if (copied.length) delivered++;
     } catch (err) {
       logger.warn({ err: String(err).slice(0, 200), ticket }, "support ticket not delivered");
     }

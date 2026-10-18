@@ -63,6 +63,7 @@ async function run(deps: Deps, update: Update, from = USER, chain: Composer<BotC
   const api = new Api("123:FAKE");
   api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
+    if (method === "copyMessages") return { ok: true, result: (payload as { message_ids: number[] }).message_ids.map((m) => ({ message_id: m + 1000 })) as never };
     return { ok: true, result: { message_id: 500 + calls.length, date: 0, chat: { id: from, type: "private" } } as never };
   });
   const ctx = new Context(update, api, ME) as BotContext;
@@ -82,6 +83,7 @@ async function botWith(deps: Deps) {
   const calls: Call[] = [];
   bot.api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
+    if (method === "copyMessages") return { ok: true, result: [{ message_id: 78 }] as never };
     return { ok: true, result: { message_id: 77, date: 0, chat: { id: USER, type: "private" } } as never };
   });
   return { bot, calls };
@@ -112,11 +114,57 @@ describe("обращение из нескольких сообщений", () =
     expect(second.some((c) => c.method === "deleteMessage")).toBe(true);
     expect(String(second.find((c) => c.method === "sendMessage")!.payload.text)).toContain("эти 2 сообщения");
     const sent = await run(deps, press("sup:send"));
-    const copies = sent.filter((c) => c.method === "copyMessage");
-    expect(copies).toHaveLength(2);
-    // Кнопки «Ответить / Не принимать» — только под последним.
-    expect(JSON.stringify(copies[0]!.payload.reply_markup ?? null)).not.toContain("supa:r");
-    expect(JSON.stringify(copies[1]!.payload.reply_markup)).toContain("supa:r:1");
+    // Одним copyMessages и по порядку; кнопки «Ответить / Не принимать» — под заголовком.
+    const copies = sent.filter((c) => c.method === "copyMessages");
+    expect(copies).toHaveLength(1);
+    const ids = copies[0]!.payload.message_ids as number[];
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBeLessThan(ids[1]!);
+    const header = sent.find((c) => c.method === "sendMessage" && c.payload.chat_id === ADMIN)!;
+    expect(JSON.stringify(header.payload.reply_markup)).toContain("supa:r:1");
+  });
+
+  it("5 сообщений — «эти 5 сообщений»; одиннадцатое не вытесняет первые", async () => {
+    const { deps } = makeDeps();
+    await run(deps, text(BTN.complaint));
+    let last: Call[] = [];
+    for (let i = 1; i <= 5; i++) last = await run(deps, text(`часть ${i}`));
+    expect(String(last.find((c) => c.method === "sendMessage")!.payload.text)).toContain("эти 5 сообщений");
+    for (let i = 6; i <= 10; i++) await run(deps, text(`часть ${i}`));
+    const first = deps.pending.get(USER)!.messageIds![0];
+    const over = await run(deps, text("одиннадцатое"));
+    expect(String(over.find((c) => c.method === "sendMessage")!.payload.text)).toContain("до 10 сообщений");
+    expect(deps.pending.get(USER)!.messageIds).toHaveLength(10);
+    expect(deps.pending.get(USER)!.messageIds![0]).toBe(first);
+  });
+});
+
+describe("альбом в обращении", () => {
+  it("два скриншота одним альбомом (два апдейта сразу) — оба в обращении", async () => {
+    const { deps } = makeDeps();
+    const { bot } = await botWith(deps);
+    await bot.handleUpdate(text(BTN.complaint));
+    const shot = (): Update => ({ update_id: mid, message: { message_id: mid++, date: 0, chat: { id: USER, type: "private", first_name: "U" }, from: { id: USER, is_bot: false, first_name: "U" }, media_group_id: "g1", photo: [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }] } });
+    await Promise.all([bot.handleUpdate(shot()), bot.handleUpdate(shot())]);
+    expect(deps.pending.get(USER)?.messageIds).toHaveLength(2);
+  });
+});
+
+describe("ожидание ввода и команды", () => {
+  it("«💬 Спросить ИИ» → /today → «14-24»: это уже не вопрос ИИ", async () => {
+    const { deps } = makeDeps();
+    const { bot } = await botWith(deps);
+    deps.pending.set(USER, { kind: "ask", expiresAt: Date.now() + 60_000 });
+    await bot.handleUpdate(text("/today"));
+    expect(deps.pending.get(USER)).toBeUndefined();
+  });
+
+  it("кнопка меню не сбрасывает экран рассылки админа («Кому отправить?»)", async () => {
+    const { deps } = makeDeps();
+    const { bot } = await botWith(deps);
+    deps.pending.set(ADMIN, { kind: "broadcast-confirm", chatId: ADMIN, messageId: 5, target: "all", expiresAt: Date.now() + 60_000 });
+    await bot.handleUpdate(text(BTN.today, ADMIN));
+    expect(deps.pending.get(ADMIN)?.kind).toBe("broadcast-confirm");
   });
 });
 
