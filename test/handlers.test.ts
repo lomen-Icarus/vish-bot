@@ -198,8 +198,8 @@ describe("search", () => {
     } as unknown as Deps["teachers"];
     await run(textUpdate("/search как включить напоминания за 5 минут"), deps);
     expect(asked).toEqual([]);
-    await run(textUpdate("/search Троишестова"), deps);
-    expect(asked).toEqual(["Троишестова"]);
+    await run(textUpdate("/search Пятиплетова"), deps);
+    expect(asked).toEqual(["Пятиплетова"]);
   });
 });
 

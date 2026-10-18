@@ -1,5 +1,5 @@
 /**
- * Fuzzy matching of Russian personal names ("Троишестова Д. С.", "Иванова
+ * Fuzzy matching of Russian personal names ("Пятиплетова Д. С.", "Иванова
  * Ирина"). Shared by the teacher directory and the student directory: both get
  * typed by hand, with typos, in any word order, sometimes with initials.
  */
@@ -68,7 +68,7 @@ export interface NameMatch {
 /**
  * Score how well a directory entry ("Иванова И.И." / "Иванова Ирина Ивановна")
  * matches a typed query ("иванова", "Ирина Иванова", "иванова и", "иван",
- * "троишестава"). Words may come in any order; a one-letter name word is an
+ * "пятиплетава"). Words may come in any order; a one-letter name word is an
  * initial and matches any query word starting with it. 0 = no match.
  */
 export function nameMatch(name: string, query: string): NameMatch {
@@ -78,7 +78,7 @@ export function nameMatch(name: string, query: string): NameMatch {
   const surname = n[0]!;
   let score = 0;
   // At least one query word must match a real name word: matching only initials
-  // ("Троишестова" against the "Т." of "Кожина Т. Н.") is not a match at all.
+  // ("Пятиплетова" against the "П." of "Образцова П. Н.") is not a match at all.
   let substantive = false;
   let fuzzy = false;
   const used = new Set<number>();
@@ -104,7 +104,7 @@ export function nameMatch(name: string, query: string): NameMatch {
       }
       else if (qw.length >= 4 && nw.includes(qw)) s = 1;
       else if (qw.length >= 4 && nw.length >= 4) {
-        // Typos: "троишестава" → "троишестова", "иванав" → "иванов".
+        // Typos: "пятиплетава" → "пятиплетова", "иванав" → "иванов".
         const budget = typoBudget(Math.min(qw.length, nw.length));
         if (budget > 0 && editDistance(qw, nw, budget) <= budget) {
           s = i === 0 ? 4 : 2;

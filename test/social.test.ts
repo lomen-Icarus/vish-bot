@@ -614,6 +614,18 @@ describe("группа: слайды — разовая просьба, опеч
     expect(texts(sent)[0]).toContain("3 части");
   });
 
+  it("у двух групп в один день своя «Физика» частями — в чат уходят части своей пары, не вперемешку", async () => {
+    const { deps, repo } = setup();
+    const file = tmpFile("deck.pdf");
+    writeFileSync(file, Buffer.from("%PDF-1.4\n"));
+    for (const i of [1, 2]) repo.addSlideDeck({ date: today, subject: "Физика", teacher: null, title: `Тема · часть ${i} из 2`, groups: ["ВИШ-12-23"], slides: 4, file, bytes: 9 });
+    for (const i of [1, 2]) repo.addSlideDeck({ date: today, subject: "Физика", teacher: null, title: `Тема · часть ${i} из 2`, groups: ["ВИШ-14-25"], slides: 4, file, bytes: 9 });
+    const sent = await send(deps, msg("скинь слайды по физике"));
+    expect(sent.filter((s) => s.method === "sendDocument")).toHaveLength(2);
+    // Группы у спросившего нет — свежая пара (14-25), только её 2 части, а не 4 вперемешку.
+    expect(texts(sent)[0]).toContain("(ВИШ-14-25), 2 части");
+  });
+
   it("хвост с опечаткой («по БЖД пожаслуйста») не мешает найти предмет", async () => {
     const { deps, repo } = setup();
     repo.replaceWebinars(addDays(today, 1), [webinar({ subject: "Безопасность жизнедеятельности", groups: ["ВИШ-14-24"] })]);

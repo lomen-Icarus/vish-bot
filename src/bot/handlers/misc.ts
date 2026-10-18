@@ -296,7 +296,8 @@ function subjectsOfAllGroups(service: BotContext["deps"]["service"], today: Loca
   const cached = allSubjectsCache.get(service);
   if (cached && cached.day === today && Date.now() - cached.at < ALL_SUBJECTS_TTL_MS) return cached.map;
   const map = new Map<string, Set<string>>();
-  for (const g of service.groups()) {
+  const groups = service.groups();
+  for (const g of groups) {
     for (const o of service.materialize(g, today, addDays(today, 56))) {
       if (o.status !== "scheduled") continue;
       const titles = map.get(o.subject) ?? new Set<string>();
@@ -305,8 +306,9 @@ function subjectsOfAllGroups(service: BotContext["deps"]["service"], today: Loca
     }
   }
   // Групп ещё нет (бот только запустился, портал не опрошен) — не запоминаем
-  // пустоту на 10 минут.
-  if (map.size) allSubjectsCache.set(service, { at: Date.now(), day: today, map });
+  // пустоту на 10 минут. Группы есть, а пар нет (лето) — пустоту запоминаем:
+  // иначе каждое «спасибо» разворачивало бы расписание всех групп заново.
+  if (groups.length) allSubjectsCache.set(service, { at: Date.now(), day: today, map });
   return map;
 }
 
@@ -457,7 +459,7 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
  * (callback_data на текст не хватит). У каждой кнопки свой номер: нажатие под
  * старым ответом спрашивает ИИ про тот вопрос, а не про последний набранный.
  */
-const freeTexts = new Map<number, { userId: number; q: string; at: number }>();
+const freeTexts = new Map<number, { userId: number; q: string; at: number; state?: "asking" | "answered" }>();
 // Номера — от времени запуска: после деплоя кнопка под старым ответом не
 // совпадёт с новым вопросом того же человека (раньше нумерация шла с 1).
 let freeTextSeq = Math.floor(Date.now() / 1000);
@@ -491,15 +493,25 @@ export async function freeTextSearch(ctx: BotContext, text: string): Promise<voi
 
 // «fx:ai» без номера — кнопка из прошлой версии: просто открыть вопрос ИИ.
 miscHandlers.callbackQuery(/^fx:ai(?::(\d+))?$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
   const seq = Number(ctx.match[1] ?? 0);
   const saved = freeTexts.get(seq);
-  if (!saved || saved.userId !== ctx.user.id || Date.now() - saved.at > FREE_TEXT_TTL_MS) return startSearch(ctx);
-  // На время вопроса запись убираем — двойное нажатие не потратит лимит
-  // дважды; ИИ не ответил — возвращаем, «попробуй чуть позже» той же кнопкой.
-  freeTexts.delete(seq);
-  const outcome = await askAi(ctx, saved.q);
-  if (outcome === "failed") freeTexts.set(seq, saved);
+  if (!saved || saved.userId !== ctx.user.id || Date.now() - saved.at > FREE_TEXT_TTL_MS) {
+    await ctx.answerCallbackQuery();
+    return startSearch(ctx);
+  }
+  // Повторное нажатие — не второй вопрос и не режим «спрашивай что угодно»
+  // (следующее «спасибо» тратило бы лимит): только подсказка. ИИ не ответил
+  // или упёрся в лимит — та же кнопка спросит снова.
+  if (saved.state) return void (await ctx.answerCallbackQuery({ text: saved.state === "asking" ? "Уже спрашиваю — ответ придёт сюда" : "ИИ уже ответил — смотри выше" }));
+  await ctx.answerCallbackQuery();
+  saved.state = "asking";
+  let outcome: Awaited<ReturnType<typeof askAi>> = "failed";
+  try {
+    outcome = await askAi(ctx, saved.q);
+  } finally {
+    // Упало с исключением — кнопка не должна остаться «уже спрашиваю» на 15 минут.
+    saved.state = outcome === "answered" ? "answered" : undefined;
+  }
   if (outcome === "limit-user") await ctx.reply(`На сегодня твой лимит вопросов к ИИ исчерпан (${aiLimits(ctx.deps.repo, ctx.deps.config, todayMsk()).perUser} в день).`);
   else if (outcome === "limit-global") await ctx.reply("Сегодня бот уже много отвечал, общий дневной бюджет вопросов закончился.");
   else if (outcome === "disabled") await ctx.reply("Вопросы ИИ сейчас выключены.");

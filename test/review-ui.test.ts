@@ -22,7 +22,7 @@ import type { BotContext, Deps, PendingState } from "../src/bot/context.js";
 const ME: UserFromGetMe = { id: 1, is_bot: true, first_name: "vish", username: "vish_bot", can_join_groups: true, can_read_all_group_messages: false, supports_inline_queries: true, can_connect_to_business: false, has_main_web_app: false };
 const ADMIN = 900;
 const USER = 7;
-type Call = { method: string; payload: Record<string, unknown> };
+type Call = { method: string; payload: Record<string, unknown>; id?: number };
 
 function makeDeps(opts: { answer?: (q: string) => string } = {}) {
   const repo = new Repo(openDatabase(":memory:"));
@@ -58,13 +58,15 @@ let mid = 1000;
 const text = (t: string, from = USER): Update => ({ update_id: mid, message: { message_id: mid++, date: 0, chat: { id: from, type: "private", first_name: "U" }, from: { id: from, is_bot: false, first_name: "U", username: "student_u" }, text: t } });
 const press = (data: string, from = USER): Update => ({ update_id: mid++, callback_query: { id: "1", from: { id: from, is_bot: false, first_name: "U" }, chat_instance: "1", data, message: { message_id: 3, date: 0, chat: { id: from, type: "private", first_name: "U" }, text: "x" } as never } });
 
+/** Номера сообщений бота — сквозные, как в Telegram. */
+let sentId = 500;
 async function run(deps: Deps, update: Update, from = USER, chain: Composer<BotContext>[] = [hubHandlers, slidesHandlers, miscHandlers]): Promise<Call[]> {
   const calls: Call[] = [];
   const api = new Api("123:FAKE");
   api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, unknown> });
     if (method === "copyMessages") return { ok: true, result: (payload as { message_ids: number[] }).message_ids.map((m) => ({ message_id: m + 1000 })) as never };
-    return { ok: true, result: { message_id: 500 + calls.length, date: 0, chat: { id: from, type: "private" } } as never };
+    return { ok: true, result: { message_id: sentId++, date: 0, chat: { id: from, type: "private" } } as never };
   });
   const ctx = new Context(update, api, ME) as BotContext;
   ctx.deps = deps;
@@ -76,15 +78,23 @@ async function run(deps: Deps, update: Update, from = USER, chain: Composer<BotC
   return calls;
 }
 
-async function botWith(deps: Deps) {
+/** delay — задержка ответа Telegram на sendMessage (по очереди вызовов), чтобы апдейты альбома шли вперемешку. */
+async function botWith(deps: Deps, opts: { delays?: number[]; copied?: (ids: number[]) => number[] } = {}) {
   const { createBot } = await import("../src/bot/index.js");
   const bot = createBot(deps);
   bot.botInfo = ME;
   const calls: Call[] = [];
+  let next = 7000;
   bot.api.config.use(async (_prev, method, payload) => {
-    calls.push({ method, payload: payload as Record<string, unknown> });
-    if (method === "copyMessages") return { ok: true, result: [{ message_id: 78 }] as never };
-    return { ok: true, result: { message_id: 77, date: 0, chat: { id: USER, type: "private" } } as never };
+    const call: Call = { method, payload: payload as Record<string, unknown> };
+    calls.push(call);
+    if (method === "copyMessages") {
+      const ids = (payload as { message_ids: number[] }).message_ids;
+      return { ok: true, result: (opts.copied ? opts.copied(ids) : ids).map((m) => ({ message_id: m + 1000 })) as never };
+    }
+    const id = (call.id = next++);
+    if (method === "sendMessage") await new Promise((r) => setTimeout(r, opts.delays?.shift() ?? 0));
+    return { ok: true, result: { message_id: id, date: 0, chat: { id: USER, type: "private" } } as never };
   });
   return { bot, calls };
 }
@@ -120,8 +130,10 @@ describe("обращение из нескольких сообщений", () =
     const ids = copies[0]!.payload.message_ids as number[];
     expect(ids).toHaveLength(2);
     expect(ids[0]).toBeLessThan(ids[1]!);
-    const header = sent.find((c) => c.method === "sendMessage" && c.payload.chat_id === ADMIN)!;
-    expect(JSON.stringify(header.payload.reply_markup)).toContain("supa:r:1");
+    // Кнопки «Ответить / Не принимать» — под заголовком и только после того, как обращение дошло.
+    const order = sent.map((c) => c.method);
+    expect(order.indexOf("editMessageReplyMarkup")).toBeGreaterThan(order.indexOf("copyMessages"));
+    expect(JSON.stringify(sent.find((c) => c.method === "editMessageReplyMarkup")!.payload.reply_markup)).toContain("supa:r:1");
   });
 
   it("5 сообщений — «эти 5 сообщений»; одиннадцатое не вытесняет первые", async () => {
@@ -140,13 +152,67 @@ describe("обращение из нескольких сообщений", () =
 });
 
 describe("альбом в обращении", () => {
-  it("два скриншота одним альбомом (два апдейта сразу) — оба в обращении", async () => {
+  const shot = (): Update => ({ update_id: mid, message: { message_id: mid++, date: 0, chat: { id: USER, type: "private", first_name: "U" }, from: { id: USER, is_bot: false, first_name: "U" }, media_group_id: "g1", photo: [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }] } });
+  // Ответы Telegram приходят в любом порядке: первый вопрос — позже второго и наоборот.
+  for (const delays of [[30, 0], [0, 30]]) {
+    it(`два скриншота одним альбомом (ответы ${delays.join("/")} мс) — оба в обращении, вопрос «Отправить?» — один, про оба`, async () => {
+      const { deps } = makeDeps();
+      const { bot, calls } = await botWith(deps, { delays: [0, ...delays] });
+      await bot.handleUpdate(text(BTN.complaint));
+      calls.length = 0;
+      await Promise.all([bot.handleUpdate(shot()), bot.handleUpdate(shot())]);
+      const pending = deps.pending.get(USER)!;
+      expect(pending.messageIds).toHaveLength(2);
+      const asked = calls.filter((c) => c.method === "sendMessage");
+      expect(asked).toHaveLength(2);
+      // Остаётся вопрос про оба сообщения (его номер — в ожидании), устаревший «это» — удалён.
+      const both = asked.find((c) => String(c.payload.text).includes("эти 2 сообщения"))!;
+      const stale = asked.find((c) => c !== both)!;
+      expect(pending.confirmId).toBe(both.id);
+      expect(calls.filter((c) => c.method === "deleteMessage").map((c) => c.payload.message_id)).toEqual([stale.id]);
+    });
+  }
+});
+
+describe("собранное обращение и команды", () => {
+  it("текст → /today → «14-24» → «Отправить»: уходит только текст обращения", async () => {
+    const { deps } = makeDeps();
+    const { bot, calls } = await botWith(deps);
+    await bot.handleUpdate(text(BTN.complaint));
+    const complaint = mid;
+    await bot.handleUpdate(text("в пятницу не те пары"));
+    await bot.handleUpdate(text("/today"));
+    expect(deps.pending.get(USER)).toMatchObject({ kind: "support", parked: true, messageIds: [complaint] });
+    await bot.handleUpdate(text("14-24"));
+    expect(deps.pending.get(USER)!.messageIds).toEqual([complaint]);
+    calls.length = 0;
+    await bot.handleUpdate(press("sup:send"));
+    expect(calls.find((c) => c.method === "copyMessages")!.payload.message_ids).toEqual([complaint]);
+  });
+
+  it("ушёл в меню и снова «🙋 Поддержка» — дописывает то же обращение", async () => {
     const { deps } = makeDeps();
     const { bot } = await botWith(deps);
     await bot.handleUpdate(text(BTN.complaint));
-    const shot = (): Update => ({ update_id: mid, message: { message_id: mid++, date: 0, chat: { id: USER, type: "private", first_name: "U" }, from: { id: USER, is_bot: false, first_name: "U" }, media_group_id: "g1", photo: [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }] } });
-    await Promise.all([bot.handleUpdate(shot()), bot.handleUpdate(shot())]);
-    expect(deps.pending.get(USER)?.messageIds).toHaveLength(2);
+    await bot.handleUpdate(text("первое"));
+    await bot.handleUpdate(text(BTN.today));
+    await bot.handleUpdate(text(BTN.complaint));
+    await bot.handleUpdate(text("второе"));
+    expect(deps.pending.get(USER)).toMatchObject({ kind: "support" });
+    expect(deps.pending.get(USER)!.parked).toBeFalsy();
+    expect(deps.pending.get(USER)!.messageIds).toHaveLength(2);
+  });
+
+  it("все сообщения обращения удалены — заголовок с кнопками админу не остаётся, студенту — «отправлять нечего»", async () => {
+    const { deps } = makeDeps();
+    const { bot, calls } = await botWith(deps, { copied: () => [] });
+    await bot.handleUpdate(text(BTN.complaint));
+    await bot.handleUpdate(text("удалю это"));
+    calls.length = 0;
+    await bot.handleUpdate(press("sup:send"));
+    expect(calls.some((c) => c.method === "editMessageReplyMarkup")).toBe(false);
+    expect(calls.find((c) => c.method === "deleteMessage")!.payload.chat_id).toBe(ADMIN);
+    expect(JSON.stringify(calls.filter((c) => c.method === "editMessageText"))).toContain("отправлять нечего");
   });
 });
 
@@ -190,6 +256,14 @@ describe("слайды", () => {
     expect(calls).toEqual([]);
   });
 
+  it("отложенное обращение и экран админа текста не ждут — «слайды» отвечают", async () => {
+    const { deps } = makeDeps();
+    deps.pending.set(USER, { kind: "support", parked: true, chatId: USER, messageIds: [1], expiresAt: Date.now() + 60_000 });
+    expect((await run(deps, text("слайды экономика"), USER, [slidesHandlers])).some((c) => c.method === "sendMessage")).toBe(true);
+    deps.pending.set(USER, { kind: "broadcast-confirm", chatId: USER, messageId: 5, target: "all", expiresAt: Date.now() + 60_000 });
+    expect((await run(deps, text("слайды экономика"), USER, [slidesHandlers])).some((c) => c.method === "sendMessage")).toBe(true);
+  });
+
   it("«часть N из M» — только в конце темы; тема со своими «частями» не ломает подписи", () => {
     expect(deckPartLabel("Интегралы (часть 1 из 2)")).toBe("");
     expect(deckPartLabel("Интегралы (часть 1 из 2) · часть 2 из 3")).toBe(" · ч. 2/3");
@@ -200,6 +274,24 @@ describe("слайды", () => {
     const day = [deck(40, "2026-10-16", "Экономика"), deck(41, "2026-10-16", "Безопасность жизнедеятельности")];
     expect(newestFirst(day).map((d) => d.id)).toEqual([41, 40]);
     expect(parseSlidesQuery("вчера 2 пара", "2026-10-17")).toMatchObject({ subject: "", date: "2026-10-16" });
+  });
+
+  it("число рядом с «пара» — номер пары в любом порядке, а не число месяца", () => {
+    expect(parseSlidesQuery("2 пара вчера", "2026-10-17")).toMatchObject({ subject: "", date: "2026-10-16", day: null });
+    expect(parseSlidesQuery("вчера 2-ю пару", "2026-10-17")).toMatchObject({ subject: "", date: "2026-10-16" });
+    expect(parseSlidesQuery("физика 2 пара", "2026-10-17")).toMatchObject({ subject: "физика", date: null, day: null });
+    // Без «пары» число по-прежнему — число месяца.
+    expect(parseSlidesQuery("физика 2", "2026-10-17")).toMatchObject({ subject: "физика", day: 2 });
+    expect(parseSlidesQuery("физика с пары 9 числа", "2026-10-17")).toMatchObject({ subject: "физика", day: 9 });
+  });
+
+  it("две «Математики» в один день у разных групп — разные пары: позже записанная первой, части подряд", () => {
+    const early = { ...deck(20, "2026-10-16", "Математика"), groups: ["ВИШ-12-23"] };
+    const late = [21, 22].map((id, i) => ({ ...deck(id, "2026-10-16", "Математика", `часть ${i + 1} из 2`), groups: ["ВИШ-14-25"] }));
+    expect(newestFirst([early, ...late]).map((d) => d.id)).toEqual([21, 22, 20]);
+    const a = [10, 12].map((id, i) => ({ ...deck(id, "2026-10-16", "Физика", `часть ${i + 1} из 2`), groups: ["ВИШ-12-23"] }));
+    const b = [11, 13].map((id, i) => ({ ...deck(id, "2026-10-16", "Физика", `часть ${i + 1} из 2`), groups: ["ВИШ-14-25"] }));
+    expect(newestFirst([...a, ...b]).map((d) => d.id)).toEqual([11, 13, 10, 12]);
   });
 
   it("части большого PDF: подписи «ч. 2/3», своё имя файла, по порядку 1, 2, 3", () => {
@@ -234,6 +326,35 @@ describe("«💬 Спросить ИИ» под ответом поиска", ()
     expect(asked).toEqual(["когда матан"]);
     // Кнопка из прошлой версии (без номера) не падает.
     await run(deps, press("fx:ai"));
+  });
+
+  it("второе нажатие — подсказка, а не второй вопрос и не режим «спрашивай что угодно»", async () => {
+    let release = (): void => undefined;
+    const { deps, asked } = makeDeps({ answer: (q) => `ответ на ${q}` });
+    // Ответ ИИ «печатается», пока не отпустим.
+    const ask = deps.ask as unknown as { answer: (a: { question: string }) => Promise<unknown> };
+    const answer = ask.answer;
+    ask.answer = async (a) => (await new Promise<void>((r) => (release = r)), answer(a));
+    let markup = "";
+    const api = new Api("123:FAKE");
+    api.config.use(async (_p, method, payload) => {
+      if (method === "sendMessage") markup = JSON.stringify((payload as { reply_markup?: unknown }).reply_markup);
+      return { ok: true, result: { message_id: 1, date: 0, chat: { id: USER, type: "private" } } as never };
+    });
+    const ctx = new Context(text("когда матан"), api, ME) as BotContext;
+    Object.assign(ctx, { deps, user: deps.repo.getUser(USER)!, isAdmin: false });
+    await freeTextSearch(ctx, "когда матан");
+    const btn = /fx:ai:\d+/.exec(markup)![0];
+    const first = run(deps, press(btn));
+    await new Promise((r) => setTimeout(r, 10));
+    const again = await run(deps, press(btn));
+    expect(JSON.stringify(again.find((c) => c.method === "answerCallbackQuery")!.payload)).toContain("Уже спрашиваю");
+    release();
+    await first;
+    const after = await run(deps, press(btn));
+    expect(JSON.stringify(after.find((c) => c.method === "answerCallbackQuery")!.payload)).toContain("уже ответил");
+    expect(asked).toEqual(["когда матан"]);
+    expect(deps.pending.get(USER)).toBeUndefined();
   });
 });
 

@@ -19,7 +19,7 @@ import type { ChatTool } from "../chat/service.js";
 import { cleanName, matchSubjects, matchSubjectsLoose, sameSubject, subjectKey, type IntroRequest, type SlidesRequest } from "../chat/social.js";
 import { nameWords, samePersonWords } from "../text/match.js";
 import { addDays, fmtDDMM, todayMsk, weekdayShort, type LocalDate } from "../time.js";
-import { deckPart, newestFirst } from "../notify/deckName.js";
+import { deckPart, deckRecordKey, newestFirst } from "../notify/deckName.js";
 import { esc, plural } from "../schedule/format.js";
 import { logger } from "../logger.js";
 import type { DeckToSend } from "./deck.js";
@@ -293,7 +293,7 @@ export function handleSlidesRequest(ctx: BotContext, req: SlidesRequest, speaker
       // Часть большого PDF — все части этой пары, по порядку: иначе из чата
       // достижима только первая.
       const part = deckPart(deck.title);
-      const parts = part ? decks.filter((d) => d.date === deck.date && d.subject === deck.subject && deckPart(d.title)?.count === part.count) : [deck];
+      const parts = part ? decks.filter((d) => deckRecordKey(d) === deckRecordKey(deck)) : [deck];
       const toSend = parts.map((d) => ({ id: d.id, subject: d.subject, date: d.date, file: d.file, fileId: d.fileId, slides: d.slides, title: d.title }));
       return { text: `Держи: слайды «${deck.subject}» за ${fmtDDMM(deck.date)}${deck.groups.length ? ` (${deck.groups.join(", ")})` : ""}${toSend.length > 1 ? `, ${toSend.length} ${plural(toSend.length, "часть", "части", "частей")}` : ""} 👇`, decks: toSend };
     }

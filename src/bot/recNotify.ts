@@ -177,6 +177,7 @@ export async function notifyRecorderEffect(api: SendApi, repo: Repo, adminIds: n
     admins(`✅ Слот ${esc(c.groupTitle)} снова пускает.`);
     student(c.userId, `▶️ Запись пар группы ${esc(c.groupTitle)} снова работает.`);
   }
+  for (const id of effect.orphans) admins(`🧹 В слоте записывалки осталась учётка заявки №${id}, а заявка уже отозвана или забыта — снимаю учётку.`);
   // «Проверить снова»: успех уже сказан выше (снова пускает), здесь — остальные исходы.
   for (const r of effect.rechecked) {
     const g = esc(r.groupTitle);

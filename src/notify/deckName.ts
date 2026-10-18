@@ -20,6 +20,16 @@ export function deckPart(title: string | null | undefined): { index: number; cou
   return m ? { index: Number(m[1]), count: Number(m[2]) } : null;
 }
 
+/**
+ * Одна запись (пара): части большого PDF совпадают во всём, кроме номера части.
+ * Разные пары одного предмета в один день (у двух групп своя «Физика») —
+ * разные ключи: различаются группами, преподавателем или темой.
+ */
+export function deckRecordKey(deck: { date: string; subject: string; title?: string | null; teacher?: string | null; groups?: string[] }): string {
+  const base = (deck.title ?? "").replace(/(?:^|\s*· )часть \d+ из \d+$/, "");
+  return [deck.date, deck.subject, deck.teacher ?? "", [...(deck.groups ?? [])].sort().join(","), base, deckPart(deck.title)?.count ?? 0].join("|");
+}
+
 /** « · ч. 2/3» для подписей и кнопок; у целого PDF — пусто. */
 export function deckPartLabel(title: string | null | undefined): string {
   const part = deckPart(title);
@@ -32,8 +42,8 @@ export function deckPartLabel(title: string | null | undefined): string {
  * одной пары — подряд и по порядку: 1, 2, 3 (по id последней шла бы часть 3).
  * Общий для «слайды…» в личке и в чате.
  */
-export function newestFirst<T extends { id: number; date: string; subject: string; title?: string | null }>(decks: T[]): T[] {
-  const pair = (d: T): string => `${d.date}|${d.subject}`;
+export function newestFirst<T extends { id: number; date: string; subject: string; title?: string | null; teacher?: string | null; groups?: string[] }>(decks: T[]): T[] {
+  const pair = deckRecordKey;
   const latest = new Map<string, number>();
   for (const d of decks) latest.set(pair(d), Math.max(latest.get(pair(d)) ?? 0, d.id));
   return [...decks].sort(

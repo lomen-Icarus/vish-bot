@@ -56,7 +56,7 @@ async function setup() {
   return { dir, got, botPort, proxy, wide };
 }
 
-const meta = Buffer.from(JSON.stringify({ date: "2026-09-29", subject: "Правоведение", teacher: "Кожина Т. Н.", groups: ["ВИШ-12-23"], slides: 42 })).toString("base64");
+const meta = Buffer.from(JSON.stringify({ date: "2026-09-29", subject: "Правоведение", teacher: "Образцова П. Н.", groups: ["ВИШ-12-23"], slides: 42 })).toString("base64");
 const fakePdf = (bytes: number) => Buffer.concat([Buffer.from("%PDF-1.7\n"), randomBytes(bytes - 9)]);
 
 describe("слайды кусками: прокси перед ботом режет всё больше 1 МБ", () => {

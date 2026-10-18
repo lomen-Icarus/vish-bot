@@ -37,7 +37,8 @@ export interface RecResult {
 export interface RecReport {
   publicKey?: string;
   results?: RecResult[];
-  slots?: { group: string; status: string; lastOkAt?: string | null }[];
+  /** requestId — чья учётка в слоте записывалки (0 — из .env); старая записывалка его не шлёт. */
+  slots?: { group: string; status: string; lastOkAt?: string | null; requestId?: number }[];
   portal?: string;
 }
 
@@ -68,12 +69,15 @@ export const VERIFY_WAIT_MS = 30 * 60 * 1000;
 export const RECHECK_PREFIX = "recheck:";
 
 /**
- * Заявка про учётку из .env: служебная (отзыв слота без заявки, id 0) или
- * подписанная владельцем через /slot_owner (adoptRecSlot ставит дату 1970-го,
- * чтобы она не шла в лимит). В слоте записывалки у таких — номер заявки 0.
+ * Чья учётка должна стоять в слоте, чтобы remove её убрал. Отзыв слота без
+ * заявки и подписанная владельцем запоминают это из отчёта записывалки
+ * (slotHolder): 0 — учётка из .env, N — осиротевшая учётка студента (заявки
+ * уже нет, а слот остался). Строки до этого поля: служебная (id 0) и
+ * подписанная (дата 1970-го) — учётка из .env. Обычная заявка — свой номер.
  */
-function envSlotRequest(r: RecRequestRow): boolean {
-  return r.userId === 0 || r.createdAt.startsWith("1970-");
+function removeExpect(r: RecRequestRow): number {
+  if (r.slotHolder !== null) return r.slotHolder;
+  return r.userId === 0 || r.createdAt.startsWith("1970-") ? 0 : r.id;
 }
 
 /**
@@ -92,7 +96,7 @@ export function recorderTasks(repo: Repo, now = Date.now()): RecTask[] {
     }
   };
   for (const r of repo.recRequestsByState(["revoking"])) {
-    tasks.push({ id: `${r.id}:remove`, kind: "remove", requestId: r.id, userId: r.userId, group: r.groupTitle, codes: [groupCode(r.groupTitle)], expect: envSlotRequest(r) ? 0 : r.id });
+    tasks.push({ id: `${r.id}:remove`, kind: "remove", requestId: r.id, userId: r.userId, group: r.groupTitle, codes: [groupCode(r.groupTitle)], expect: removeExpect(r) });
   }
   for (const r of repo.recRequestsByState(["pending_verify"])) {
     const wait = repo.recorderMarkValue(`${VERIFY_WAIT_PREFIX}${r.id}`);
@@ -149,6 +153,8 @@ export interface RecReportEffect {
   recovered: RecSlotChange[];
   /** Ответы на «Проверить снова». Успех виден и в recovered (lost → ok). */
   rechecked: { groupKey: string; groupTitle: string; code: RecResultCode }[];
+  /** Осиротевшие учётки студентов, поставленные на снятие (номера заявок). */
+  orphans: number[];
 }
 
 const transition = (req: RecRequestRow, to: string, extra: Partial<RecTransition> = {}): RecTransition => ({
@@ -162,9 +168,12 @@ const transition = (req: RecRequestRow, to: string, extra: Partial<RecTransition
   ...extra,
 });
 
+/** Заявки, учётки которых в слоте быть не должно. */
+const CLOSED_STATES = new Set(["revoked_early", "forgotten", "rejected", "rejected_auth", "rejected_bad_envelope", "expired"]);
+
 /** Применить отчёт записывалки: ключ, результаты заданий, зеркало слотов, истёкшие заявки. */
 export function applyRecorderReport(repo: Repo, report: RecReport, now = Date.now()): RecReportEffect {
-  const effect: RecReportEffect = { firstConnect: false, keyChanged: false, transitions: [], lost: [], recovered: [], rechecked: [] };
+  const effect: RecReportEffect = { firstConnect: false, keyChanged: false, transitions: [], lost: [], recovered: [], rechecked: [], orphans: [] };
   repo.transaction(() => {
     if (report.publicKey) {
       const had = repo.recorderPublicKey() !== null;
@@ -196,13 +205,17 @@ export function applyRecorderReport(repo: Repo, report: RecReport, now = Date.no
       // именем и новая под нашим) — одна строка: «пускает», если пускает хоть
       // один. Иначе строки затирали бы друг друга, и вести «не пускает / снова
       // пускает» шли бы каждую минуту.
-      const byKey = new Map<string, { group: string; status: string; lastOkAt: string | null }>();
+      const byKey = new Map<string, { group: string; status: string; lastOkAt: string | null; holderId: number | null }>();
       for (const s of report.slots) {
         if (!s.group) continue;
         const key = logicalKeyFor(s.group);
         const had = byKey.get(key);
-        if (!had) byKey.set(key, { group: s.group, status: s.status, lastOkAt: s.lastOkAt ?? null });
-        else byKey.set(key, { group: had.status === "ok" ? had.group : s.group, status: had.status === "ok" || s.status === "ok" ? "ok" : s.status, lastOkAt: [had.lastOkAt, s.lastOkAt ?? null].filter(Boolean).sort().pop() ?? null });
+        const holderId = typeof s.requestId === "number" ? s.requestId : null;
+        if (!had) byKey.set(key, { group: s.group, status: s.status, lastOkAt: s.lastOkAt ?? null, holderId });
+        else {
+          const keepHad = had.status === "ok";
+          byKey.set(key, { group: keepHad ? had.group : s.group, holderId: keepHad ? had.holderId : holderId, status: had.status === "ok" || s.status === "ok" ? "ok" : s.status, lastOkAt: [had.lastOkAt, s.lastOkAt ?? null].filter(Boolean).sort().pop() ?? null });
+        }
       }
       for (const [key, s] of byKey) {
         const req = repo.activeRecRequest(key);
@@ -210,7 +223,22 @@ export function applyRecorderReport(repo: Repo, report: RecReport, now = Date.no
         const change: RecSlotChange = { groupKey: key, groupTitle: s.group, requestId: req?.id ?? null, userId: req?.userId ?? null, username: req?.username ?? null };
         if (s.status === "lost" && prev !== "lost") effect.lost.push(change);
         if (s.status === "ok" && prev === "lost") effect.recovered.push(change);
-        repo.upsertRecSlot({ groupKey: key, groupTitle: s.group, requestId: req?.id ?? null, status: s.status, lastOkAt: s.lastOkAt });
+        repo.upsertRecSlot({ groupKey: key, groupTitle: s.group, requestId: req?.id ?? null, holderId: s.holderId, status: s.status, lastOkAt: s.lastOkAt });
+        // Осиротевшая учётка студента: в слоте его заявка N, а N уже закрыта —
+        // отозвана до одобрения в прошлых версиях (revoked_early), забыта (/soon),
+        // отклонена. Студенту обещано «логин и пароль удалены» — снимаем сами.
+        // Заявки N в базе нет вовсе (база восстановлена из копии или потеряна) —
+        // сами не трогаем: решает админ кнопкой «Отозвать» в /slots.
+        if (s.holderId && s.holderId > 0) {
+          const holder = repo.recRequest(s.holderId);
+          const closed = holder !== null && CLOSED_STATES.has(holder.state);
+          const removing = repo.recRequestsByState(["revoking"]).some((r) => r.groupKey === key && removeExpect(r) === s.holderId);
+          if (closed && !removing) {
+            const id = repo.createRecRequest({ userId: 0, username: null, groupKey: key, groupTitle: s.group, envelopeJson: "", slotHolder: s.holderId });
+            repo.setRecRequestState(id, "revoking", { dropEnvelope: true });
+            effect.orphans.push(s.holderId);
+          }
+        }
       }
       // Записывалка присылает все слоты: чего нет в отчёте, того нет и у неё.
       // Вместе со строкой уходят её подпись владельца и «проверить снова».
@@ -359,8 +387,11 @@ export function revokeSlotWithoutRequest(repo: Repo, groupKey: string, adminId: 
   if (!heldWithoutRequest(repo, groupKey)) return false;
   const slot = repo.recSlots().find((s) => s.groupKey === groupKey)!;
   // Уже убираем именно её (а не отзываемую заявку студента той же группы).
-  if (repo.recRequestsByState(["revoking"]).some((r) => r.groupKey === groupKey && envSlotRequest(r))) return true;
-  const id = repo.createRecRequest({ userId: 0, username: null, groupKey, groupTitle: slot.groupTitle, envelopeJson: "" });
+  const holder = slot.holderId ?? 0;
+  if (repo.recRequestsByState(["revoking"]).some((r) => r.groupKey === groupKey && r.userId === 0 && removeExpect(r) === holder)) return true;
+  // Номер учётки в слоте — из отчёта записывалки: так remove уберёт и
+  // осиротевшую учётку студента, а не только учётку из .env (номер 0).
+  const id = repo.createRecRequest({ userId: 0, username: null, groupKey, groupTitle: slot.groupTitle, envelopeJson: "", slotHolder: holder });
   repo.setRecRequestState(id, "revoking", { dropEnvelope: true, decidedBy: adminId });
   return true;
 }
@@ -389,7 +420,7 @@ export function adoptSlot(repo: Repo, groupArg: string, username: string, adminI
   const nick = username.replace(/^@/, "");
   const user = repo.userByUsername(nick);
   if (user) {
-    repo.adoptRecSlot({ userId: user.id, username: user.username ?? nick, groupKey: slot.groupKey, groupTitle: slot.groupTitle, adminId });
+    repo.adoptRecSlot({ userId: user.id, username: user.username ?? nick, groupKey: slot.groupKey, groupTitle: slot.groupTitle, adminId, slotHolder: slot.holderId ?? 0 });
     repo.clearRecorderMark(`${OWNER_PREFIX}${slot.groupKey}`);
     return { ok: true, slotTitle: slot.groupTitle, linked: true };
   }

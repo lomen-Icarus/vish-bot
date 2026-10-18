@@ -174,7 +174,7 @@ describe("teachers from webinars", () => {
   it("aggregates subjects and groups per teacher and searches fuzzily", () => {
     const { svc } = service([
       row(),
-      row({ date: addDays(today, 1), slot: 6, subject: "Правоведение", teacher: "Кожина Т. Н.", position: "доц.", degree: "к.и.н.", groups: ["ВИШ-11-25"], title: "Лекция 3" }),
+      row({ date: addDays(today, 1), slot: 6, subject: "Правоведение", teacher: "Образцова П. Н.", position: "доц.", degree: "к.и.н.", groups: ["ВИШ-11-25"], title: "Лекция 3" }),
       row({ date: addDays(today, 2), subject: "Безопасность жизнедеятельности", groups: ["ВИШ-14-24"], title: "3 Оповещение" }),
     ]);
     const all = svc.teachers();
@@ -184,8 +184,8 @@ describe("teachers from webinars", () => {
     expect(ivanova.groups).toContain("ВИШ-14-24");
     expect(ivanova.position).toBe("доц.");
     expect(svc.search("иванова")[0]!.name).toBe("Иванова К. Ю.");
-    expect(svc.search("Кожина Т.")[0]!.name).toBe("Кожина Т. Н.");
-    expect(svc.search("Троишестова")).toEqual([]);
+    expect(svc.search("Образцова П.")[0]!.name).toBe("Образцова П. Н.");
+    expect(svc.search("Пятиплетова")).toEqual([]);
     expect(svc.upcoming(ivanova).map((l) => l.date)).toEqual([today, addDays(today, 2)]);
   });
 });

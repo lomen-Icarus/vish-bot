@@ -111,7 +111,8 @@ describe("🏛 Министерство Жалоб", () => {
     expect(String(header.payload.text)).toContain("@student_u");
     const copy = sent.find((c) => c.method === "copyMessages")!;
     expect(copy.payload.chat_id).toBe(ADMIN);
-    expect(markup(header)).toContain("supa:r:1");
+    // Кнопки — под заголовком, когда копия дошла.
+    expect(markup(sent.find((c) => c.method === "editMessageReplyMarkup" && c.payload.chat_id === ADMIN))).toContain("supa:r:1");
     expect(sent.some((c) => c.method === "forwardMessage")).toBe(false);
     expect(String(sent.find((c) => c.method === "editMessageText")!.payload.text)).toContain("Обращение #1");
   });

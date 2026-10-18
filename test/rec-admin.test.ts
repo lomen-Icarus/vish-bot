@@ -212,7 +212,7 @@ describe("уведомления", () => {
     const r = repo();
     const sent: number[] = [];
     const api: SendApi = { async sendMessage(to) { if (to === 100) throw new Error("blocked"); sent.push(to); } };
-    await notifyRecorderEffect(api, r, [100, 101], { firstConnect: true, keyChanged: false, transitions: [], lost: [], recovered: [], rechecked: [] });
+    await notifyRecorderEffect(api, r, [100, 101], { firstConnect: true, keyChanged: false, transitions: [], lost: [], recovered: [], rechecked: [], orphans: [] });
     expect(sent).toEqual([101]);
   });
 });
@@ -434,5 +434,78 @@ describe("ревью: слоты из .env и заявки", () => {
     applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok" }, { group: "ОЗВИШ-14-25", status: "ok" }] });
     expect(adoptSlot(r, "14-25", "x", 99)).toEqual({ ok: false, reason: "ambiguous" });
     expect(adoptSlot(r, "ОЗВИШ-14-25", "x", 99)).toMatchObject({ ok: true, slotTitle: "ОЗВИШ-14-25" });
+  });
+});
+
+describe("чья учётка в слоте — по отчёту записывалки (requestId слота)", () => {
+  it("зеркало запоминает номер заявки в слоте; без него — null (записывалка старой версии)", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok", requestId: 0 }, { group: "ВИШ-13-23", status: "ok" }] });
+    expect(r.recSlots().map((s) => [s.groupTitle, s.holderId])).toEqual([
+      ["ВИШ-13-23", null],
+      ["ВИШ-14-25", 0],
+    ]);
+  });
+
+  it("сирота: в слоте учётка закрытой заявки — бот сам ставит её на снятие (expect = её номер), один раз", async () => {
+    const r = repo();
+    const id = req(r, 7, "ВИШ-14-25", "active");
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok", requestId: id }] });
+    expect(recorderTasks(r).filter((t) => t.kind === "remove")).toEqual([]);
+    // Заявка закрыта (например, revoked_early прошлых версий), а учётка осталась в слоте.
+    r.setRecRequestState(id, "revoked_early", { dropEnvelope: true });
+    const eff = applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok", requestId: id }] });
+    expect(eff.orphans).toEqual([id]);
+    const removes = recorderTasks(r).filter((t) => t.kind === "remove");
+    expect(removes).toEqual([expect.objectContaining({ group: "ВИШ-14-25", userId: 0, expect: id })]);
+    const api = fakeApi();
+    await notifyRecorderEffect(api, r, [100], eff);
+    expect(api.sent).toEqual([expect.objectContaining({ to: 100 })]);
+    expect(api.sent[0]!.text).toContain(`заявки №${id}`);
+    // Следующий отчёт — та же учётка ещё в слоте: вторую заявку на снятие не заводим.
+    expect(applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok", requestId: id }] }).orphans).toEqual([]);
+    expect(recorderTasks(r).filter((t) => t.kind === "remove")).toHaveLength(1);
+    applyRecorderReport(r, { results: [{ id: removes[0]!.id, requestId: removes[0]!.requestId, code: "removed" }], slots: [] });
+    expect(r.recSlots()).toEqual([]);
+    expect(recorderTasks(r).filter((t) => t.kind === "remove")).toEqual([]);
+  });
+
+  it("учётка из .env, живая или отзываемая заявка в слоте — не сирота", () => {
+    const r = repo();
+    const live = req(r, 7, "ВИШ-14-25", "active");
+    const going = req(r, 8, "ВИШ-13-23", "active");
+    revokeRecRequest(r, going);
+    const eff = applyRecorderReport(r, {
+      slots: [
+        { group: "ВИШ-14-25", status: "ok", requestId: live },
+        { group: "ВИШ-13-23", status: "ok", requestId: going },
+        { group: "ВИШ-12-23", status: "ok", requestId: 0 },
+      ],
+    });
+    expect(eff.orphans).toEqual([]);
+    expect(recorderTasks(r).filter((t) => t.kind === "remove").map((t) => t.expect)).toEqual([going]);
+  });
+
+  it("«Отозвать» слот без заявки, где стоит учётка студента, — remove ровно её (expect = номер из отчёта)", () => {
+    const r = repo();
+    // Заявки 41 в базе нет (база из копии?) — сам бот такую учётку не снимает, решает админ.
+    expect(applyRecorderReport(r, { slots: [{ group: "ВИШ-13-23", status: "ok", requestId: 41 }] }).orphans).toEqual([]);
+    expect(recorderTasks(r).filter((t) => t.kind === "remove")).toEqual([]);
+    expect(slotsScreen(r, GROUPS).text).toContain("учётка заявки №41");
+    expect(revokeSlotWithoutRequest(r, "виш-13-23", 99)).toBe(true);
+    expect(revokeSlotWithoutRequest(r, "виш-13-23", 99)).toBe(true); // повтор — без второй заявки
+    const removes = recorderTasks(r).filter((t) => t.kind === "remove");
+    expect(removes).toEqual([expect.objectContaining({ group: "ВИШ-13-23", expect: 41 })]);
+  });
+
+  it("/slot_owner запоминает, чья учётка стоит: отзыв подписанной снимает её, а не по признаку «из .env»", () => {
+    const r = repo();
+    applyRecorderReport(r, { slots: [{ group: "ВИШ-13-23", status: "ok", requestId: 0 }] });
+    r.touchUser(7, "student_one", "S");
+    expect(adoptSlot(r, "13-23", "@student_one", 99)).toMatchObject({ ok: true, linked: true });
+    const adopted = r.activeRecRequest("виш-13-23")!;
+    expect(adopted.slotHolder).toBe(0);
+    expect(revokeRecRequest(r, adopted.id).ok).toBe(true);
+    expect(recorderTasks(r).filter((t) => t.kind === "remove").map((t) => t.expect)).toEqual([0]);
   });
 });

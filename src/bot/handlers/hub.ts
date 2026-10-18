@@ -130,8 +130,11 @@ async function openSupport(ctx: BotContext): Promise<void> {
     await ctx.reply(`Написать можно: ${ctx.deps.config.SUPPORT_CONTACT}`);
     return;
   }
-  setPending(ctx.deps, ctx.user.id, { kind: "support", anon: false }, SUPPORT_TTL_MS);
-  await ctx.reply(supportText(ctx, false), { parse_mode: "HTML", reply_markup: supportKeyboard(false), link_preview_options: { is_disabled: true } });
+  // Отложенное обращение (ушёл в меню и вернулся) — продолжаем его, а не начинаем заново.
+  const was = takePending(ctx.deps, ctx.user.id);
+  const kept = was?.kind === "support" && was.messageIds?.length ? { anon: !!was.anon, chatId: was.chatId, messageIds: was.messageIds, confirmId: was.confirmId } : { anon: false };
+  setPending(ctx.deps, ctx.user.id, { kind: "support", ...kept }, SUPPORT_TTL_MS);
+  await ctx.reply(supportText(ctx, kept.anon), { parse_mode: "HTML", reply_markup: supportKeyboard(kept.anon), link_preview_options: { is_disabled: true } });
 }
 hubHandlers.hears(btnLabels("complaint"), openSupport);
 hubHandlers.command("support", openSupport);
@@ -147,7 +150,7 @@ hubHandlers.callbackQuery(/^sup:(anon|named|back)$/, async (ctx) => {
   const anon = choice === "anon";
   // Уже написанное (ждёт «Отправить») не теряем — меняется только режим.
   const was = takePending(ctx.deps, ctx.user.id);
-  const kept = was?.kind === "support" ? { chatId: was.chatId, messageIds: was.messageIds, confirmId: was.confirmId } : {};
+  const kept = was?.kind === "support" ? { chatId: was.chatId, messageIds: was.messageIds, confirmId: was.confirmId, parked: was.parked } : {};
   setPending(ctx.deps, ctx.user.id, { kind: "support", anon, ...kept }, SUPPORT_TTL_MS);
   await ctx.answerCallbackQuery({ text: anon ? "Отправлю анонимно" : "Отправлю с твоим ником" });
   if (kept.messageIds?.length) await ctx.editMessageText(confirmText(anon, kept.messageIds.length), { reply_markup: confirmKeyboard(anon) }).catch(() => undefined);
@@ -175,12 +178,9 @@ function confirmKeyboard(anon: boolean): InlineKeyboard {
 hubHandlers.on("message", async (ctx, next) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || (pending.kind !== "support" && pending.kind !== "support-reply")) return next();
-  if (ctx.msg.text?.startsWith("/")) return next();
-  // Кнопка меню — человек передумал: выходим из режима, кнопка работает как обычно.
-  if (isMenuText(ctx.msg.text)) {
-    clearPending(ctx.deps, ctx.user.id);
-    return next();
-  }
+  // Команды, кнопки меню и отложенное обращение — мимо: собранное ждёт
+  // «Отправить», а «14-24» после «📅 Сегодня» — это поиск, а не жалоба.
+  if (ctx.msg.text?.startsWith("/") || isMenuText(ctx.msg.text) || pending.parked) return next();
   if (pending.kind === "support-reply") {
     clearPending(ctx.deps, ctx.user.id);
     return void (await relayReply(ctx, pending.ticket ?? 0));
@@ -192,14 +192,23 @@ hubHandlers.on("message", async (ctx, next) => {
     await ctx.reply(`В одном обращении — до ${MAX_TICKET_MESSAGES} сообщений. Отправь эти кнопкой выше, а это — следующим обращением.`);
     return;
   }
+  // Запоминаем сразу, до первого await: альбом — это несколько апдейтов
+  // одновременно (runner их не упорядочивает), и каждый должен дописать своё
+  // к уже собранному, а не к тому, что было до ответа бота.
   const messageIds = [...was, ctx.msg.message_id];
-  // Сначала запоминаем сообщение, потом задаём вопрос: не дошёл вопрос —
-  // сообщение всё равно в обращении, кнопка «Отправить» прежнего вопроса работает.
   setPending(ctx.deps, ctx.user.id, { ...pending, kind: "support", anon, chatId: ctx.chat.id, messageIds }, SUPPORT_TTL_MS);
   const confirm = await ctx.reply(confirmText(anon, messageIds.length), { reply_parameters: { message_id: ctx.msg.message_id, allow_sending_without_reply: true }, reply_markup: confirmKeyboard(anon) });
-  if (pending.confirmId) await ctx.api.deleteMessage(ctx.chat.id, pending.confirmId).catch(() => undefined);
+  // Пока шёл ответ, обращение могло измениться: дописалось следующее фото
+  // альбома, сменился режим, обращение ушло или отменено. Тогда наш вопрос
+  // устарел — убираем его; актуальный задаст (или уже задал) другой апдейт.
+  // Отложенное (нажал кнопку меню) — не устарело: «Отправить» под ним нужен.
   const now = takePending(ctx.deps, ctx.user.id);
-  if (now?.kind === "support") setPending(ctx.deps, ctx.user.id, { ...now, confirmId: confirm.message_id }, SUPPORT_TTL_MS);
+  if (now?.kind !== "support" || now.messageIds?.length !== messageIds.length || !!now.anon !== anon) {
+    await ctx.api.deleteMessage(ctx.chat.id, confirm.message_id).catch(() => undefined);
+    return;
+  }
+  setPending(ctx.deps, ctx.user.id, { ...now, confirmId: confirm.message_id }, SUPPORT_TTL_MS);
+  if (now.confirmId && now.confirmId !== confirm.message_id) await ctx.api.deleteMessage(ctx.chat.id, now.confirmId).catch(() => undefined);
 });
 
 hubHandlers.callbackQuery("sup:send", async (ctx) => {
@@ -229,22 +238,30 @@ async function sendTicket(ctx: BotContext, chatId: number, messageIds: number[],
   const who = anon ? "🕶 анонимно" : `от ${username ? `@${esc(username)}` : esc(name ?? "без имени")}${group ? ` (${esc(group.title)})` : ""} · id <code>${ctx.user.id}</code>`;
   const kb = new InlineKeyboard().text("↩️ Ответить", `supa:r:${ticket}`).text("🚫 Не принимать", `supa:b:${ticket}`);
   let delivered = 0;
+  let empty = 0;
   for (const adminId of ctx.deps.config.ADMIN_IDS) {
     try {
-      // Кнопки «Ответить / Не принимать» — под заголовком: у copyMessages их нет.
-      await ctx.api.sendMessage(adminId, `🏛 <b>Обращение #${ticket}</b> ${who}`, { parse_mode: "HTML", reply_markup: kb });
+      const head = await ctx.api.sendMessage(adminId, `🏛 <b>Обращение #${ticket}</b> ${who}`, { parse_mode: "HTML" });
       // Одним вызовом и по порядку; удалённое человеком сообщение Telegram
       // просто пропустит, а не оборвёт обращение на середине.
       const copied = await ctx.api.copyMessages(adminId, chatId, messageIds);
-      if (copied.length) delivered++;
+      if (!copied.length) {
+        // Человек удалил всё, что собрал: пустой заголовок с «🚫 Не принимать» не оставляем.
+        empty++;
+        await ctx.api.deleteMessage(adminId, head.message_id).catch(() => undefined);
+        continue;
+      }
+      delivered++;
+      // Кнопки «Ответить / Не принимать» — под заголовком (у copyMessages их нет)
+      // и только когда само обращение дошло.
+      await ctx.api.editMessageReplyMarkup(adminId, head.message_id, { reply_markup: kb }).catch(() => undefined);
     } catch (err) {
       logger.warn({ err: String(err).slice(0, 200), ticket }, "support ticket not delivered");
     }
   }
   logger.info({ ticket, anon, delivered }, "support ticket");
-  return delivered
-    ? `Передал в Министерство Жалоб 🏛 Обращение #${ticket}${anon ? " — анонимно: в обращении нет ни ника, ни id" : ""}. Ответ, если будет, придёт сюда.`
-    : `Не получилось передать. Напиши напрямую: ${ctx.deps.config.SUPPORT_CONTACT}`;
+  if (delivered) return `Передал в Министерство Жалоб 🏛 Обращение #${ticket}${anon ? " — анонимно: в обращении нет ни ника, ни id" : ""}. Ответ, если будет, придёт сюда.`;
+  return empty ? "Сообщения обращения удалены — отправлять нечего. Напиши заново." : `Не получилось передать. Напиши напрямую: ${ctx.deps.config.SUPPORT_CONTACT}`;
 }
 
 // ---- ответ админа ----

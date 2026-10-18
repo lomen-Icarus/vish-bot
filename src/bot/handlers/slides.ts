@@ -10,7 +10,7 @@
  */
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext, Deps } from "../context.js";
-import { takePending } from "../context.js";
+import { awaitingText } from "../context.js";
 import type { SlideDeckRow } from "../../db/repo.js";
 import { BTN, panelRef } from "../keyboards.js";
 import { logicalKeyFor, type LogicalGroup } from "../../schedule/groups.js";
@@ -61,11 +61,17 @@ export function parseSlidesQuery(rest: string, today: LocalDate = todayMsk()): S
     .replace(/(?<!\d)\.|\.(?!\d)|[^\p{L}\p{N}./-]+/gu, " ")
     .split(/\s+/)
     .filter(Boolean);
+  // Число перед словом «пара» — номер пары, а не число месяца и не предмет:
+  // «2 пара вчера», «вчера 2-ю пару», «физика 2 пара». После «пары» — дата:
+  // «с пары 9 числа».
+  const isPair = (w: string | undefined): boolean => !!w && /^пар(?:а|у|ы|е|ой)?$/.test(w);
+  const pairNo = new Set(words.flatMap((w, i) => (/^\d{1,2}(?:-?(?:я|ая|ю|ую|ой))?$/.test(w) && isPair(words[i + 1]) ? [i] : [])));
   let date: LocalDate | null = null;
   let day: number | null = null;
   let month: number | null = null;
   const subject: string[] = [];
-  for (const w of words) {
+  for (const [i, w] of words.entries()) {
+    if (pairNo.has(i)) continue;
     const found: boolean = date != null || day != null;
     const shift = found ? null : parseDayWord(w);
     if (shift != null) {
@@ -127,7 +133,8 @@ function recentFor(ctx: BotContext, all: SlideDeckRow[]): SlideDeckRow[] {
 
 slidesHandlers.chatType("private").hears(/^\s*(?:скинь|скиньте|пришли|пришлите|дай|дайте|отправь|хочу)?\s*слайд(?:ы|ов|ик\p{L}*)?(?:\s+(.*))?$/isu, async (ctx, next) => {
   // Бот ждёт ввод (фамилию, обращение, вопрос ИИ) — «слайды по физике» и есть этот ввод.
-  if (takePending(ctx.deps, ctx.user.id)) return next();
+  // Экран админа и отложенное обращение текста не ждут — это просьба о слайдах.
+  if (awaitingText(ctx.deps, ctx.user.id)) return next();
   const all = newestFirst(ctx.deps.repo.recentSlideDecks(300));
   if (!all.length) return void (await ctx.reply("Записанных вебинаров у меня пока нет."));
   const q = parseSlidesQuery(ctx.match[1] ?? "");

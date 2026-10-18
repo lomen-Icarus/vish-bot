@@ -65,7 +65,7 @@ type Task = {
 {
   publicKey: string;          // SPKI base64 — для мини-приложения
   results: { id: string; requestId: number; code: ResultCode; actualGroup?: string | null }[];
-  slots: { group: string; status: "ok" | "lost"; lastOkAt: string | null }[];
+  slots: { group: string; status: "ok" | "lost"; lastOkAt: string | null; requestId?: number }[];  // requestId — чья учётка в слоте (0 — из .env)
   portal: "ok" | "down";
 }
 
@@ -116,6 +116,12 @@ type ResultCode =
   отвечает `removed`. Поэтому отзыв одобренной, но, может быть, ещё не
   поставленной заявки безопасен, а `remove` повторяется каждый обмен до
   ответа — потерянный отчёт об установке не оставит учётку в слоте.
+- **Чья учётка в слоте** — по отчёту записывалки (`requestId` в строке слота),
+  бот хранит его в зеркале (`holder_id`). Отзыв слота без заявки и
+  `/slot_owner` берут `expect` оттуда. Если в слоте учётка закрытой заявки
+  (`revoked_early`, `forgotten`, отклонена, истекла) — бот сам ставит её на
+  снятие и один раз пишет админам. Заявки нет в базе вовсе — не трогает,
+  решает админ («Отозвать» в `/slots`).
 - **Замена занятого слота** — без отдельного отзыва: при одобрении прежняя
   заявка группы уходит в `revoking`, а задания `remove` бот отдаёт раньше
   `install`; повтор старого `remove` после установки новой её не тронет.

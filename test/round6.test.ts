@@ -187,7 +187,7 @@ describe("слайды вебинаров", () => {
     server = createHttpServer({ repo, service: makeService(), port: 0, host: "127.0.0.1", slidesToken: "x".repeat(20), slidesDir: dir, onSlides: (d) => got.push(d) });
     await new Promise<void>((resolve) => server!.once("listening", resolve));
     const port = (server.address() as { port: number }).port;
-    const meta = Buffer.from(JSON.stringify({ date: today, subject: "Правоведение", teacher: "Кожина Т. Н.", groups: ["ВИШ-12-23"], slides: 3 })).toString("base64");
+    const meta = Buffer.from(JSON.stringify({ date: today, subject: "Правоведение", teacher: "Образцова П. Н.", groups: ["ВИШ-12-23"], slides: 3 })).toString("base64");
     const pdf = Buffer.from("%PDF-1.4\n% тест\n");
 
     const bad = await fetch(`http://127.0.0.1:${port}/slides`, { method: "POST", headers: { Authorization: "Bearer nope", "X-Slides-Meta": meta }, body: pdf });
@@ -232,9 +232,9 @@ describe("слайды вебинаров", () => {
         return { document: { file_id: "BQACdeck" } };
       },
     } as never;
-    const deckId = repo.addSlideDeck({ date: today, subject: "Правоведение", teacher: "Кожина Т. Н.", title: null, groups: ["ВИШ-12-23"], slides: 3, file, bytes: 9 });
+    const deckId = repo.addSlideDeck({ date: today, subject: "Правоведение", teacher: "Образцова П. Н.", title: null, groups: ["ВИШ-12-23"], slides: 3, file, bytes: 9 });
     const n = new Notifier(api, repo, makeService(), null);
-    const sent = await n.sendSlideDeck({ deckId, date: today, subject: "Правоведение", teacher: "Кожина Т. Н.", title: null, groups: ["ВИШ-12-23"], slides: 3, file });
+    const sent = await n.sendSlideDeck({ deckId, date: today, subject: "Правоведение", teacher: "Образцова П. Н.", title: null, groups: ["ВИШ-12-23"], slides: 3, file });
     expect(sent).toBe(2);
     expect(uploads.map((u) => u.chatId)).toEqual([1, 2]);
     // Первому — файл, дальше по file_id.

@@ -3,6 +3,7 @@
  * Отдельный модуль, чтобы разведка (probe) могла ими пользоваться, не запуская
  * при импорте боевой цикл записи.
  */
+import { createHash } from "node:crypto";
 import type { RecorderConfig, WebinarProfile } from "./config.js";
 import type { WebinarRow } from "./portal.js";
 
@@ -151,10 +152,12 @@ export function deckBaseName(date: string, startMinutes: number | null, subject:
   const hhmm = startMinutes != null ? `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}${String(startMinutes % 60).padStart(2, "0")}` : "xxxx";
   const clean = (s: string): string => s.replace(/[^\p{L}\p{N} .-]/gu, "").trim().replace(/\s+/g, "-");
   const safe = clean(subject).slice(0, 50) || "вебинар";
-  // Фамилия и инициалы: у однофамильцев в одно время одного предмета иначе
-  // одна папка на две пары (keyOf их различает по полному ФИО).
+  // Фамилия с инициалами — для глаз; различает пары короткий хеш полного
+  // предмета и ФИО, как в keyOf: однофамильцы с теми же инициалами, длинные
+  // двойные фамилии и предметы длиннее 50 знаков иначе давали одну папку на две пары.
   const [surname = "", ...rest] = teacher.split(/[\s.]+/).filter(Boolean);
   const initials = rest.map((w) => w.charAt(0)).join("");
   const who = clean(`${surname}${initials ? `-${initials}` : ""}`).slice(0, 24);
-  return `${date}-${hhmm}-${safe}${who ? `-${who}` : ""}`.replace(/[/\\]/g, "-");
+  const tag = teacher.trim() ? `-${createHash("sha1").update(`${norm(subject)}|${norm(teacher)}`).digest("hex").slice(0, 6)}` : "";
+  return `${date}-${hhmm}-${safe}${who ? `-${who}` : ""}${tag}`.replace(/[/\\]/g, "-");
 }
