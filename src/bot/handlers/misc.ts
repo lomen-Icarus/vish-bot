@@ -1,4 +1,5 @@
 import { Composer, InlineKeyboard } from "grammy";
+import { isPpaQuery, showPpa } from "./ppa.js";
 import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { BTN, btnRef, FIND_BTN, groupCb, groupLabel, groupPicker, isMenuText, btnLabels, menuFor, menuHint, panelRef } from "../keyboards.js";
@@ -423,6 +424,7 @@ async function runSearch(ctx: BotContext, query: string): Promise<void> {
     if (namesakes.length) await ctx.reply("А это однофамильцы в расписании:", { reply_markup: candidatesKeyboard(namesakes, "teacher") });
     return;
   }
+  if (isPpaQuery(query) && needGroup(ctx)) return showPpa(ctx, false);
   const hits = await localSearch(ctx, query);
   // Нашёлся ровно один человек и больше ничего — сразу его карточка, та же, что
   // из кнопок «Преподаватели» и «Где студент»: кто это, где сейчас, день.
@@ -472,6 +474,8 @@ const FREE_TEXT_TTL_MS = 15 * 60_000;
  */
 export async function freeTextSearch(ctx: BotContext, text: string): Promise<void> {
   const q = text.trim().slice(0, 200);
+  // «пересдачи», «ппа», «долги» — сразу экран ППА своей группы, а не поиск по предметам.
+  if (isPpaQuery(q) && needGroup(ctx)) return showPpa(ctx, false);
   const hits = await localSearch(ctx, q, { freeText: true });
   ctx.deps.repo.bumpCounter(todayMsk(), hits.parts.length ? "text:found" : "text:miss");
   const person = hits.onlyPeople ? clearHit(hits.people) : null;

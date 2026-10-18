@@ -55,7 +55,8 @@ export async function askAi(ctx: BotContext, question: string, opts: { extraButt
   try {
     await ctx.replyWithChatAction("typing").catch(() => undefined);
     const self = ctx.user.teacherMode ? await ownTeacherContext(ctx) : undefined;
-    const res = await ask.answer({ question, group: self ? null : needGroup(ctx), subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps, { menuHidden: ctx.user.menuMode === "hidden", teacher: ctx.user.teacherMode }), self });
+    const group = self ? null : needGroup(ctx);
+    const res = await ask.answer({ question, group, subgroup: ctx.user.subgroup, userId: ctx.user.id, botHelp: featuresText(ctx.deps, { menuHidden: ctx.user.menuMode === "hidden", teacher: ctx.user.teacherMode }), self, ppaMarked: group ? ctx.deps.repo.ppaDebts(ctx.user.id, group.key) : [] });
     ctx.deps.repo.bumpAiUsage(ctx.user.id, day, res.inputTokens, res.outputTokens);
     const logId = ctx.deps.repo.logAi(ctx.user.id, question, res.text);
     // Copy the caller's rows: mutating their keyboard would move buttons between messages.

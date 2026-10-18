@@ -317,3 +317,65 @@ describe("экран «📋 ППА»", () => {
     expect(MORE_BTN.ppa).toBe("📋 Пересдачи (ППА)");
   });
 });
+
+import { AskService } from "../src/ai/ask.js";
+import { isPpaQuery } from "../src/bot/handlers/ppa.js";
+import { freeTextSearch } from "../src/bot/handlers/misc.js";
+
+describe("бот понимает вопросы про пересдачи", () => {
+  it("«передсача», «ппа», «долги», «хвосты» — про пересдачи; «передачи данных» — нет", () => {
+    for (const s of ["передсача рапсисание", "дай расписание передсачи долгов", "ППА", "когда пересдача по философии", "хвосты по матану"]) expect(isPpaQuery(s)).toBe(true);
+    for (const s of ["Модели и методы передачи данных", "передача", "14-24", "ппап"]) expect(isPpaQuery(s)).toBe(false);
+  });
+
+  type Tool = { name: string; run: (i: unknown) => Promise<unknown>; parse: (i: unknown) => unknown };
+  async function askTools() {
+    const env = setup({ 8824: [item({ date: "2099-10-22" }), item({ subject: "Химия", kind: "зач", date: "2099-10-20", start: 500 }), item({ subject: "История", date: "2026-10-01" })], 10679: [] });
+    await env.svc.pollPpa("2026-10-18");
+    const ask = new AskService("sk-test", env.svc, { model: "m" });
+    const g = env.svc.group("виш-14-24")!;
+    const priv = (ask as unknown as { tools: (...a: unknown[]) => Tool[] }).tools(g, null, "", { teachers: [], webinarTeachers: [], groupKeys: [], students: [] }, 7, "private", new Set([subjectKey("Философия")]));
+    const chat = ask.groupTools({ group: g, subgroup: null, userId: 7 }) as unknown as Tool[];
+    return { priv, chat };
+  }
+  const call = async (tools: Tool[], input: object = {}) => {
+    const t = tools.find((x) => x.name === "get_ppa")!;
+    return String(await t.run(t.parse(input)));
+  };
+
+  it("ИИ в личке: get_ppa — пересдачи группы впереди и свой отмеченный долг", async () => {
+    const { priv } = await askTools();
+    const out = await call(priv);
+    expect(out).toContain("Пересдачи (ППА) ВИШ-14-24 впереди");
+    expect(out).toContain("Химия (зачёт) | 1 ППА | ауд. Г-303");
+    expect(out).toMatch(/Философия \(экзамен\).*отмечен твой долг/);
+    expect(out).not.toMatch(/Химия.*отмечен твой долг/);
+    expect(out).toContain("Уже прошли в этой волне: 1");
+    expect(out).toContain("/ppa");
+  });
+
+  it("болталка в чате: get_ppa есть, но чужих отметок не выдаёт", async () => {
+    const { chat } = await askTools();
+    const out = await call(chat);
+    expect(out).toContain("Философия");
+    expect(out).not.toContain("отмечен");
+  });
+
+  it("текст «передсача рапсисание» без режима ИИ — сразу экран ППА своей группы", async () => {
+    const env = setup({ 8824: [item({ date: "2099-10-22" })], 10679: [] });
+    await env.svc.pollPpa("2026-10-18");
+    env.repo.touchUser(7, "a_u", "A");
+    env.repo.updateUser(7, { groupKey: "виш-14-24" });
+    const deps = { repo: env.repo, service: env.svc, webinars: null, ask: null, config: { POISK: false } } as unknown as Deps;
+    const calls: Call[] = [];
+    const api = new Api("123:FAKE");
+    api.config.use(async (_p, method, payload) => {
+      calls.push({ method, payload: payload as Record<string, unknown> });
+      return { ok: true, result: { message_id: 9, date: 0, chat: { id: 7, type: "private" } } as never };
+    });
+    const ctx = new Context(msg("передсача рапсисание"), api, ME) as BotContext;
+    Object.assign(ctx, { deps, user: env.repo.getUser(7)!, isAdmin: false });
+    await freeTextSearch(ctx, "передсача рапсисание");
+    expect(String(calls.find((c) => c.method === "sendMessage")!.payload.text)).toContain("Пересдачи (ППА) · ВИШ-14-24");
+  });
+});

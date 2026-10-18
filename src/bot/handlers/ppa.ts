@@ -15,7 +15,16 @@ import { logger } from "../../logger.js";
 
 export const ppaHandlers = new Composer<BotContext>();
 
-async function showPpa(ctx: BotContext, edit: boolean): Promise<void> {
+/**
+ * Текст — про пересдачи: «ппа», «пересдача» (и «передсача», «пересача»),
+ * «долги», «хвосты». «Передачи данных» — предмет, не пересдача.
+ */
+export function isPpaQuery(text: string): boolean {
+  const t = text.toLowerCase().replace(/ё/g, "е");
+  return /(^|[^\p{L}])ппа($|[^\p{L}])/u.test(t) || /пере(сд|дс|с)ач/u.test(t) || /(^|[^\p{L}])(долг|хвост)(и|ов|ам|ы)?($|[^\p{L}])/u.test(t);
+}
+
+export async function showPpa(ctx: BotContext, edit: boolean): Promise<void> {
   const group = needGroup(ctx);
   if (!group) return void (await ctx.reply(groupRequiredText()));
   const upcoming = ctx.deps.service.ppaUpcoming(group, todayMsk());
