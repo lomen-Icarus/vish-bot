@@ -59,7 +59,8 @@ export function slotsScreen(repo: Repo, groups: LogicalGroup[]): { text: string;
     if (slot) {
       filled++;
       const label = req ? null : repo.recorderMarkValue(`${OWNER_PREFIX}${g.key}`);
-      const holder = req ? who(req) : label ? `@${esc(label)} (из .env)` : "учётка из .env";
+      // holderId > 0 без живой заявки — учётка студента, заявки которой в базе нет (или она закрыта).
+      const holder = req ? who(req) : slot.holderId ? `учётка заявки №${slot.holderId} (заявки нет)` : label ? `@${esc(label)} (из .env)` : "учётка из .env";
       const state = rechecks.has(g.key)
         ? "🔁 проверяю заново"
         : slot.status === "lost"
@@ -219,7 +220,7 @@ adminOnly.callbackQuery(/^rq:rvg:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
   if (!slot) return void (await ctx.reply("Слота уже нет."));
   const kb = new InlineKeyboard().text("🗑 Да, отозвать", `rq:rvgy:${key}`).text("◀️ Назад", "rq:slots");
-  await ctx.reply(`Отозвать учётку из .env у группы ${esc(slot.groupTitle)}?\nБот перестанет заходить под ней на пары (идущая пара доснимется), логин и пароль удалятся с сервера записи.`, { parse_mode: "HTML", reply_markup: kb });
+  await ctx.reply(`Отозвать ${slot.holderId ? `учётку заявки №${slot.holderId}` : "учётку из .env"} у группы ${esc(slot.groupTitle)}?\nБот перестанет заходить под ней на пары (идущая пара доснимется), логин и пароль удалятся с сервера записи.`, { parse_mode: "HTML", reply_markup: kb });
 });
 
 adminOnly.callbackQuery(/^rq:rvgy:(.+)$/, async (ctx) => {

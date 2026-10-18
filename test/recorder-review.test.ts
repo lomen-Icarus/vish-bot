@@ -7,7 +7,7 @@ import path from "node:path";
 import { AccountStore } from "../recorder/src/accounts.js";
 import { runLiveness, type LiveTarget } from "../recorder/src/liveness.js";
 import { deliver } from "../recorder/src/deliver.js";
-import { runTask, type Task } from "../recorder/src/sync.js";
+import { runTask, syncOnce, type Task } from "../recorder/src/sync.js";
 import type { LoginCheck } from "../recorder/src/lk.js";
 
 const servers: Server[] = [];
@@ -166,5 +166,31 @@ describe("remove убирает только слот своей заявки", 
     expect(store.get("ВИШ-14-25")).toMatchObject({ requestId: 2 });
     await runTask(remove(2), deps(store));
     expect(store.get("ВИШ-14-25")).toBeUndefined();
+  });
+});
+
+describe("отчёт записывалки: чья учётка в слоте", () => {
+  it("в каждой строке слота — номер заявки (0 — учётка из .env): по нему бот отзывает слот без заявки", async () => {
+    let report: { slots?: Array<Record<string, unknown>> } = {};
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        if (req.url === "/rec/report") report = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        res.writeHead(200, { "Content-Type": "application/json" }).end(req.url === "/rec/sync" ? '{"tasks":[]}' : "{}");
+      });
+    });
+    servers.push(server);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const store = AccountStore.inDir(mkdtempSync(path.join(os.tmpdir(), "rev-")));
+    store.install({ group: "ВИШ-14-25", codes: ["14-25"], login: "s", password: "p", requestId: 5, userId: 7 });
+    store.install({ group: "ВИШ-13-23", codes: ["13-23"], login: "env", password: "p", requestId: 0, userId: 0 });
+    await syncOnce({ botUrls: [`http://127.0.0.1:${(server.address() as { port: number }).port}/slides`], token: "t", store, privatePem: "", publicSpki: "" });
+    expect(report.slots?.map((s) => [s.group, s.requestId]).sort()).toEqual([
+      ["ВИШ-13-23", 0],
+      ["ВИШ-14-25", 5],
+    ]);
+    expect(JSON.stringify(report)).not.toContain('"p"');
   });
 });

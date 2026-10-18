@@ -31,6 +31,11 @@ export interface PendingState {
   /** Обращение из нескольких сообщений (текст, потом скриншот): все id по порядку и вопрос «Отправить?» под последним. */
   messageIds?: number[];
   confirmId?: number;
+  /**
+   * Собранное обращение отложено: человек нажал кнопку меню или команду. Новые
+   * сообщения в него больше не идут, но «✅ Отправить» под ним работает.
+   */
+  parked?: boolean;
   expiresAt: number;
 }
 
@@ -104,6 +109,12 @@ export function takePending(deps: Deps, userId: number): PendingState | null {
     return null;
   }
   return s;
+}
+
+/** Бот ждёт от человека текст (фамилию, вопрос, обращение) — не экран админа и не отложенное обращение. */
+export function awaitingText(deps: Deps, userId: number): boolean {
+  const p = takePending(deps, userId);
+  return !!p && TEXT_PENDING.has(p.kind) && !p.parked;
 }
 
 export function clearPending(deps: Deps, userId: number): void {

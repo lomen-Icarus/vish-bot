@@ -1594,12 +1594,12 @@ export class Repo {
    * «стоит в слоте», шифровки нет. Дата подачи — 1970-й: такая заявка не
    * съедает месячный лимит и не истекает.
    */
-  adoptRecSlot(row: { userId: number; username: string | null; groupKey: string; groupTitle: string; adminId: number }): number {
+  adoptRecSlot(row: { userId: number; username: string | null; groupKey: string; groupTitle: string; adminId: number; slotHolder?: number | null }): number {
     const now = nowIso();
     return Number(
       this.db
-        .prepare("INSERT INTO rec_requests (user_id, username, group_key, group_title, envelope_json, state, created_at, updated_at, decided_at, decided_by) VALUES (?, ?, ?, ?, NULL, 'active', '1970-01-01T00:00:00.000Z', ?, ?, ?)")
-        .run(row.userId, row.username, row.groupKey, row.groupTitle, now, now, row.adminId).lastInsertRowid,
+        .prepare("INSERT INTO rec_requests (user_id, username, group_key, group_title, envelope_json, state, created_at, updated_at, decided_at, decided_by, slot_holder) VALUES (?, ?, ?, ?, NULL, 'active', '1970-01-01T00:00:00.000Z', ?, ?, ?, ?)")
+        .run(row.userId, row.username, row.groupKey, row.groupTitle, now, now, row.adminId, row.slotHolder ?? null).lastInsertRowid,
     );
   }
 
@@ -1614,12 +1614,12 @@ export class Repo {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM rec_requests WHERE user_id = ? AND created_at >= ? AND state NOT IN ('rejected_bad_envelope','expired','revoked')").get(userId, since) as { n: number }).n;
   }
 
-  createRecRequest(row: { userId: number; username: string | null; groupKey: string; groupTitle: string; envelopeJson: string }): number {
+  createRecRequest(row: { userId: number; username: string | null; groupKey: string; groupTitle: string; envelopeJson: string; slotHolder?: number | null }): number {
     const now = nowIso();
     return Number(
       this.db
-        .prepare("INSERT INTO rec_requests (user_id, username, group_key, group_title, envelope_json, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending_verify', ?, ?)")
-        .run(row.userId, row.username, row.groupKey, row.groupTitle, row.envelopeJson, now, now).lastInsertRowid,
+        .prepare("INSERT INTO rec_requests (user_id, username, group_key, group_title, envelope_json, state, created_at, updated_at, slot_holder) VALUES (?, ?, ?, ?, ?, 'pending_verify', ?, ?, ?)")
+        .run(row.userId, row.username, row.groupKey, row.groupTitle, row.envelopeJson, now, now, row.slotHolder ?? null).lastInsertRowid,
     );
   }
 
@@ -1676,10 +1676,12 @@ export class Repo {
   }
 
   /** Зеркало слотов с записывалки — для /slots и карты. */
-  upsertRecSlot(row: { groupKey: string; groupTitle: string; requestId: number | null; status: string; lastOkAt: string | null }): void {
+  upsertRecSlot(row: { groupKey: string; groupTitle: string; requestId: number | null; holderId?: number | null; status: string; lastOkAt: string | null }): void {
     this.db
-      .prepare("INSERT INTO rec_slots (group_key, group_title, request_id, status, last_ok_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(group_key) DO UPDATE SET group_title = excluded.group_title, request_id = excluded.request_id, status = excluded.status, last_ok_at = excluded.last_ok_at, updated_at = excluded.updated_at")
-      .run(row.groupKey, row.groupTitle, row.requestId, row.status, row.lastOkAt, nowIso());
+      .prepare(
+        "INSERT INTO rec_slots (group_key, group_title, request_id, holder_id, status, last_ok_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(group_key) DO UPDATE SET group_title = excluded.group_title, request_id = excluded.request_id, holder_id = excluded.holder_id, status = excluded.status, last_ok_at = excluded.last_ok_at, updated_at = excluded.updated_at",
+      )
+      .run(row.groupKey, row.groupTitle, row.requestId, row.holderId ?? null, row.status, row.lastOkAt, nowIso());
   }
 
   recSlots(): RecSlotRow[] {
@@ -1687,6 +1689,7 @@ export class Repo {
       groupKey: String(r.group_key),
       groupTitle: String(r.group_title),
       requestId: r.request_id == null ? null : Number(r.request_id),
+      holderId: r.holder_id == null ? null : Number(r.holder_id),
       status: String(r.status),
       lastOkAt: r.last_ok_at == null ? null : String(r.last_ok_at),
       updatedAt: String(r.updated_at),
@@ -1718,12 +1721,16 @@ export interface RecRequestRow {
   actualGroup: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Для отзыва слота без заявки и подписанного владельцем: чья учётка стояла в слоте. */
+  slotHolder: number | null;
 }
 
 export interface RecSlotRow {
   groupKey: string;
   groupTitle: string;
   requestId: number | null;
+  /** Чья учётка в слоте по отчёту записывалки: номер заявки, 0 — из .env, null — не сообщила. */
+  holderId: number | null;
   status: string;
   lastOkAt: string | null;
   updatedAt: string;
@@ -1741,6 +1748,7 @@ function recRequestRow(r: Record<string, unknown>): RecRequestRow {
     actualGroup: r.actual_group == null ? null : String(r.actual_group),
     createdAt: String(r.created_at),
     updatedAt: String(r.updated_at),
+    slotHolder: r.slot_holder == null ? null : Number(r.slot_holder),
   };
 }
 

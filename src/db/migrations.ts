@@ -469,4 +469,12 @@ export const MIGRATIONS: string[] = [
     updated_at TEXT NOT NULL
   );
   `,
+  // Чья учётка стоит в слоте записывалки — по её же отчёту (holder_id: номер
+  // заявки, 0 — учётка из .env, NULL — записывалка не сообщила). Отзыв слота без
+  // заявки запоминает этот номер (slot_holder), чтобы remove убрал ровно ту
+  // учётку, что была в слоте, — в том числе осиротевшую учётку студента.
+  `
+  ALTER TABLE rec_slots ADD COLUMN holder_id INTEGER;
+  ALTER TABLE rec_requests ADD COLUMN slot_holder INTEGER;
+  `,
 ];

@@ -144,8 +144,9 @@ export async function runTask(task: Task, deps: SyncDeps): Promise<TaskResult> {
   }
 }
 
-function slotSummary(s: Slot): { group: string; status: string; lastOkAt: string | null } {
-  return { group: s.group, status: s.status, lastOkAt: s.lastOkAt };
+/** Строка слота для отчёта; requestId — чья учётка стоит (0 — из .env): по нему бот отзывает слот без заявки. */
+function slotSummary(s: Slot): { group: string; status: string; lastOkAt: string | null; requestId: number } {
+  return { group: s.group, status: s.status, lastOkAt: s.lastOkAt, requestId: s.requestId };
 }
 
 let missingLogged = false;

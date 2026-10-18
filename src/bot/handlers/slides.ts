@@ -10,7 +10,7 @@
  */
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext, Deps } from "../context.js";
-import { takePending } from "../context.js";
+import { awaitingText } from "../context.js";
 import type { SlideDeckRow } from "../../db/repo.js";
 import { BTN, panelRef } from "../keyboards.js";
 import { logicalKeyFor, type LogicalGroup } from "../../schedule/groups.js";
@@ -127,7 +127,8 @@ function recentFor(ctx: BotContext, all: SlideDeckRow[]): SlideDeckRow[] {
 
 slidesHandlers.chatType("private").hears(/^\s*(?:скинь|скиньте|пришли|пришлите|дай|дайте|отправь|хочу)?\s*слайд(?:ы|ов|ик\p{L}*)?(?:\s+(.*))?$/isu, async (ctx, next) => {
   // Бот ждёт ввод (фамилию, обращение, вопрос ИИ) — «слайды по физике» и есть этот ввод.
-  if (takePending(ctx.deps, ctx.user.id)) return next();
+  // Экран админа и отложенное обращение текста не ждут — это просьба о слайдах.
+  if (awaitingText(ctx.deps, ctx.user.id)) return next();
   const all = newestFirst(ctx.deps.repo.recentSlideDecks(300));
   if (!all.length) return void (await ctx.reply("Записанных вебинаров у меня пока нет."));
   const q = parseSlidesQuery(ctx.match[1] ?? "");

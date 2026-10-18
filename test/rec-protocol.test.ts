@@ -147,7 +147,7 @@ describe("применение отчёта записывалки", () => {
   it("зеркало слотов и portal пишутся из отчёта", () => {
     const r = repo();
     applyRecorderReport(r, { slots: [{ group: "ВИШ-14-25", status: "ok", lastOkAt: "2026-10-17T00:00:00Z" }], portal: "down" });
-    expect(r.recSlots()).toEqual([{ groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", requestId: null, status: "ok", lastOkAt: "2026-10-17T00:00:00Z", updatedAt: expect.any(String) }]);
+    expect(r.recSlots()).toEqual([{ groupKey: "виш-14-25", groupTitle: "ВИШ-14-25", requestId: null, holderId: null, status: "ok", lastOkAt: "2026-10-17T00:00:00Z", updatedAt: expect.any(String) }]);
     expect(r.recorderMarkValue("portal")).toBe("down");
   });
 });
