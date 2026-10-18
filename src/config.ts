@@ -143,6 +143,12 @@ const schema = z.object({
    * не попадает; бот перечитывает файл сам, перезапуск не нужен.
    */
   CHAT_QA_DB: z.string().default("./data/chat-qa.csv"),
+  /**
+   * Личные ответы «ник;частота;сообщение»: человек из файла зовёт бота в
+   * группе — в первый раз всегда, дальше с шансом получает заготовку вместо
+   * ответа ИИ. Только на хостинге (в файле ники); перечитывается сам.
+   */
+  CHAT_PERSONAL_DB: z.string().default("./data/chat-personal.csv"),
   /** Дневные лимиты по умолчанию; в админке («💬 Болталка») их можно поменять без перезапуска. */
   CHAT_DAILY_LIMIT_PER_USER: num(z.coerce.number().int().nonnegative().catch(20)),
   CHAT_DAILY_LIMIT_PER_CHAT: num(z.coerce.number().int().nonnegative().catch(150)),

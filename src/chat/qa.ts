@@ -101,7 +101,7 @@ export function normQa(s: string): string {
  * Разбирает CSV целиком, а не построчно: ответ в кавычках может занимать
  * несколько строк. Возвращает записи (массивы ячеек).
  */
-function parseRecords(text: string, delimiter: string): string[][] {
+export function parseRecords(text: string, delimiter: string): string[][] {
   const records: string[][] = [];
   let row: string[] = [];
   let cell = "";
@@ -156,7 +156,7 @@ function parseRecords(text: string, delimiter: string): string[][] {
  * Именно в таком порядке: в ответах полно запятых, а «;» в первой строке
  * почти всегда разделитель.
  */
-function detectDelimiter(text: string): string {
+export function detectDelimiter(text: string): string {
   const first = (text.split(/\r?\n/).find((l) => l.trim() && !l.trimStart().startsWith("#")) ?? "").replace(/"[^"]*"/g, "");
   if (first.includes(";")) return ";";
   if (first.includes("\t")) return "\t";
@@ -196,7 +196,7 @@ export function parseQa(raw: string): QaParseResult {
 }
 
 /** Поле CSV: в кавычки, если в нём разделитель, кавычка или перенос строки. */
-function csvField(value: string, delimiter: string): string {
+export function csvField(value: string, delimiter: string): string {
   return /["\r\n]/.test(value) || value.includes(delimiter) || value !== value.trim() || value.startsWith("#") ? `"${value.replace(/"/g, '""')}"` : value;
 }
 

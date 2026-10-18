@@ -11,11 +11,12 @@ import type { StudentDirectory } from "../students/directory.js";
 import type { KnownPeople } from "../students/known.js";
 import type { Server } from "node:http";
 import type { ChatService } from "../chat/service.js";
+import type { PersonalReplies } from "../chat/personal.js";
 import type { PublicUrl } from "../http/publicUrl.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
-  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "menu-refresh" | "ask" | "teacher" | "search" | "poisk" | "people" | "qa-import" | "support" | "support-reply" | "cal-alarm";
+  kind: "suggest" | "broadcast" | "broadcast-target" | "broadcast-confirm" | "menu-refresh" | "ask" | "teacher" | "search" | "poisk" | "people" | "qa-import" | "qp-import" | "support" | "support-reply" | "cal-alarm";
   /** For broadcast: captured message to forward. */
   chatId?: number;
   messageId?: number;
@@ -65,6 +66,8 @@ export interface Deps {
    * бот в группах не болтает.
    */
   chat?: ChatService | null;
+  /** Личные ответы болталки «ник;частота;сообщение» (CHAT_PERSONAL_DB); есть, только когда есть болталка. */
+  personal?: PersonalReplies | null;
   /** Calendar-feed server; subscription links are offered only while it listens. */
   http: Server | null;
   /** Публичный адрес с резервом (основной/запасной); без него — PUBLIC_URL из конфига. */
