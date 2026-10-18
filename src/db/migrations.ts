@@ -477,4 +477,28 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE rec_slots ADD COLUMN holder_id INTEGER;
   ALTER TABLE rec_requests ADD COLUMN slot_holder INTEGER;
   `,
+  // Пересдачи (ППА): страница группы с портала (разобранная), отметки долгов
+  // человека (ключ предмета — subjectKey) и «уже спрашивали в этой волне ППА».
+  `
+  CREATE TABLE ppa_pages (
+    portal_group_id INTEGER PRIMARY KEY,
+    html_hash TEXT NOT NULL,
+    items_json TEXT NOT NULL,
+    fetched_at TEXT NOT NULL
+  );
+  CREATE TABLE ppa_debts (
+    user_id INTEGER NOT NULL,
+    group_key TEXT NOT NULL,
+    subject_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, group_key, subject_key)
+  );
+  CREATE TABLE ppa_asked (
+    user_id INTEGER NOT NULL,
+    group_key TEXT NOT NULL,
+    wave TEXT NOT NULL,
+    asked_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, group_key)
+  );
+  `,
 ];

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { PpaItem } from "../portal/ppa.js";
 import type { Db } from "./index.js";
 import { nowIso } from "./index.js";
 import type { Occurrence, Period } from "../schedule/model.js";
@@ -958,6 +959,9 @@ export class Repo {
         // Обращения — чтобы ответ на старое не нашёл человека; блок от спама
         // (support_blocks) остаётся, как ai_usage.
         "DELETE FROM support_tickets WHERE user_id = ?",
+        // Долги по ППА — личное: кто что пересдаёт, не должно пережить /soon.
+        "DELETE FROM ppa_debts WHERE user_id = ?",
+        "DELETE FROM ppa_asked WHERE user_id = ?",
         "DELETE FROM users WHERE id = ?",
       ]) {
         this.db.prepare(sql).run(userId);
@@ -1673,6 +1677,50 @@ export class Repo {
     if (!states.length) return [];
     const qs = states.map(() => "?").join(",");
     return (this.db.prepare(`SELECT * FROM rec_requests WHERE state IN (${qs}) AND created_at < ? ORDER BY id`).all(...states, olderThan) as Array<Record<string, unknown>>).map(recRequestRow);
+  }
+
+  // ---------- пересдачи (ППА) ----------
+
+  /** Разобранная страница ППА одной портальной группы; null — ещё не забирали. */
+  ppaPage(portalGroupId: number): { htmlHash: string; items: PpaItem[] } | null {
+    const r = this.db.prepare("SELECT html_hash, items_json FROM ppa_pages WHERE portal_group_id = ?").get(portalGroupId) as { html_hash: string; items_json: string } | undefined;
+    return r ? { htmlHash: r.html_hash, items: JSON.parse(r.items_json) as PpaItem[] } : null;
+  }
+
+  savePpaPage(portalGroupId: number, htmlHash: string, items: PpaItem[]): void {
+    this.db
+      .prepare("INSERT INTO ppa_pages (portal_group_id, html_hash, items_json, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT(portal_group_id) DO UPDATE SET html_hash = excluded.html_hash, items_json = excluded.items_json, fetched_at = excluded.fetched_at")
+      .run(portalGroupId, htmlHash, JSON.stringify(items), nowIso());
+  }
+
+  /** Отмеченные долги человека в группе — ключи предметов (subjectKey). */
+  ppaDebts(userId: number, groupKey: string): string[] {
+    return (this.db.prepare("SELECT subject_key FROM ppa_debts WHERE user_id = ? AND group_key = ?").all(userId, groupKey) as Array<{ subject_key: string }>).map((r) => r.subject_key);
+  }
+
+  setPpaDebt(userId: number, groupKey: string, subjectKey: string, on: boolean): void {
+    if (on) this.db.prepare("INSERT OR IGNORE INTO ppa_debts (user_id, group_key, subject_key, created_at) VALUES (?, ?, ?, ?)").run(userId, groupKey, subjectKey, nowIso());
+    else this.db.prepare("DELETE FROM ppa_debts WHERE user_id = ? AND group_key = ? AND subject_key = ?").run(userId, groupKey, subjectKey);
+  }
+
+  clearPpaDebts(userId: number, groupKey: string): void {
+    this.db.prepare("DELETE FROM ppa_debts WHERE user_id = ? AND group_key = ?").run(userId, groupKey);
+  }
+
+  /** Кто отметил долг по предмету — им одним и пишем о переносе пересдачи. */
+  ppaDebtors(groupKey: string, subjectKey: string): number[] {
+    return (this.db.prepare("SELECT user_id FROM ppa_debts WHERE group_key = ? AND subject_key = ?").all(groupKey, subjectKey) as Array<{ user_id: number }>).map((r) => r.user_id);
+  }
+
+  /** В какой волне ППА человека уже спрашивали про долги (null — не спрашивали). */
+  ppaAskedWave(userId: number, groupKey: string): string | null {
+    return (this.db.prepare("SELECT wave FROM ppa_asked WHERE user_id = ? AND group_key = ?").get(userId, groupKey) as { wave: string } | undefined)?.wave ?? null;
+  }
+
+  markPpaAsked(userId: number, groupKey: string, wave: string): void {
+    this.db
+      .prepare("INSERT INTO ppa_asked (user_id, group_key, wave, asked_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, group_key) DO UPDATE SET wave = excluded.wave, asked_at = excluded.asked_at")
+      .run(userId, groupKey, wave, nowIso());
   }
 
   /** Зеркало слотов с записывалки — для /slots и карты. */
