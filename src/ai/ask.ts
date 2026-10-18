@@ -80,6 +80,7 @@ const SYSTEM = `Ты — помощник по расписанию Высшей
 Как отвечать:
 - Студенты называют предметы разговорно: «математика»/«матан» = «Математический анализ», «Алгебра и геометрия» тоже математика; «физра» = «Физическая культура и спорт»; «инфа» = «Информатика»; «прога» = «Программирование»/«Основы программирования»; «англ» = «Иностранный язык»; «история» = «История России»; «ОРГ» = «Основы российской государственности». Если точного предмета нет — ищи по смыслу инструментом find_subject и предлагай ближайшие совпадения.
 - Если спрашивают про другую группу (например «у 14-26») — используй get_schedule для неё; названия групп вида «14-26» = «ВИШ-14-26».
+- Про все или несколько групп сразу («когда кончаются пары у групп завтра», «у кого нет пар в субботу») — один вызов groups_day, а не get_schedule по каждой. Ответ — списком, по строке на группу.
 - Спрашивают и о самом боте: «как включить анонимность», «как убрать своё имя», «как поменять оформление», «как сменить группу», «как посмотреть расписание другой группы», «как включить напоминания». Это нормальные вопросы — вызови bot_help и ответь по нему конкретными кнопками и командами. Не выдумывай пунктов, которых там нет.
 - Вопрос могут задать как угодно: «как дела у беляева», «что там у беляева», «где сейчас Беляев», «в какой группе Беляева» — во всех этих случаях речь о студенте, вызывай find_student. Про успеваемость, настроение и личную жизнь бот не знает ничего: скажи это одной фразой и покажи то, что знаешь, — группу и где человек должен быть по расписанию.
 - В поиск пишут что угодно одной строкой: фамилию преподавателя, ФИО студента, номер группы, название предмета, «кто ведёт физику», «где Иванов». Сначала пойми, о ком или о чём речь, и используй нужный инструмент — не отказывай только потому, что это не похоже на вопрос о расписании. Обязательно помечай, кого нашёл: «преподаватель (ВИШ)», «студент ВИШ, группа 12-23», «группа», «предмет». Если под запрос подходит и преподаватель, и студент — покажи оба варианта.
@@ -216,6 +217,30 @@ export class AskService {
         }
         if (!bySubject.size) return `В расписании ${g.title} ничего похожего на «${input.query}» нет. Все предметы: ${[...new Set(list.map((o) => o.subject))].join("; ")}`;
         return [...bySubject.entries()].map(([subject, occ]) => `${subject}:\n${fmtLessons(occ.slice(0, 6), today)}`).join("\n\n");
+      },
+    });
+
+    // «Когда кончаются пары у всех групп завтра» — одним вызовом, а не двадцатью get_schedule.
+    const groupsDay = betaZodTool({
+      name: "groups_day",
+      description: "Пары ВСЕХ групп ВИШ на одну дату одним списком: для каждой группы — начало первой и конец последней пары и сколько пар (или «пар нет»). Используй, когда спрашивают про все или несколько групп сразу: «когда кончаются пары у групп завтра», «у кого завтра нет пар», «кто учится в субботу». Можно ограничить курсом.",
+      inputSchema: z.object({
+        date: z.string().describe("Дата YYYY-MM-DD"),
+        course: z.number().int().min(1).max(6).optional().describe("Только этот курс (1–6)"),
+      }),
+      run: async (input) => {
+        if (!isLocalDate(input.date)) return "Дата нужна в формате YYYY-MM-DD";
+        const groups = service.groups().filter((g) => input.course == null || g.course === input.course);
+        if (!groups.length) return input.course ? `Групп ${input.course} курса нет.` : "Список групп пуст.";
+        const lines = groups.map((g) => {
+          const day = service.lessonsOn(g, input.date).filter((o) => o.status !== "moved" && o.start != null);
+          if (!day.length) return `${g.title}: пар нет`;
+          const start = Math.min(...day.map((o) => o.start!));
+          const end = Math.max(...day.map((o) => o.end ?? o.start!));
+          const n = new Set(day.map((o) => `${o.start}|${o.subject}`)).size;
+          return `${g.title}: ${fmtHHMM(start)}–${fmtHHMM(end)}, пар: ${n}`;
+        });
+        return `Пары групп ВИШ на ${input.date} (${weekdayName(input.date)})${input.course ? `, ${input.course} курс` : ""}:\n${lines.join("\n")}`;
       },
     });
 
@@ -367,10 +392,10 @@ export class AskService {
     // В общем чате про конкретных людей не говорим вовсе: «где сейчас Беляев»
     // в группе на сорок человек — это уже не расписание, а слежка на публике.
     return students && mode === "private"
-      ? [getSchedule, findSubject, getPpa, listGroups, findTeacher, findStudent, botHelpTool]
+      ? [getSchedule, groupsDay, findSubject, getPpa, listGroups, findTeacher, findStudent, botHelpTool]
       : mode === "group"
-        ? [getSchedule, findSubject, getPpa, listGroups, findTeacher, botHelpTool, meetingSlot]
-        : [getSchedule, findSubject, getPpa, listGroups, findTeacher, botHelpTool];
+        ? [getSchedule, groupsDay, findSubject, getPpa, listGroups, findTeacher, botHelpTool, meetingSlot]
+        : [getSchedule, groupsDay, findSubject, getPpa, listGroups, findTeacher, botHelpTool];
   }
 
   /**
