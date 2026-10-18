@@ -31,17 +31,32 @@ function withWebinars(deps: Deps, group: LogicalGroup, lessons: Occurrence[]): O
   }
 }
 
-export function dayView(deps: Deps, group: LogicalGroup, date: LocalDate, subgroup: number | null, teacherView: TeacherView = "bold"): { text: string; lessons: Occurrence[] } {
+/**
+ * Отмеченные пересдачи (ППА) человека за [from, to] — только в его собственной
+ * группе: в чужом расписании и в чатах их нет.
+ */
+export function myPpa(deps: Deps, user: { id: number; groupKey: string | null }, group: LogicalGroup, from: LocalDate, to: LocalDate): Occurrence[] {
+  if (user.groupKey !== group.key) return [];
+  const debts = deps.repo.ppaDebts(user.id, group.key);
+  return debts.length ? deps.service.ppaLessons(group, debts, from, to) : [];
+}
+
+const byTime = (a: Occurrence, b: Occurrence): number => a.date.localeCompare(b.date) || (a.start ?? 0) - (b.start ?? 0) || (a.slot ?? 0) - (b.slot ?? 0);
+
+export function dayView(deps: Deps, group: LogicalGroup, date: LocalDate, subgroup: number | null, teacherView: TeacherView = "bold", extra: Occurrence[] = []): { text: string; lessons: Occurrence[] } {
   const today = todayMsk();
-  const lessons = withWebinars(deps, group, deps.service.lessonsOn(group, date));
+  const base = withWebinars(deps, group, deps.service.lessonsOn(group, date));
+  const lessons = extra.length ? [...base, ...extra].sort(byTime) : base;
   const text = formatDay(group, date, lessons, deps.service.weekInfo(date), today, { subgroup, now: wallClock(), teacherView });
   return { text, lessons: filterSubgroup(lessons, subgroup) };
 }
 
-export function weekView(deps: Deps, group: LogicalGroup, anyDate: LocalDate, subgroup: number | null, teacherView: TeacherView = "bold"): { text: string; monday: LocalDate; byDate: Map<LocalDate, Occurrence[]> } {
+export function weekView(deps: Deps, group: LogicalGroup, anyDate: LocalDate, subgroup: number | null, teacherView: TeacherView = "bold", extra: (monday: LocalDate, sunday: LocalDate) => Occurrence[] = () => []): { text: string; monday: LocalDate; byDate: Map<LocalDate, Occurrence[]> } {
   const monday = mondayOf(anyDate);
   const sunday = addDays(monday, 6);
-  const all = withWebinars(deps, group, deps.service.materialize(group, monday, sunday));
+  const mine = extra(monday, sunday);
+  const base = withWebinars(deps, group, deps.service.materialize(group, monday, sunday));
+  const all = mine.length ? [...base, ...mine].sort(byTime) : base;
   const byDate = groupByDate(all);
   const text = formatWeek(group, monday, byDate, deps.service.weekInfo(monday), todayMsk(), { subgroup, teacherView });
   return { text, monday, byDate };
@@ -132,7 +147,7 @@ export async function sendDay(ctx: BotContext, group: LogicalGroup, date: LocalD
   const own = group.key === ctx.user.groupKey;
   const subgroup = own ? ctx.user.subgroup : null;
   const peekKey = opts.peek || !own ? group.key : undefined;
-  const { text, lessons } = dayView(deps, group, date, subgroup, ctx.user.teacherView);
+  const { text, lessons } = dayView(deps, group, date, subgroup, ctx.user.teacherView, opts.peek ? [] : myPpa(deps, ctx.user, group, date, date));
   const today = todayMsk();
   const hasImages = !!deps.renderer;
   const plan = posterPlan(ctx, opts, lessons.length > 0);
@@ -168,7 +183,7 @@ export async function sendWeek(ctx: BotContext, group: LogicalGroup, anyDate: Lo
   const own = group.key === ctx.user.groupKey;
   const subgroup = own ? ctx.user.subgroup : null;
   const peekKey = opts.peek || !own ? group.key : undefined;
-  const { text, monday, byDate } = weekView(deps, group, anyDate, subgroup, ctx.user.teacherView);
+  const { text, monday, byDate } = weekView(deps, group, anyDate, subgroup, ctx.user.teacherView, (from, to) => (opts.peek ? [] : myPpa(deps, ctx.user, group, from, to)));
   const hasImages = !!deps.renderer;
   const plan = posterPlan(ctx, opts, byDate.size > 0);
   const fileName = `${group.title}-week-${monday}.png`;

@@ -6,7 +6,7 @@
  * The single accent depends on week parity: amber for odd, ice for even, and
  * it also paints a stripe along the whole left page edge.
  */
-import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
+import { occTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
 import { filterSubgroup, isActiveLesson, markGone, posterTeacher, showMovedFrom, type MarkedLesson, type TeacherView } from "../../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate, type WallClock } from "../../time.js";
@@ -211,7 +211,7 @@ function dayLesson(o: MarkedLesson, accent: string, ongoing: boolean, view: Teac
       // Преподаватель в той же строке, что тип и аудитория; не влез — переносится целиком.
       row(
         { flexWrap: "wrap", alignItems: "center", marginTop: 8 },
-        capsule(lessonTypeLabel(o.type), typeTint(o.type)),
+        capsule(occTypeLabel(o), typeTint(o.type)),
         ...metaSpans(meta, SOFT),
         posterTeacher(o.teacher, view) ? text(`·\u00a0${posterTeacher(o.teacher, view)!}`, { fontSize: 23, fontWeight: view === "plain" ? 400 : 700, color: view === "plain" ? SOFT : FG, marginTop: 6, lineHeight: 1.3 }) : null,
       ),
@@ -236,7 +236,7 @@ const WK_RAIL_X = WK_TIME_W + WK_RAIL_W / 2;
 
 function weekLesson(o: Occurrence, accent: string, last: boolean, view: TeacherView | undefined): El {
   const moved = o.status === "moved";
-  const meta = [lessonTypeLabel(o.type), o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "перенос" : "", o.substituted ? "замена" : ""].filter(Boolean).join("  ·  ");
+  const meta = [occTypeLabel(o), o.isDistance ? "дистанционно" : o.room ? `ауд. ${o.room}` : "", o.subgroup ? `${o.subgroup} подгр.` : "", o.movedFrom ? "перенос" : "", o.substituted ? "замена" : ""].filter(Boolean).join("  ·  ");
   const who = posterTeacher(o.teacher, view);
   return row(
     { width: "100%", padding: "14px 0", borderBottom: last ? "none" : `1px solid ${RULE}`, opacity: moved ? 0.5 : 1 },
@@ -336,7 +336,7 @@ function streamSlot(s: Slot, accent: string, ongoing: boolean, view: TeacherView
           text(r.subject, { fontSize: r.mine ? 30 : 26, fontWeight: 700, color: r.mine ? FG : SOFT, lineHeight: 1.18, letterSpacing: -0.4, marginTop: 4, textDecoration: moved ? "line-through" : "none" }),
           row(
             { flexWrap: "wrap", alignItems: "center", marginTop: 4 },
-            capsule(lessonTypeLabel(r.type), typeTint(r.type)),
+            capsule(occTypeLabel(r), typeTint(r.type)),
             ...metaSpans(meta, r.mine ? SOFT : MUTED),
             posterTeacher(r.teacher, view) ? text(`· ${posterTeacher(r.teacher, view)}`, { marginLeft: 8, fontSize: MIN_TYPE, fontWeight: view === "plain" ? 500 : 700, color: view === "plain" ? MUTED : FG }) : null,
           ),

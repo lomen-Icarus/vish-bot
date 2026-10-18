@@ -183,3 +183,42 @@ describe("рассылка ППА", () => {
     expect(await tickPpaAsk(s, repo, svc, NOON)).toBe(0);
   });
 });
+
+import { dayView, myPpa } from "../src/bot/views.js";
+import { groupCalendar } from "../src/schedule/calendar.js";
+import { Notifier } from "../src/notify/dispatcher.js";
+import type { Deps } from "../src/bot/context.js";
+
+describe("отмеченные пересдачи — в своём расписании", () => {
+  async function ready() {
+    const env = setup({ 8824: [item(), item({ subject: "Химия", date: "2026-10-22", start: 500, end: 580, kind: "зач" })], 10679: [] });
+    await env.svc.pollPpa("2026-10-18");
+    env.repo.touchUser(7, "a_u", "A");
+    env.repo.updateUser(7, { groupKey: "виш-14-24" });
+    env.repo.setPpaDebt(7, "виш-14-24", subjectKey("Философия"), true);
+    const deps = { repo: env.repo, service: env.svc, webinars: null } as unknown as Deps;
+    return { ...env, deps, g: env.svc.group("виш-14-24")! };
+  }
+
+  it("день: своя отмеченная — с пометкой «ППА»; чужой предмет и чужая группа — нет", async () => {
+    const { deps, repo, g } = await ready();
+    const me = repo.getUser(7)!;
+    const { text } = dayView(deps, g, "2026-10-22", null, "bold", myPpa(deps, me, g, "2026-10-22", "2026-10-22"));
+    expect(text).toContain("Философия");
+    expect(text).toContain("экзамен · 1 ППА");
+    expect(text).not.toContain("Химия");
+    expect(myPpa(deps, { id: 7, groupKey: "виш-12-23" }, g, "2026-10-22", "2026-10-22")).toEqual([]);
+    expect(myPpa(deps, { id: 8, groupKey: "виш-14-24" }, g, "2026-10-22", "2026-10-22")).toEqual([]);
+  });
+
+  it("календарь и напоминания берут отмеченную пересдачу", async () => {
+    const { repo, svc, g } = await ready();
+    const cal = groupCalendar(svc, g, { subgroup: null, alarmMinutes: null, today: "2026-10-18", ppaDebts: repo.ppaDebts(7, g.key) });
+    expect(cal.ics).toContain("Философия (экзамен · 1 ППА)");
+    expect(cal.ics).not.toContain("Химия");
+    expect(groupCalendar(svc, g, { subgroup: null, alarmMinutes: null, today: "2026-10-18" }).ics).not.toContain("Философия");
+    const notifier = new Notifier({} as never, repo, svc, null);
+    const day = await (notifier as unknown as { ownDay: (u: unknown, d: string, c: Map<string, unknown>) => Promise<{ lessons: Array<{ subject: string }> }> }).ownDay(repo.getUser(7)!, "2026-10-22", new Map());
+    expect(day.lessons.map((o) => o.subject)).toEqual(["Философия"]);
+  });
+});

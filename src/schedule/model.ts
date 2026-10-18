@@ -97,6 +97,12 @@ export function lessonTypeLabel(type: string): string {
   return LESSON_TYPE_LABELS[key] ?? type;
 }
 
+/** Тип занятия для показа; у пересдачи — с пометкой: «экзамен · 1 ППА». */
+export function occTypeLabel(o: { type: string; ppa?: number }): string {
+  const base = lessonTypeLabel(o.type);
+  return o.ppa === undefined ? base : `${base} · ${o.ppa ? `${o.ppa} ` : ""}ППА`;
+}
+
 /** Раскладывает по датам одним проходом, сохраняя исходный порядок внутри дня. */
 export function groupByDate<T extends { date: LocalDate }>(items: readonly T[]): Map<LocalDate, T[]> {
   const byDate = new Map<LocalDate, T[]>();

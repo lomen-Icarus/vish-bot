@@ -4,7 +4,7 @@ import type { ChangeEventRow, Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
 import { captionFits, esc as escapeHtml, formatDay, formatNotice, filterSubgroup, plural } from "../schedule/format.js";
-import { isSessionPeriod, lessonTypeLabel, type Occurrence } from "../schedule/model.js";
+import { isSessionPeriod, occTypeLabel, type Occurrence } from "../schedule/model.js";
 import { fmtHHMM, parseHHMM, sleep, todayMsk, wallClock, addDays, type LocalDate, type WallClock } from "../time.js";
 import { logger } from "../logger.js";
 import type { Renderer } from "../render/image.js";
@@ -639,6 +639,13 @@ export class Notifier {
       all = this.service.lessonsOn(group, date).filter((o) => o.status === "scheduled" && o.start != null);
       cache.set(k, all);
     }
+    // Отмеченные пересдачи (ППА) — только свои: в общий кеш группы не кладём.
+    const debts = this.repo.ppaDebts(user.id, group.key);
+    if (debts.length) {
+      const mine = this.service.ppaLessons(group, debts, date, date).filter((o) => o.start != null);
+      const byTime = (a: Occurrence, b: Occurrence): number => (a.start ?? 0) - (b.start ?? 0);
+      if (mine.length) return { group, lessons: [...filterSubgroup(all, user.subgroup), ...mine].sort(byTime), all: [...all, ...mine].sort(byTime), subgroup: user.subgroup, teacher: false };
+    }
     return { group, lessons: filterSubgroup(all, user.subgroup), all, subgroup: user.subgroup, teacher: false };
   }
 
@@ -688,7 +695,7 @@ export class Notifier {
             const left = o.start! - now.minutes;
             const where = o.isDistance ? "💻 дистанционно" : o.room ? `ауд. ${o.room}` : "";
             const groups = own.teacher && o.groups?.length ? ` · ${o.groups.join(", ")}` : "";
-            const text = `⏱ Через ${humanMinutes(left)} — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(lessonTypeLabel(o.type))})${where ? `, ${escapeHtml(where)}` : ""} · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${escapeHtml(groups)}`;
+            const text = `⏱ Через ${humanMinutes(left)} — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(occTypeLabel(o))})${where ? `, ${escapeHtml(where)}` : ""} · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${escapeHtml(groups)}`;
             const kb = o.isDistance ? new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL).row() : new InlineKeyboard();
             if (await this.send(user, text, { kind: "remind-each", replyMarkup: reminderOff("each", kb) })) sent++;
           }
@@ -707,7 +714,7 @@ export class Notifier {
             // The webinar page names the teacher and the topic of the session; add them when known.
             const w = own.teacher ? null : (this.webinars?.forLesson(o, [group.title, ...group.portalNames]) ?? null);
             const extra = [w?.teacher ? escapeHtml(w.teacher) : "", w?.title ? `📝 ${escapeHtml(w.title.length > 120 ? w.title.slice(0, 117).trimEnd() + "…" : w.title)}` : "", own.teacher && o.groups?.length ? escapeHtml(o.groups.join(", ")) : "", own.teacher && o.topic ? `📝 ${escapeHtml(o.topic.slice(0, 120))}` : ""].filter(Boolean);
-            const text = `💻 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} дистант — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(lessonTypeLabel(o.type))}) · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\nВебинар: ${WEBINAR_URL}`;
+            const text = `💻 ${left <= 1 ? "Сейчас начинается" : `Через ${humanMinutes(left)}`} дистант — <b>${escapeHtml(o.subject)}</b> (${escapeHtml(occTypeLabel(o))}) · ${fmtHHMM(o.start!)}${o.end != null ? `–${fmtHHMM(o.end)}` : ""}${extra.length ? `\n${extra.join("\n")}` : ""}\nВебинар: ${WEBINAR_URL}`;
             if (await this.send(user, text, { kind: "remind-distance", replyMarkup: reminderOff("distance", new InlineKeyboard().url("💻 Вебинары портала", WEBINAR_URL).row()) })) sent++;
           }
         }

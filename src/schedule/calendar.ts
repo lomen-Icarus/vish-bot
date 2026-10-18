@@ -35,9 +35,12 @@ export interface GroupCalendar {
 }
 
 /** Full calendar of a group from today to the end of the semester. */
-export function groupCalendar(service: ScheduleService, group: LogicalGroup, opts: { subgroup: number | null; alarmMinutes: number | null; now?: Date; refreshInterval?: string; stableSequence?: boolean; today?: LocalDate }): GroupCalendar {
+export function groupCalendar(service: ScheduleService, group: LogicalGroup, opts: { subgroup: number | null; alarmMinutes: number | null; now?: Date; refreshInterval?: string; stableSequence?: boolean; today?: LocalDate; ppaDebts?: string[] }): GroupCalendar {
   const { from, to } = calendarWindow(service, opts.today);
-  const lessons = filterSubgroup(service.materialize(group, from, to), opts.subgroup);
+  // Отмеченные пересдачи (ППА) человека — в его личный календарь.
+  const ppa = opts.ppaDebts?.length ? service.ppaLessons(group, opts.ppaDebts, from, to) : [];
+  const own = filterSubgroup(service.materialize(group, from, to), opts.subgroup);
+  const lessons = ppa.length ? [...own, ...ppa].sort((a, b) => a.date.localeCompare(b.date) || (a.start ?? 0) - (b.start ?? 0)) : own;
   const ics = buildIcs({ name: group.title, lessons, alarmMinutes: opts.alarmMinutes, now: opts.now, refreshInterval: opts.refreshInterval, stableSequence: opts.stableSequence });
   return { ics, count: lessons.filter((o) => o.status === "scheduled").length, from, to };
 }

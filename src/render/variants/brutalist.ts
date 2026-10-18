@@ -5,7 +5,7 @@
  * dominant colour of the header block (acid yellow = odd, lilac = even).
  */
 import type { LogicalGroup } from "../../schedule/groups.js";
-import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
+import { occTypeLabel, type Occurrence } from "../../schedule/model.js";
 import type { WeekInfo } from "../../schedule/service.js";
 import { filterSubgroup, isActiveLesson, markGone, posterTeacher, showMovedFrom, type MarkedLesson, type TeacherView } from "../../schedule/format.js";
 import { addDays, fmtDayMonth, fmtHHMM, weekdayName, type LocalDate } from "../../time.js";
@@ -223,7 +223,7 @@ function lessonRow(o: MarkedLesson, ongoing: boolean, accent: string, view: Teac
         h(
           "div",
           { display: "flex", flexDirection: "row", flexWrap: "wrap", alignItems: "center", width: "100%", marginTop: 10 },
-          tag(lessonTypeLabel(o.type), { bg: typeColor(o.type), mt: 6, border: inv ? typeColor(o.type) : INK }),
+          tag(occTypeLabel(o), { bg: typeColor(o.type), mt: 6, border: inv ? typeColor(o.type) : INK }),
           ...meta.map((m) => text(up(m), { fontSize: 24, fontWeight: 700, color: fg, letterSpacing: 1, marginRight: 16, marginTop: 6 })),
           // Преподаватель в той же строке; не влез — переносится целиком.
           posterTeacher(o.teacher, view) ? text(up(posterTeacher(o.teacher, view)!), { fontSize: 24, fontWeight: view === "plain" ? 500 : 800, letterSpacing: view === "plain" ? 0 : 1, color: view === "plain" ? sub : fg, marginTop: 6 }) : null,
@@ -320,7 +320,7 @@ export async function createRenderer(): Promise<Renderer | null> {
                   h(
                     "div",
                     { display: "flex", flexDirection: "row", flexWrap: "wrap", alignItems: "center", width: "100%", marginTop: 4 },
-                    tag(lessonTypeLabel(o.type), { bg: typeColor(o.type), size: 24, mt: 6 }),
+                    tag(occTypeLabel(o), { bg: typeColor(o.type), size: 24, mt: 6 }),
                     ...meta.map((m) => text(up(m), { fontSize: 24, fontWeight: 700, color: MUTED, letterSpacing: 1, marginRight: 14, marginTop: 6 })),
                     posterTeacher(o.teacher, input.teacherView) ? text(up(posterTeacher(o.teacher, input.teacherView)!), { fontSize: 24, fontWeight: input.teacherView === "plain" ? 600 : 800, color: input.teacherView === "plain" ? MUTED : INK, letterSpacing: 1, marginRight: 14, marginTop: 6 }) : null,
                   ),
@@ -407,7 +407,7 @@ export async function createRenderer(): Promise<Renderer | null> {
                       h(
                         "div",
                         { display: "flex", flexDirection: "row", flexWrap: "wrap", alignItems: "center", width: "100%", marginTop: 4 },
-                        tag(lessonTypeLabel(r.type), { bg: typeColor(r.type), size: 24, mt: 6, border: inv ? typeColor(r.type) : INK }),
+                        tag(occTypeLabel(r), { bg: typeColor(r.type), size: 24, mt: 6, border: inv ? typeColor(r.type) : INK }),
                         ...meta.map((m) => text(up(m), { fontSize: 24, fontWeight: 700, color: sub, letterSpacing: 1, marginRight: 14, marginTop: 6 })),
                         posterTeacher(r.teacher, input.teacherView) ? text(up(posterTeacher(r.teacher, input.teacherView)!), { fontSize: 24, fontWeight: input.teacherView === "plain" ? 600 : 800, color: input.teacherView === "plain" ? sub : fg, letterSpacing: 1, marginRight: 14, marginTop: 6 }) : null,
                       ),
