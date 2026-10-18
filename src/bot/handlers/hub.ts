@@ -71,10 +71,11 @@ hubHandlers.callbackQuery(/^hub:(groups|stream|teachers|ask|poisk)$/, async (ctx
 
 // ---- 🗂 Ещё ----
 function morePanel(ctx: BotContext): { text: string; kb: InlineKeyboard } {
-  const kb = new InlineKeyboard()
-    .text(MORE_BTN.changes, "more:changes")
-    .row()
-    .text(MORE_BTN.calendar, "more:calendar")
+  const kb = new InlineKeyboard().text(MORE_BTN.changes, "more:changes").row();
+  // Пересдачи — только пока у группы они впереди: остальное время кнопка лишняя.
+  const group = needGroup(ctx);
+  if (group && ctx.deps.service.ppaUpcoming(group).length) kb.text(MORE_BTN.ppa, "more:ppa").row();
+  kb.text(MORE_BTN.calendar, "more:calendar")
     .row()
     .text(MORE_BTN.settings, "more:settings")
     .text(MORE_BTN.help, "more:help");

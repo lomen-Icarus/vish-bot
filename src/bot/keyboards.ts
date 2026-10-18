@@ -81,6 +81,7 @@ export const FIND_BTN = {
 /** Кнопки панели «🗂 Ещё» — по той же причине, что FIND_BTN. */
 export const MORE_BTN = {
   changes: "🔔 Изменения и объявления",
+  ppa: "📋 Пересдачи (ППА)",
   calendar: "📆 Календарь телефона",
   settings: "⚙️ Настройки",
   help: "❓ Как пользоваться",

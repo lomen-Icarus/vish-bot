@@ -222,3 +222,79 @@ describe("отмеченные пересдачи — в своём распис
     expect(day.lessons.map((o) => o.subject)).toEqual(["Философия"]);
   });
 });
+
+import { Api, Composer, Context } from "grammy";
+import type { Update, UserFromGetMe } from "grammy/types";
+import { ppaHandlers } from "../src/bot/handlers/ppa.js";
+import { hubHandlers } from "../src/bot/handlers/hub.js";
+import { BTN, MORE_BTN } from "../src/bot/keyboards.js";
+import type { BotContext } from "../src/bot/context.js";
+
+const ME: UserFromGetMe = { id: 1, is_bot: true, first_name: "vish", username: "vish_bot", can_join_groups: true, can_read_all_group_messages: false, supports_inline_queries: true, can_connect_to_business: false, has_main_web_app: false };
+type Call = { method: string; payload: Record<string, unknown> };
+let uid = 5000;
+const msg = (text: string): Update => ({ update_id: uid, message: { message_id: uid++, date: 0, chat: { id: 7, type: "private", first_name: "U" }, from: { id: 7, is_bot: false, first_name: "U" }, text, ...(text.startsWith("/") ? { entities: [{ type: "bot_command", offset: 0, length: text.split(" ")[0]!.length }] } : {}) } });
+const tap = (data: string): Update => ({ update_id: uid++, callback_query: { id: "1", from: { id: 7, is_bot: false, first_name: "U" }, chat_instance: "1", data, message: { message_id: 3, date: 0, chat: { id: 7, type: "private", first_name: "U" }, text: "x" } as never } });
+
+async function run(deps: Deps, update: Update, chain: Composer<BotContext>[] = [ppaHandlers]): Promise<Call[]> {
+  const calls: Call[] = [];
+  const api = new Api("123:FAKE");
+  api.config.use(async (_p, method, payload) => {
+    calls.push({ method, payload: payload as Record<string, unknown> });
+    return { ok: true, result: { message_id: 9, date: 0, chat: { id: 7, type: "private" } } as never };
+  });
+  const ctx = new Context(update, api, ME) as BotContext;
+  Object.assign(ctx, { deps, user: deps.repo.getUser(7)!, isAdmin: false });
+  const all = new Composer<BotContext>();
+  for (const c of chain) all.use(c);
+  await all.middleware()(ctx, async () => undefined);
+  return calls;
+}
+
+describe("экран «📋 ППА»", () => {
+  async function ready(items: PpaItem[]) {
+    const env = setup({ 8824: items, 10679: [] });
+    await env.svc.pollPpa("2026-10-18");
+    env.repo.touchUser(7, "a_u", "A");
+    env.repo.updateUser(7, { groupKey: "виш-14-24" });
+    const deps = { repo: env.repo, service: env.svc, webinars: null, config: { ADMIN_IDS: [], SLIDES_TOKEN: "" } } as unknown as Deps;
+    return { ...env, deps };
+  }
+  const far = [item({ date: "2099-10-22" }), item({ subject: "Химия", kind: "зач", date: "2099-10-20", start: 500 })];
+  const markup = (c: Call | undefined): string => JSON.stringify(c?.payload.reply_markup ?? null);
+
+  it("/ppa — пересдачи впереди и кнопки предметов; отметка → ✅ и в расписании; «Готово» — итог", async () => {
+    const { deps, repo } = await ready(far);
+    const shown = (await run(deps, msg("/ppa"))).find((c) => c.method === "sendMessage")!;
+    expect(String(shown.payload.text)).toContain("Пересдачи (ППА) · ВИШ-14-24");
+    expect(String(shown.payload.text)).toContain("Химия");
+    expect(markup(shown)).toContain(`ppa:t:${subjectKey("Философия")}`);
+    expect(markup(shown)).toContain("ppa:none");
+    const toggled = await run(deps, tap(`ppa:t:${subjectKey("Философия")}`));
+    expect(repo.ppaDebts(7, "виш-14-24")).toEqual([subjectKey("Философия")]);
+    const edit = toggled.find((c) => c.method === "editMessageText")!;
+    expect(markup(edit)).toContain("✅ Философия");
+    expect(markup(edit)).toContain("ppa:done");
+    const done = (await run(deps, tap("ppa:done"))).find((c) => c.method === "editMessageText")!;
+    expect(String(done.payload.text)).toContain("1 пересдача");
+    expect(String(done.payload.text)).toContain("Философия");
+  });
+
+  it("«Долгов нет» снимает отметки; чужой ключ предмета — отказ", async () => {
+    const { deps, repo } = await ready(far);
+    repo.setPpaDebt(7, "виш-14-24", subjectKey("Химия"), true);
+    await run(deps, tap("ppa:none"));
+    expect(repo.ppaDebts(7, "виш-14-24")).toEqual([]);
+    const bad = await run(deps, tap("ppa:t:nope"));
+    expect(JSON.stringify(bad.find((c) => c.method === "answerCallbackQuery")!.payload)).toContain("уже нет");
+    expect(repo.ppaDebts(7, "виш-14-24")).toEqual([]);
+  });
+
+  it("«🗂 Ещё»: кнопка ППА есть, пока пересдачи впереди", async () => {
+    const withPpa = await ready(far);
+    expect(markup((await run(withPpa.deps, msg(BTN.more), [hubHandlers])).find((c) => c.method === "sendMessage"))).toContain("more:ppa");
+    const past = await ready([item({ date: "2026-10-01" })]);
+    expect(markup((await run(past.deps, msg(BTN.more), [hubHandlers])).find((c) => c.method === "sendMessage"))).not.toContain("more:ppa");
+    expect(MORE_BTN.ppa).toBe("📋 Пересдачи (ППА)");
+  });
+});
