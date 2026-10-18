@@ -69,9 +69,9 @@ export async function tickPpaAsk(sender: PpaSender, repo: Repo, service: Schedul
     if (!group) continue;
     let upcoming = upcomingOf.get(group.key);
     if (!upcoming) upcomingOf.set(group.key, (upcoming = service.ppaUpcoming(group, today)));
-    // Метку ставим и без отправки: пересдач впереди нет — спрашивать не о чем.
-    repo.markPpaAsked(user.id, user.groupKey, wave);
+    // Впереди пересдач нет — не спрашиваем и не отмечаем: спросим, как появятся.
     if (!upcoming.length) continue;
+    repo.markPpaAsked(user.id, user.groupKey, wave);
     const { text, kb } = ppaScreen(group, upcoming, new Set(repo.ppaDebts(user.id, group.key)), { ask: true });
     if (await sender.send(user, text, { kind: "ppa-ask", replyMarkup: kb })) sent++;
   }

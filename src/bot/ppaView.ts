@@ -40,8 +40,14 @@ export function ppaScreen(group: LogicalGroup, upcoming: PpaItem[], debts: Reado
     ? `📋 <b>У ${esc(group.title)} вышло расписание пересдач (ППА)</b>: ${upcoming.length}, ${first === last ? fmtDDMM(first) : `с ${fmtDDMM(first)} по ${fmtDDMM(last)}`}.\n\nЕсть долги? Отметь предметы — их пересдачи встанут в твоё расписание, напоминания и календарь. Кто ничего не отметит, лишнего не увидит. Отметки видишь только ты.`
     : `📋 <b>Пересдачи (ППА) · ${esc(group.title)}</b>\n\nОтмеченные ✅ стоят в твоём расписании, напоминаниях и календаре. Отметки видишь только ты.`;
   const lines = upcoming.map((i) => `${debts.has(subjectKey(i.subject)) ? "✅" : "▫️"} ${ppaItemText(i)}`);
-  for (const s of subjectsOf(upcoming)) kb.text(`${debts.has(s.key) ? "✅" : "▫️"} ${short(s.subject)}`, `ppa:t:${s.key}`).row();
-  const mine = subjectsOf(upcoming).filter((s) => debts.has(s.key)).length;
+  // По два предмета в ряд: у группы за волну бывает с десяток предметов.
+  const subjects = subjectsOf(upcoming);
+  subjects.forEach((s, n) => {
+    kb.text(`${debts.has(s.key) ? "✅" : "▫️"} ${short(s.subject, 22)}`, `ppa:t:${s.key}`);
+    if (n % 2 === 1) kb.row();
+  });
+  if (subjects.length % 2 === 1) kb.row();
+  const mine = subjects.filter((s) => debts.has(s.key)).length;
   kb.text(mine ? "👌 Готово" : "🙅 Долгов нет", mine ? "ppa:done" : "ppa:none");
   return { text: `${head}\n\n${lines.join("\n")}`, kb };
 }

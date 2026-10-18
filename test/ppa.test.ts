@@ -182,6 +182,25 @@ describe("рассылка ППА", () => {
     expect(s.sent[0]!.text).toContain("Есть долги?");
     expect(await tickPpaAsk(s, repo, svc, NOON)).toBe(0);
   });
+
+  it("волна есть, а впереди пересдач нет — не спрашиваем и не отмечаем; появились — спросим", async () => {
+    const { repo, svc, pages } = setup({ 8824: [], 10679: [] });
+    await svc.pollPpa("2026-10-18");
+    pages[8824] = [item({ date: "2026-10-01" })];
+    await svc.pollPpa("2026-10-18");
+    repo.touchUser(7, "a_u", "A");
+    repo.updateUser(7, { groupKey: "виш-14-24" });
+    const s = sender();
+    expect(await tickPpaAsk(s, repo, svc, NOON)).toBe(0);
+    expect(repo.ppaAskedWave(7, "виш-14-24")).toBeNull();
+    // Появилась пересдача впереди (вопрос смотрит на настоящее «сегодня» — берём дальнюю дату;
+    // волну держим той же, как если бы 2 ППА добавили в текущую).
+    pages[8824] = [item({ date: "2026-10-01" }), item({ date: "2099-10-05", attempt: 2 })];
+    repo.setMeta("ppa:seen:виш-14-24", "2099-осень");
+    repo.setMeta("ppa:ask:виш-14-24", "2099-осень");
+    await svc.pollPpa("2026-10-18");
+    expect(await tickPpaAsk(s, repo, svc, NOON)).toBe(1);
+  });
 });
 
 import { dayView, myPpa } from "../src/bot/views.js";
