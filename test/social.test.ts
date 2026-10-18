@@ -713,15 +713,15 @@ describe("знакомство в свободной форме, отписка 
   });
   const introCall = (input: object) => fakeMessage([{ type: "tool_use", id: "tu1", name: "remember_person", input } as Anthropic.ToolUseBlock], "tool_use");
 
-  it("«Знакомься это Лаврентьев Николай - @Mr_Mist_Midge» — модель зовёт remember_person, знакомство записано", async () => {
+  it("«Знакомься это Сидоров Павел - @Test_Student_42» — модель зовёт remember_person, знакомство записано", async () => {
     const answer = "Приятно познакомиться, запишу 🙂 Группу не знаю — скажешь, запомню и её.";
-    const { deps, repo, requests } = setup({ answers: [introCall({ name: "Лаврентьев Николай", username: "Mr_Mist_Midge" }), textMsg(answer)] });
-    const sent = await send(deps, msg("Знакомься это Лаврентьев Николай - @Mr_Mist_Midge"));
+    const { deps, repo, requests } = setup({ answers: [introCall({ name: "Сидоров Павел", username: "Test_Student_42" }), textMsg(answer)] });
+    const sent = await send(deps, msg("Знакомься это Сидоров Павел - @Test_Student_42"));
     expect(systemText(requests[0]!)).toContain("вызови remember_person");
     expect(systemText(requests[0]!)).toContain("Никогда не говори, что запомнил");
     expect(requests[0]!.tools!.map((t) => t.name)).toContain("remember_person");
     expect(JSON.stringify(requests[1]!.messages.at(-1)!.content)).toContain(`Ответь ровно этим текстом, ничего не добавляя: «${answer}»`);
-    expect(repo.introByUsername("mr_mist_midge")).toMatchObject({ name: "Лаврентьев Николай", groupTitle: null, introducedBy: 7 });
+    expect(repo.introByUsername("test_student_42")).toMatchObject({ name: "Сидоров Павел", groupTitle: null, introducedBy: 7 });
     expect(texts(sent)).toEqual([answer]);
   });
 

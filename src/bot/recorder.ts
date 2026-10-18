@@ -355,9 +355,9 @@ export function revokeRecRequest(repo: Repo, id: number, by?: number): RecAction
  * отчёт removed удаляет строку. Студента у неё нет (id 0) — писать некому.
  */
 export function revokeSlotWithoutRequest(repo: Repo, groupKey: string, adminId: number): boolean {
-  const slot = repo.recSlots().find((s) => s.groupKey === groupKey);
-  // Общая учётка живёт в .env — кнопкой её не убрать.
-  if (!slot || slot.groupTitle === GENERAL_SLOT_TITLE || repo.activeRecRequest(groupKey)) return false;
+  // Общая учётка живёт в .env — кнопкой её не убрать; слот заявки — отзыв заявки.
+  if (!heldWithoutRequest(repo, groupKey)) return false;
+  const slot = repo.recSlots().find((s) => s.groupKey === groupKey)!;
   // Уже убираем именно её (а не отзываемую заявку студента той же группы).
   if (repo.recRequestsByState(["revoking"]).some((r) => r.groupKey === groupKey && envSlotRequest(r))) return true;
   const id = repo.createRecRequest({ userId: 0, username: null, groupKey, groupTitle: slot.groupTitle, envelopeJson: "" });

@@ -244,22 +244,22 @@ describe("бот узнаёт своих", () => {
   const file = (): string => {
     const dir = mkdtempSync(join(tmpdir(), "known-"));
     const f = join(dir, "known.csv");
-    writeFileSync(f, "ФИО;Телеграм\nАлбуткин Данил Иванович;nortch\nИванов Андрей Иванович;https://t.me/@Shiish\nПетров Иван;dubl\nСидоров Иван;dubl\n", "utf8");
+    writeFileSync(f, "ФИО;Телеграм\nКузнецов Тимур Олегович;demo_nick\nИванов Андрей Иванович;https://t.me/@Sample_Nick\nПетров Иван;dubl\nСидоров Иван;dubl\n", "utf8");
     return f;
   };
 
   it("ник читается в любом виде, включая «https://t.me/@ник»", () => {
-    expect(normalizeHandle("https://t.me/nortch")).toBe("nortch");
-    expect(normalizeHandle("@Nortch")).toBe("nortch");
-    expect(normalizeHandle("https://t.me/@Shiish")).toBe("shiish");
+    expect(normalizeHandle("https://t.me/demo_nick")).toBe("demo_nick");
+    expect(normalizeHandle("@Demo_Nick")).toBe("demo_nick");
+    expect(normalizeHandle("https://t.me/@Sample_Nick")).toBe("sample_nick");
     expect(normalizeHandle("t.me/+79001234567")).toBeNull();
     expect(normalizeHandle("")).toBeNull();
   });
 
   it("узнаёт по нику и зовёт по имени, а не по фамилии", () => {
     const k = new KnownPeople(file());
-    expect(k.byUsername("NORTCH")?.firstName).toBe("Данил");
-    expect(k.byUsername("shiish")?.name).toBe("Иванов Андрей Иванович");
+    expect(k.byUsername("DEMO_NICK")?.firstName).toBe("Тимур");
+    expect(k.byUsername("sample_nick")?.name).toBe("Иванов Андрей Иванович");
     expect(k.byUsername("кто-то-другой")).toBeNull();
   });
 
@@ -273,13 +273,13 @@ describe("бот узнаёт своих", () => {
     const d = makeDeps([lesson("Физика", 2)]);
     d.known = new KnownPeople(file());
     d.repo.updateUser(7, { groupKey: group.key });
-    const hello = await press("/start", d, "nortch");
-    expect(hello.map((c) => String(c.payload.text ?? "")).join("\n")).toContain("Привет, Данил");
+    const hello = await press("/start", d, "demo_nick");
+    expect(hello.map((c) => String(c.payload.text ?? "")).join("\n")).toContain("Привет, Тимур");
 
     d.repo.updateUser(7, { anon: true });
-    const quiet = await press("/start", d, "nortch");
+    const quiet = await press("/start", d, "demo_nick");
     const text = quiet.map((c) => String(c.payload.text ?? "")).join("\n");
-    expect(text).not.toContain("Данил");
+    expect(text).not.toContain("Тимур");
     expect(text).toContain("С возвращением");
   });
 
@@ -287,9 +287,9 @@ describe("бот узнаёт своих", () => {
     const d = makeDeps([lesson("Физика", 2)]);
     d.known = new KnownPeople(file());
     d.repo.updateUser(7, { groupKey: group.key });
-    await press("s:anon", d, "nortch", true);
+    await press("s:anon", d, "demo_nick", true);
     expect(d.repo.getUser(7)?.anon).toBe(true);
-    await press("s:anon", d, "nortch", true);
+    await press("s:anon", d, "demo_nick", true);
     expect(d.repo.getUser(7)?.anon).toBe(false);
   });
 });

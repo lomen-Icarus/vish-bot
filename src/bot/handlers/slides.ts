@@ -17,8 +17,6 @@ import { logicalKeyFor, type LogicalGroup } from "../../schedule/groups.js";
 import { matchSubjectsLoose, sameSubject } from "../../chat/social.js";
 import { addDays, fmtDDMM, parseDayWord, parseRuDate, todayMsk, type LocalDate } from "../../time.js";
 import { deckPartLabel, newestFirst } from "../../notify/deckName.js";
-
-export { newestFirst };
 import { sendDeck } from "../deck.js";
 
 export const slidesHandlers = new Composer<BotContext>();

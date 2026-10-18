@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "no
 import path from "node:path";
 import { deckBaseName } from "./plan.js";
 import { PDFDocument } from "pdf-lib";
-import { uploadDeck } from "./upload.js";
+import { BotUnreachableError, uploadDeck } from "./upload.js";
 import { log } from "./log.js";
 
 export interface DeckMeta {
@@ -61,6 +61,12 @@ export async function deliver(opts: { urls: string[]; token: string; pdf: Buffer
       log.info({ slides: opts.slides, bytes: opts.pdf.length, via: i === 0 ? "основной" : "резерв" }, "слайды отданы боту");
       return true;
     } catch (err) {
+      // Только «не достучались» ведёт на запасной адрес; любая другая ошибка
+      // (сбой сборки запроса) — не сеть, и запасной ей не поможет.
+      if (!(err instanceof BotUnreachableError)) {
+        log.error({ err: (err as Error).name, via: i }, "слайды не отправились: ошибка не сетевая");
+        return false;
+      }
       log.warn({ err: String(err).slice(0, 150), via: i }, "не достучался до бота со слайдами");
     }
   }
@@ -81,13 +87,11 @@ const inFlight = new Set<string>();
  */
 export const MAX_DECK_BYTES = 38 * 1024 * 1024;
 
-/** PDF по страницам на части не больше limit; влезает целиком — он один и остаётся. */
-export async function splitPdf(pdf: Buffer, limit = MAX_DECK_BYTES): Promise<Buffer[]> {
-  return (await splitPdfPages(pdf, limit)).map((p) => p.pdf);
-}
-
-/** То же, с числом страниц в каждой части (pages: null — PDF не делили). */
-async function splitPdfPages(pdf: Buffer, limit: number): Promise<Array<{ pdf: Buffer; pages: number | null }>> {
+/**
+ * PDF по страницам на части не больше limit, с числом страниц в каждой;
+ * влезает целиком — он один и остаётся (pages: null — не делили).
+ */
+export async function splitPdfPages(pdf: Buffer, limit = MAX_DECK_BYTES): Promise<Array<{ pdf: Buffer; pages: number | null }>> {
   if (pdf.length <= limit) return [{ pdf, pages: null }];
   const src = await PDFDocument.load(pdf);
   const total = src.getPageCount();

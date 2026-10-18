@@ -152,7 +152,7 @@ export function introTool(ctx: BotContext, targets: IntroTargets): ChatTool {
     input_schema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Фамилия и имя (можно с отчеством), как написали: «Лаврентьев Николай»" },
+        name: { type: "string", description: "Фамилия и имя (можно с отчеством), как написали: «Сидоров Павел»" },
         username: { type: "string", description: "Ник этого человека без @, если он есть в сообщении" },
         group: { type: "string", description: "Группа, если назвали: «12-23»" },
         self: { type: "boolean", description: "true — человек представляется сам («я — …»)" },
