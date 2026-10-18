@@ -302,7 +302,7 @@ groupChatHandlers.on("message", async (ctx, next) => {
     lastReplyAt.set(chatId, Date.now());
     if (quick.media) await sendMedia(ctx, quick.media, quick.text);
     else await ctx.reply(quick.text, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(quick.kb ? { reply_markup: quick.kb } : {}) }).catch((err: unknown) => logger.warn({ err: String(err).slice(0, 200), chat: chatId }, "group chat: quick reply failed"));
-    if (quick.deck) await sendDeck(ctx, quick.deck);
+    for (const deck of quick.decks ?? []) await sendDeck(ctx, deck);
     const logged = quick.text || `[${quick.media?.kind ?? "media"}]`;
     deps.repo.logChat(chatId, userId, text || raw, logged);
     service.memory.push(chatId, { at: Date.now(), userId: null, name: me.first_name, text: logged, toUserId: userId });
@@ -372,7 +372,7 @@ groupChatHandlers.on("message", async (ctx, next) => {
     const media = !result.refused && !kb && result.top?.how === "exact" && result.top.entry.media ? result.top.entry.media : null;
     if (media) await sendMedia(ctx, media, answer);
     else await ctx.reply(answer, { reply_parameters: { message_id: msg.message_id, allow_sending_without_reply: true }, ...(kb ? { reply_markup: kb } : {}) });
-    if (slides.deck && !result.refused) await sendDeck(ctx, slides.deck);
+    if (!result.refused) for (const deck of slides.decks ?? []) await sendDeck(ctx, deck);
     deps.repo.logChat(chatId, userId, text || "(позвал без текста)", answer);
     service.memory.push(chatId, { at: Date.now(), userId: null, name: me.first_name, text: answer, toUserId: userId });
     // Ни имён, ни текста в логах: только цифры.

@@ -221,7 +221,9 @@ export function createHttpServer(deps: HttpDeps): Server {
       const r = acceptDeck(req.headers["x-slides-meta"], body);
       return reply(r.status, r.text);
     } catch (err) {
-      logger.warn({ err: String(err) }, "не смог принять слайды");
+      // Разбор метаданных (там ФИО преподавателя) — только тип: текст
+      // SyntaxError может процитировать кусок JSON.
+      logger.warn({ err: err instanceof SyntaxError ? "SyntaxError" : String(err).slice(0, 200) }, "не смог принять слайды");
       reply(String(err).includes("too large") ? 413 : 400, "не принял");
     }
   };

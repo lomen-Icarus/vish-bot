@@ -19,8 +19,8 @@ import type { ChatTool } from "../chat/service.js";
 import { cleanName, matchSubjects, matchSubjectsLoose, sameSubject, subjectKey, type IntroRequest, type SlidesRequest } from "../chat/social.js";
 import { nameWords, samePersonWords } from "../text/match.js";
 import { addDays, fmtDDMM, todayMsk, weekdayShort, type LocalDate } from "../time.js";
-import { newestFirst } from "../notify/deckName.js";
-import { esc } from "../schedule/format.js";
+import { deckPart, newestFirst } from "../notify/deckName.js";
+import { esc, plural } from "../schedule/format.js";
 import { logger } from "../logger.js";
 import type { DeckToSend } from "./deck.js";
 
@@ -263,8 +263,8 @@ export interface SlidesReply {
   text: string;
   /** Кнопки подтверждения подписки. */
   kb?: InlineKeyboard;
-  /** PDF, который отправить следом за текстом. */
-  deck?: DeckToSend;
+  /** PDF, которые отправить следом за текстом (у большого PDF — все части по порядку). */
+  decks?: DeckToSend[];
 }
 
 /** Ответ на просьбу про слайды: текст, кнопки подтверждения или готовый PDF. */
@@ -289,7 +289,14 @@ export function handleSlidesRequest(ctx: BotContext, req: SlidesRequest, speaker
     const hit = matchSubjectsLoose(req.subject, [...new Set(all.map((d) => d.subject))], 1)[0];
     const decks = hit ? all.filter((d) => sameSubject(d.subject, hit)) : [];
     const deck = (group && decks.find((d) => d.groups.some((g) => logicalKeyFor(g) === group.key))) ?? (req.group ? undefined : decks[0]);
-    if (deck) return { text: `Держи: слайды «${deck.subject}» за ${fmtDDMM(deck.date)}${deck.groups.length ? ` (${deck.groups.join(", ")})` : ""} 👇`, deck: { id: deck.id, subject: deck.subject, date: deck.date, file: deck.file, fileId: deck.fileId, slides: deck.slides, title: deck.title } };
+    if (deck) {
+      // Часть большого PDF — все части этой пары, по порядку: иначе из чата
+      // достижима только первая.
+      const part = deckPart(deck.title);
+      const parts = part ? decks.filter((d) => d.date === deck.date && d.subject === deck.subject && deckPart(d.title)?.count === part.count) : [deck];
+      const toSend = parts.map((d) => ({ id: d.id, subject: d.subject, date: d.date, file: d.file, fileId: d.fileId, slides: d.slides, title: d.title }));
+      return { text: `Держи: слайды «${deck.subject}» за ${fmtDDMM(deck.date)}${deck.groups.length ? ` (${deck.groups.join(", ")})` : ""}${toSend.length > 1 ? `, ${toSend.length} ${plural(toSend.length, "часть", "части", "частей")}` : ""} 👇`, decks: toSend };
+    }
     // Записи ещё нет — предложить подписку: слайды появятся, как только бот запишет вебинар.
     const sub = handleSlidesRequest(ctx, { kind: "subscribe", subject: req.subject, group: req.group }, speakerGroup);
     return sub.kb ? { ...sub, text: `Таких слайдов у меня пока нет — появятся, как запишу ближайший вебинар. ${sub.text}` } : sub;
@@ -335,7 +342,7 @@ export function handleSlidesRequest(ctx: BotContext, req: SlidesRequest, speaker
 /** Что инструмент chat_slides оставил боту приложить к ответу модели. */
 export interface SlidesToolState {
   kb?: InlineKeyboard;
-  deck?: DeckToSend;
+  decks?: DeckToSend[];
 }
 
 /**
@@ -370,8 +377,8 @@ export function slidesTool(ctx: BotContext, speakerGroup: LogicalGroup | null, s
       const r = handleSlidesRequest(ctx, req, speakerGroup);
       // Второй вызов за ответ (например, list после send) не стирает уже найденное.
       if (r.kb) state.kb = r.kb;
-      if (r.deck) state.deck = r.deck;
-      const attach = r.kb ? " Кнопки «Да/Нет» бот приложит к твоему ответу сам." : r.deck ? " PDF бот пришлёт следом за твоим ответом сам." : "";
+      if (r.decks) state.decks = r.decks;
+      const attach = r.kb ? " Кнопки «Да/Нет» бот приложит к твоему ответу сам." : r.decks ? " PDF бот пришлёт следом за твоим ответом сам." : "";
       return `Ответь ровно этим текстом, ничего не добавляя: «${r.text}».${attach}`;
     },
   };

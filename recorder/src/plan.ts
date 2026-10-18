@@ -151,6 +151,10 @@ export function deckBaseName(date: string, startMinutes: number | null, subject:
   const hhmm = startMinutes != null ? `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}${String(startMinutes % 60).padStart(2, "0")}` : "xxxx";
   const clean = (s: string): string => s.replace(/[^\p{L}\p{N} .-]/gu, "").trim().replace(/\s+/g, "-");
   const safe = clean(subject).slice(0, 50) || "вебинар";
-  const who = clean(teacher.split(/\s+/)[0] ?? "").slice(0, 20);
+  // Фамилия и инициалы: у однофамильцев в одно время одного предмета иначе
+  // одна папка на две пары (keyOf их различает по полному ФИО).
+  const [surname = "", ...rest] = teacher.split(/[\s.]+/).filter(Boolean);
+  const initials = rest.map((w) => w.charAt(0)).join("");
+  const who = clean(`${surname}${initials ? `-${initials}` : ""}`).slice(0, 24);
   return `${date}-${hhmm}-${safe}${who ? `-${who}` : ""}`.replace(/[/\\]/g, "-");
 }

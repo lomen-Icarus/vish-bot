@@ -86,6 +86,8 @@ export function parseSlidesQuery(rest: string, today: LocalDate = todayMsk()): S
       day = Number(num[1]);
       continue;
     }
+    // «вчера 2 пара» — номер пары, а не предмет.
+    if (found && /^\d{1,2}(?:-?я|-?ая)?$/.test(w)) continue;
     if (!FILLER.has(w)) subject.push(w);
   }
   return { subject: subject.join(" "), date, day, month };
