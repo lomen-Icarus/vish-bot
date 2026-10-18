@@ -285,7 +285,7 @@ export async function captureWebinar(opts: CaptureOptions): Promise<CaptureResul
           png = box ? await page.screenshot({ timeout: 15_000, clip: padClip(box, opts.padPx, viewport) }) : await area.locator.screenshot({ timeout: 15_000 });
         } else png = area ? await area.locator.screenshot({ timeout: 15_000 }) : await page.screenshot({ timeout: 15_000 });
       } catch (err) {
-        log.debug({ err: String(err) }, "кадр не снялся");
+        log.debug({ err: (err as Error).name }, "кадр не снялся");
         // Не снялось — возможно, элемент подменили: на следующем круге ищем заново.
         area = null;
         continue;

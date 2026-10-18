@@ -120,12 +120,19 @@ export async function splitDeckFile(pdfPath: string, pdf: Buffer, meta: DeckMeta
     const partMeta = { ...meta, title: `${meta.title ? `${meta.title} · ` : ""}часть ${i + 1} из ${parts.length}` };
     return { pdfPath: partPath, pdf: part.pdf, meta: partMeta, slides: part.pages ?? slides };
   });
-  for (const p of out) {
-    // «Занята» — до метки «не принята»: иначе повторная отправка подхватила бы
-    // ещё не начатые части, пока идёт первая.
-    inFlight.add(p.pdfPath);
-    writeFileSync(p.pdfPath, p.pdf);
-    savePending(p.pdfPath, p.meta, p.slides);
+  try {
+    for (const p of out) {
+      // «Занята» — до метки «не принята»: иначе повторная отправка подхватила
+      // бы ещё не начатые части, пока идёт первая.
+      inFlight.add(p.pdfPath);
+      writeFileSync(p.pdfPath, p.pdf);
+      savePending(p.pdfPath, p.meta, p.slides);
+    }
+  } catch (err) {
+    // Диск кончился на середине — уже записанные части отдаст повторная
+    // отправка; «занятыми» до перезапуска они оставаться не должны.
+    for (const p of out) inFlight.delete(p.pdfPath);
+    throw err;
   }
   rmSync(`${pdfPath}${PENDING}`, { force: true });
   log.info({ bytes: pdf.length, parts: out.length, slides }, "PDF больше лимита бота — делю на части");
@@ -139,7 +146,6 @@ export async function deliverDeck(opts: { urls: string[]; token: string; pdfPath
   inFlight.add(opts.pdfPath);
   try {
     parts = await splitDeckFile(opts.pdfPath, opts.pdf, opts.meta, opts.slides, opts.limit);
-    for (const part of parts) inFlight.add(part.pdfPath);
     for (const part of parts) {
       if (await deliver({ urls: opts.urls, token: opts.token, pdf: part.pdf, meta: part.meta, slides: part.slides })) {
         rmSync(`${part.pdfPath}${PENDING}`, { force: true });

@@ -41,6 +41,24 @@ type Outcome = "done" | "retry";
 
 const botUrls = (cfg: Pick<RecorderConfig, "botUrl" | "botFallbackUrl">): string[] => [cfg.botUrl, cfg.botFallbackUrl].filter(Boolean);
 
+/**
+ * Какую комнату потока пробовать на этом повторе (ключ — пара). Пока ведущий
+ * не открыл вебинар, каждая попытка — одна комната, по кругу: перебор всех
+ * комнат под всеми учётками каждую минуту умножал входы под учётками студентов
+ * в разы. Открылась — номер остаётся: после сбоя съёмки начнём с неё же.
+ */
+const roomTurn = new Map<string, number>();
+
+/**
+ * Ошибка для лога без путей: в тексте ошибки файла — путь к папке пары, а в
+ * нём фамилия преподавателя, хвост же лога печатается в публичный лог деплоя.
+ */
+const errName = (err: unknown): string => {
+  const e = err as NodeJS.ErrnoException;
+  const text = String(e?.message ?? err).replace(/(['"]?)\/[^'"\s]*\1/g, "<путь>").slice(0, 200);
+  return `${e?.code ?? e?.name ?? "Error"}: ${text}`;
+};
+
 async function recordOne(cfg: RecorderConfig, store: AccountStore, general: GeneralWatch | null, portal: Portal, date: string, row: WebinarRow): Promise<Outcome> {
   const meta: DeckMeta = {
     date,
@@ -52,18 +70,17 @@ async function recordOne(cfg: RecorderConfig, store: AccountStore, general: Gene
     endMinutes: row.endMinutes,
   };
   // Профиль для групп этой пары — первым; не пустили — общий. Не пустила
-  // основная комната потока — пробуем остальные его комнаты.
+  // комната потока — на следующем повторе следующая (roomTurn).
   const profiles = [...cfg.profiles, ...store.profiles()];
   // Какая учётка стояла в слоте, когда снимали профили: заход под ней не
   // должен отметить «пустило» учётку, которую успели поставить вместо неё.
   const installedAt = new Map(store.list().map((s) => [s.group, s.installedAt]));
-  let join = await joinWithProfiles(portal, row, profiles);
-  for (const alt of row.alts ?? []) {
-    if (join.url) break;
-    const next = await joinWithProfiles(portal, alt, profiles);
-    join = next.url ? next : { ...next, errors: [...join.errors, ...next.errors] };
-  }
+  const rooms = [row, ...(row.alts ?? [])];
+  const key = keyOf(date, row);
+  const turn = roomTurn.get(key) ?? 0;
+  const join = await joinWithProfiles(portal, rooms[turn % rooms.length]!, profiles);
   if (!join.url) {
+    roomTurn.set(key, turn + 1);
     // Часто это «ведущий ещё не открыл комнату»: пара идёт — пробуем снова.
     log.warn({ subject: row.subject, groups: row.groups, err: join.errors }, "портал не дал ссылку на комнату, попробую ещё");
     return "retry";
@@ -206,11 +223,14 @@ async function main(): Promise<void> {
         state.active.add(key);
         void recordOne(cfg, store, general, portal, now.date, row)
           .then((outcome) => {
-            if (outcome === "done") state.done.add(key);
+            if (outcome === "done") {
+              state.done.add(key);
+              roomTurn.delete(key);
+            }
             else state.retryAt.set(key, Date.now() + RETRY_MS);
           })
           .catch((err: unknown) => {
-            log.error({ err: String(err), subject: row.subject }, "запись сорвалась, попробую ещё, пока идёт пара");
+            log.error({ err: errName(err), subject: row.subject }, "запись сорвалась, попробую ещё, пока идёт пара");
             state.retryAt.set(key, Date.now() + RETRY_MS);
           })
           .finally(() => {
@@ -218,7 +238,7 @@ async function main(): Promise<void> {
           });
       }
     } catch (err) {
-      log.warn({ err: String(err) }, "цикл ожидания споткнулся");
+      log.warn({ err: errName(err) }, "цикл ожидания споткнулся");
     }
     // Все места заняты — страницу дёргать часто незачем.
     await sleep(Math.max(10, state.active.size >= cfg.maxParallel ? 60 : cfg.pollSeconds) * 1000);
@@ -226,6 +246,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  log.error({ err: String(err) }, "записывалка упала");
+  log.error({ err: errName(err) }, "записывалка упала");
   process.exit(1);
 });
