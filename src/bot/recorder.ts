@@ -17,6 +17,12 @@ export interface RecTask {
   group: string;
   codes: string[];
   envelope?: unknown;
+  /**
+   * remove: чья учётка должна стоять в слоте, чтобы его убрать (номер заявки;
+   * 0 — учётка из .env, в том числе подписанная владельцем). Чужую записывалка
+   * не трогает и всё равно отвечает «removed».
+   */
+  expect?: number;
 }
 
 export type RecResultCode = "login_ok" | "login_failed" | "group_mismatch" | "portal_down" | "installed" | "removed" | "bad_envelope";
@@ -62,10 +68,19 @@ export const VERIFY_WAIT_MS = 30 * 60 * 1000;
 export const RECHECK_PREFIX = "recheck:";
 
 /**
+ * Заявка про учётку из .env: служебная (отзыв слота без заявки, id 0) или
+ * подписанная владельцем через /slot_owner (adoptRecSlot ставит дату 1970-го,
+ * чтобы она не шла в лимит). В слоте записывалки у таких — номер заявки 0.
+ */
+function envSlotRequest(r: RecRequestRow): boolean {
+  return r.userId === 0 || r.createdAt.startsWith("1970-");
+}
+
+/**
  * Задания из текущего состояния заявок. Идемпотентно: id = requestId:kind.
- * Отзывы — первыми: записывалка выполняет задания по порядку, а слот убирает
- * по группе. Замена учётки группы (старая заявка — на отзыв, новая одобрена)
- * иначе поставила бы новую и тут же её убрала.
+ * Отзывы — первыми (записывалка выполняет задания по порядку), хотя remove и
+ * так убирает только слот своей заявки (expect): новую учётку, вставшую на
+ * место старой, повторный remove старой не тронет.
  */
 export function recorderTasks(repo: Repo, now = Date.now()): RecTask[] {
   const tasks: RecTask[] = [];
@@ -77,7 +92,7 @@ export function recorderTasks(repo: Repo, now = Date.now()): RecTask[] {
     }
   };
   for (const r of repo.recRequestsByState(["revoking"])) {
-    tasks.push({ id: `${r.id}:remove`, kind: "remove", requestId: r.id, userId: r.userId, group: r.groupTitle, codes: [groupCode(r.groupTitle)] });
+    tasks.push({ id: `${r.id}:remove`, kind: "remove", requestId: r.id, userId: r.userId, group: r.groupTitle, codes: [groupCode(r.groupTitle)], expect: envSlotRequest(r) ? 0 : r.id });
   }
   for (const r of repo.recRequestsByState(["pending_verify"])) {
     const wait = repo.recorderMarkValue(`${VERIFY_WAIT_PREFIX}${r.id}`);
@@ -251,12 +266,8 @@ function nextState(repo: Repo, req: RecRequestRow, res: RecResult): string | nul
       if (req.state === "pending_verify") repo.recorderMark(`${VERIFY_WAIT_PREFIX}${req.id}`, new Date(Date.now() + VERIFY_WAIT_MS).toISOString());
       return null;
     case "installed":
-      // Отозвали, пока отчёт об установке был в пути, — учётка всё же встала:
-      // теперь её надо убрать (remove уйдёт на следующем обмене).
-      if (req.state === "revoked_early") {
-        repo.setRecRequestState(req.id, "revoking", { dropEnvelope: true });
-        return "revoking";
-      }
+      // Отозвали, пока отчёт об установке был в пути (уже revoking), — remove
+      // своей заявки уберёт поставленное на следующем обмене.
       if (req.state !== "approved") return null;
       repo.setRecRequestState(req.id, "active", { dropEnvelope: true });
       return "active";
@@ -318,21 +329,20 @@ export function rejectRecRequest(repo: Repo, id: number, adminId: number): RecAc
 }
 
 /**
- * Отозвать учётку (студент или админ). Поставленная — на отзыв: записывалка
- * уберёт слот, уже идущая запись пары доснимется (ссылка на комнату у неё уже
- * есть). Одобренная, но ещё не поставленная, и неодобренная — снимаются сразу
- * (immediate): задание remove по группе снесло бы то, что сейчас стоит в
- * слоте, — например, учётку из .env. Если отчёт об установке был уже в пути,
- * его разберёт nextState («installed» у снятой → на отзыв).
+ * Отозвать учётку (студент или админ). Поставленная и одобренная — на отзыв:
+ * записывалка уберёт слот этой заявки, если он есть (remove повторяется каждый
+ * обмен до «removed», так что потерянный отчёт об установке не оставит учётку
+ * в слоте), уже идущая запись пары доснимется. Неодобренная снимается сразу
+ * (immediate): на записывалке её нет.
  */
 export function revokeRecRequest(repo: Repo, id: number, by?: number): RecActionResult {
   const req = repo.recRequest(id);
   if (!req) return { ok: false, reason: "gone" };
-  if (req.state === "active") {
+  if (req.state === "active" || req.state === "approved") {
     repo.setRecRequestState(id, "revoking", { dropEnvelope: true, ...(by !== undefined ? { decidedBy: by } : {}) });
     return { ok: true };
   }
-  if (req.state === "approved" || req.state === "pending_verify" || req.state === "verified") {
+  if (req.state === "pending_verify" || req.state === "verified") {
     repo.setRecRequestState(id, "revoked_early", { dropEnvelope: true, ...(by !== undefined ? { decidedBy: by } : {}) });
     return { ok: true, immediate: true };
   }
@@ -348,7 +358,8 @@ export function revokeSlotWithoutRequest(repo: Repo, groupKey: string, adminId: 
   const slot = repo.recSlots().find((s) => s.groupKey === groupKey);
   // Общая учётка живёт в .env — кнопкой её не убрать.
   if (!slot || slot.groupTitle === GENERAL_SLOT_TITLE || repo.activeRecRequest(groupKey)) return false;
-  if (repo.recRequestsByState(["revoking"]).some((r) => r.groupKey === groupKey)) return true;
+  // Уже убираем именно её (а не отзываемую заявку студента той же группы).
+  if (repo.recRequestsByState(["revoking"]).some((r) => r.groupKey === groupKey && envSlotRequest(r))) return true;
   const id = repo.createRecRequest({ userId: 0, username: null, groupKey, groupTitle: slot.groupTitle, envelopeJson: "" });
   repo.setRecRequestState(id, "revoking", { dropEnvelope: true, decidedBy: adminId });
   return true;

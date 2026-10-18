@@ -7,6 +7,7 @@ import path from "node:path";
 import { AccountStore } from "../recorder/src/accounts.js";
 import { runLiveness, type LiveTarget } from "../recorder/src/liveness.js";
 import { deliver } from "../recorder/src/deliver.js";
+import { runTask, type Task } from "../recorder/src/sync.js";
 import type { LoginCheck } from "../recorder/src/lk.js";
 
 const servers: Server[] = [];
@@ -142,4 +143,28 @@ describe("большой PDF частями: повторная отправка
     expect(resent).toBe(0);
     expect(hits).toBe(sent);
   }, 30_000);
+});
+
+describe("remove убирает только слот своей заявки", () => {
+  const deps = (store: AccountStore) => ({ botUrls: [], token: "t", store, privatePem: "", publicSpki: "" });
+  const remove = (requestId: number, expect?: number): Task => ({ id: `${requestId}:remove`, kind: "remove", requestId, userId: requestId, group: "ВИШ-14-25", codes: ["14-25"], ...(expect !== undefined ? { expect } : {}) });
+
+  it("отзыв ещё не поставленной заявки не трогает учётку из .env; ответ всё равно «removed»", async () => {
+    const store = AccountStore.inDir(mkdtempSync(path.join(os.tmpdir(), "rev-")));
+    store.install({ group: "ВИШ-14-25", codes: ["14-25"], login: "env", password: "p", requestId: 0, userId: 0 });
+    expect(await runTask(remove(5, 5), deps(store))).toMatchObject({ code: "removed" });
+    expect(store.get("ВИШ-14-25")).toMatchObject({ login: "env" });
+    // Служебный отзыв учётки из .env — expect 0 — убирает.
+    await runTask(remove(9, 0), deps(store));
+    expect(store.get("ВИШ-14-25")).toBeUndefined();
+  });
+
+  it("повтор старого remove после замены не сносит новую учётку; свой — сносит", async () => {
+    const store = AccountStore.inDir(mkdtempSync(path.join(os.tmpdir(), "rev-")));
+    store.install({ group: "ВИШ-14-25", codes: ["14-25"], login: "new", password: "p", requestId: 2, userId: 2 });
+    await runTask(remove(1), deps(store)); // бот старой версии: expect нет — сверка по номеру заявки
+    expect(store.get("ВИШ-14-25")).toMatchObject({ requestId: 2 });
+    await runTask(remove(2), deps(store));
+    expect(store.get("ВИШ-14-25")).toBeUndefined();
+  });
 });

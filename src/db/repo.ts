@@ -929,14 +929,13 @@ export class Repo {
       const now = nowIso();
       // Сначала обезличиваем то, что уже не в слоте и идёт в лимит.
       this.db
-        .prepare("UPDATE rec_requests SET state = 'forgotten', envelope_json = NULL, username = NULL, group_key = '', group_title = '', actual_group = NULL, updated_at = ? WHERE user_id = ? AND state NOT IN ('active','approved','revoking','forgotten','rejected_bad_envelope','expired','revoked')")
+        .prepare("UPDATE rec_requests SET state = 'forgotten', envelope_json = NULL, username = NULL, group_key = '', group_title = '', actual_group = NULL, updated_at = ? WHERE user_id = ? AND state NOT IN ('active','approved','revoking','forgotten','rejected_bad_envelope','expired')")
         .run(now, userId);
-      this.db.prepare("UPDATE rec_requests SET state = 'revoking', envelope_json = NULL, username = NULL, updated_at = ? WHERE user_id = ? AND state = 'active'").run(now, userId);
-      // Одобренная, но не поставленная — без задания remove (оно снесло бы
-      // чужую учётку в слоте группы); группа остаётся на случай, если отчёт
-      // об установке уже в пути (nextState переведёт её на отзыв).
-      this.db.prepare("UPDATE rec_requests SET state = 'revoked_early', envelope_json = NULL, username = NULL, updated_at = ? WHERE user_id = ? AND state = 'approved'").run(now, userId);
-      this.db.prepare("DELETE FROM rec_requests WHERE user_id = ? AND state IN ('rejected_bad_envelope','expired','revoked')").run(userId);
+      // Стоящая в слоте, одобренная и уже отзываемая — на отзыв без ника:
+      // записывалка уберёт слот этой заявки (если он успел встать), строка
+      // удалится по «removed».
+      this.db.prepare("UPDATE rec_requests SET state = 'revoking', envelope_json = NULL, username = NULL, updated_at = ? WHERE user_id = ? AND state IN ('active','approved','revoking')").run(now, userId);
+      this.db.prepare("DELETE FROM rec_requests WHERE user_id = ? AND state IN ('rejected_bad_envelope','expired')").run(userId);
       // Знакомство «@ник это …» про этого человека — по id или по нику, пока
       // запись о нём ещё есть. Кого знакомил он сам — остаётся, но без него.
       this.db.prepare("DELETE FROM people_intros WHERE user_id = ? OR username = (SELECT lower(username) FROM users WHERE id = ?)").run(userId, userId);
@@ -1661,7 +1660,10 @@ export class Repo {
     this.db.prepare(`UPDATE rec_requests SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
   }
 
-  /** Обезличенные после /soon заявки старше окна лимита больше не нужны. */
+  /**
+   * Обезличенные после /soon заявки старше окна лимита больше не нужны.
+   * revoked_early без ника — такие оставляла /soon прошлой версии (решение 120).
+   */
   purgeForgottenRecRequests(olderThan: string): void {
     this.db.prepare("DELETE FROM rec_requests WHERE (state = 'forgotten' OR (state = 'revoked_early' AND username IS NULL)) AND created_at < ?").run(olderThan);
   }
