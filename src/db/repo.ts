@@ -130,6 +130,8 @@ export interface User {
   menuMode: MenuMode;
   /** Отпечаток меню, которое сейчас стоит в чате; null — неизвестно. */
   menuSent: string | null;
+  /** Свои кнопки нижнего меню (ключи из MENU_CHOICES); null — как у всех. */
+  menuButtons: string[] | null;
   blocked: boolean;
   createdAt: string;
   lastSeenAt: string;
@@ -164,6 +166,7 @@ interface UserRow {
   poster_theme: string | null;
   menu_mode: string | null;
   menu_sent: string | null;
+  menu_buttons: string | null;
   blocked: number;
   created_at: string;
   last_seen_at: string;
@@ -206,6 +209,7 @@ function rowToUser(r: UserRow): User {
     // «always» (всегда на экране) был недолго и убран: такие — снова «сворачивается».
     menuMode: r.menu_mode === "once" || r.menu_mode === "hidden" ? r.menu_mode : "collapsible",
     menuSent: r.menu_sent ?? null,
+    menuButtons: r.menu_buttons ? r.menu_buttons.split(",").filter(Boolean) : null,
     blocked: r.blocked === 1,
     createdAt: r.created_at,
     lastSeenAt: r.last_seen_at,
@@ -487,6 +491,7 @@ export class Repo {
       poster_theme: null,
       menu_mode: null,
       menu_sent: null,
+      menu_buttons: null,
       blocked: 0,
       created_at: ts,
       last_seen_at: ts,
@@ -538,6 +543,7 @@ export class Repo {
     if (patch.posterTheme !== undefined) map.poster_theme = patch.posterTheme;
     if (patch.menuMode !== undefined) map.menu_mode = patch.menuMode === "collapsible" ? null : patch.menuMode;
     if (patch.menuSent !== undefined) map.menu_sent = patch.menuSent;
+    if (patch.menuButtons !== undefined) map.menu_buttons = patch.menuButtons?.length ? patch.menuButtons.join(",") : null;
     if (patch.blocked !== undefined) map.blocked = patch.blocked ? 1 : 0;
     // Заблокировал бота — меню в чате больше не считаем стоящим (чат могли и удалить).
     if (patch.blocked === true) map.menu_sent = null;
@@ -557,14 +563,15 @@ export class Repo {
     return rows.map(rowToUser);
   }
 
-  countUsers(): { total: number; active: number; withGroup: number } {
+  countUsers(): { total: number; active: number; withGroup: number; customMenu: number } {
     const r = this.db
       .prepare(
         `SELECT COUNT(*) AS total, SUM(CASE WHEN blocked = 0 THEN 1 ELSE 0 END) AS active,
-                SUM(CASE WHEN group_key IS NOT NULL AND blocked = 0 THEN 1 ELSE 0 END) AS withGroup FROM users`,
+                SUM(CASE WHEN group_key IS NOT NULL AND blocked = 0 THEN 1 ELSE 0 END) AS withGroup,
+                SUM(CASE WHEN menu_buttons IS NOT NULL AND blocked = 0 THEN 1 ELSE 0 END) AS customMenu FROM users`,
       )
-      .get() as { total: number; active: number | null; withGroup: number | null };
-    return { total: r.total, active: r.active ?? 0, withGroup: r.withGroup ?? 0 };
+      .get() as { total: number; active: number | null; withGroup: number | null; customMenu: number | null };
+    return { total: r.total, active: r.active ?? 0, withGroup: r.withGroup ?? 0, customMenu: r.customMenu ?? 0 };
   }
 
   groupPopulation(): Array<{ groupKey: string; users: number }> {

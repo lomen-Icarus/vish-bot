@@ -150,7 +150,7 @@ export async function showFeatures(ctx: BotContext): Promise<void> {
 }
 miscHandlers.command("help", showFeatures);
 miscHandlers.command("features", showFeatures);
-miscHandlers.hears(BTN.features, showFeatures);
+miscHandlers.hears([BTN.features, BTN.help], showFeatures);
 
 // ---- suggest news to media team ----
 function newsRecipients(ctx: BotContext): number[] {
@@ -244,7 +244,7 @@ export async function startSearch(ctx: BotContext): Promise<void> {
     { parse_mode: "HTML" },
   );
 }
-miscHandlers.hears(btnLabels("search"), startSearch);
+miscHandlers.hears([...btnLabels("search"), BTN.askAi], startSearch);
 miscHandlers.callbackQuery("ask:open", async (ctx) => {
   await ctx.answerCallbackQuery();
   await startSearch(ctx);

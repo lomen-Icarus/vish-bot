@@ -59,6 +59,7 @@ function statsText(ctx: BotContext): string {
   const lines = [
     "<b>📊 Статистика</b>",
     `Пользователей: ${c.total}, активных: ${c.active}, с группой: ${c.withGroup}`,
+    `Собрали своё нижнее меню: ${c.customMenu}`,
     "",
     ...pop.slice(0, 30).map((p) => `${esc(ctx.deps.service.group(p.groupKey)?.title ?? p.groupKey)} — ${p.users}`),
   ];
