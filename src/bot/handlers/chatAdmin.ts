@@ -4,7 +4,8 @@
  *
  * Сценарий правится двумя путями: файлом на хостинге (CHAT_QA_DB, бот сам его
  * перечитывает) или прямо из бота — /qa_add, /qa_file (скачать), /qa_import
- * (прислать CSV обратно).
+ * (прислать CSV обратно). Личные ответы «ник;частота;сообщение»
+ * (CHAT_PERSONAL_DB) — так же: /qp, /qp_add, /qp_del, /qp_file, /qp_import.
  */
 import { Composer, InlineKeyboard, InputFile } from "grammy";
 import type { BotContext } from "../context.js";
@@ -12,6 +13,7 @@ import { clearPending, setPending, takePending } from "../context.js";
 import { clampHtml, esc } from "../../schedule/format.js";
 import { addChatBonus, CHAT_BONUS_STEP, CHAT_STEPS, chatLimits, resetChatLimits, setChatLimit, type ChatLimitKind } from "../../chat/limits.js";
 import { answerCell, decodeText, qaLine, type QaMedia } from "../../chat/qa.js";
+import { makeEntry, parsePercent, parseWho, personalLine, whoLabel, type PersonalEntry } from "../../chat/personal.js";
 import type { Message } from "grammy/types";
 import { stepValue } from "../../ai/limits.js";
 import { askAboutChat, chatAbout, chatEnabled, switchChat } from "./groupChat.js";
@@ -67,6 +69,7 @@ function chatScreen(ctx: BotContext): { text: string; kb: InlineKeyboard } {
     `Сегодня ответов: <b>${used}</b> из ${l.global} · токены: ${tokens.input} вх / ${tokens.output} исх`,
     "",
     qa ? `Сценарий: <b>${qa.count}</b> заготовок${qa.skipped ? ` (пропущено строк: ${qa.skipped})` : ""}${qa.error ? ` · ${esc(qa.error)}` : ""} — /qa` : "Сценарий: болталка выключена",
+    ...(deps.personal ? [`Личные ответы: <b>${deps.personal.stats().count}</b> — /qp`] : []),
     "",
     groups.length ? "<b>Чаты</b> (кнопка внизу включает/выключает):" : "Чатов пока нет: добавь бота в группу. Если добавишь сам — болталка там включится сразу.",
     ...groups.slice(0, 12).map((g) => {
@@ -295,9 +298,10 @@ adminOnly.command(["qa_add", "reply_add"], async (ctx) => qaAdd(ctx, ctx.match ?
 
 // Команды в подписи к гифке grammY не ловит: разбираем подпись сами.
 adminOnly.on(["message:animation", "message:sticker", "message:photo"], async (ctx, next) => {
-  const m = /^\/(qa_add|reply_add|qa_fileid)(?:@\w+)?(?:\s+([\s\S]*))?$/u.exec((ctx.msg.caption ?? "").trim());
+  const m = /^\/(qa_add|reply_add|qa_fileid|qp_add)(?:@\w+)?(?:\s+([\s\S]*))?$/u.exec((ctx.msg.caption ?? "").trim());
   if (!m) return next();
   const media = mediaOf(ctx.msg);
+  if (m[1] === "qp_add") return qpAdd(ctx, m[2] ?? "", media);
   if (m[1] === "qa_fileid") return void (await ctx.reply(`В колонку «ответ» файла сценария: <code>${esc(answerCell("", media))} подпись</code> (подпись необязательна).`, { parse_mode: "HTML" }));
   await qaAdd(ctx, m[2] ?? "", media);
 });
@@ -351,16 +355,13 @@ adminOnly.command("qa_import", async (ctx) => {
   await ctx.reply(`Пришли CSV-файл документом — он заменит сценарий целиком (старый останется рядом как .bak).\n\n${QA_FORMAT_HELP}`, { parse_mode: "HTML" });
 });
 
-adminOnly.on("message:document", async (ctx, next) => {
-  const pending = takePending(ctx.deps, ctx.user.id);
-  const byCaption = /^\/qa_import(?:@\w+)?\b/.test(ctx.msg.caption ?? "");
-  if (!byCaption && pending?.kind !== "qa-import") return next();
-  clearPending(ctx.deps, ctx.user.id);
-  const chat = ctx.deps.chat;
-  if (!chat) return void (await ctx.reply("Болталка выключена — загружать некуда."));
-  const doc = ctx.msg.document;
-  if (doc.file_size && doc.file_size > QA_MAX_BYTES) return void (await ctx.reply("Файл больше мегабайта — это не похоже на сценарий."));
-  let text: string;
+/** Скачать присланный админом CSV; null — не вышло (ответ админу уже ушёл). */
+async function downloadCsv(ctx: BotContext): Promise<string | null> {
+  const doc = ctx.msg!.document!;
+  if (doc.file_size && doc.file_size > QA_MAX_BYTES) {
+    await ctx.reply("Файл больше мегабайта — это не похоже на сценарий.");
+    return null;
+  }
   try {
     const file = await ctx.getFile();
     if (!file.file_path) throw new Error("Telegram не отдал путь к файлу");
@@ -368,14 +369,131 @@ adminOnly.on("message:document", async (ctx, next) => {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const buf = new Uint8Array(await res.arrayBuffer());
     if (buf.length > QA_MAX_BYTES) throw new Error("файл больше мегабайта");
-    text = decodeText(buf);
+    return decodeText(buf);
   } catch (err) {
     // В адресе запроса — токен бота: в лог и в ответ идёт только суть ошибки.
     const why = err instanceof Error && !err.message.includes("api.telegram.org") ? err.message : "не скачался";
-    logger.warn({ err: why }, "qa_import: download failed");
-    return void (await ctx.reply(`Не смог скачать файл: ${esc(why)}. Попробуй ещё раз.`, { parse_mode: "HTML" }));
+    logger.warn({ err: why }, "csv import: download failed");
+    await ctx.reply(`Не смог скачать файл: ${esc(why)}. Попробуй ещё раз.`, { parse_mode: "HTML" });
+    return null;
   }
+}
+
+adminOnly.on("message:document", async (ctx, next) => {
+  const pending = takePending(ctx.deps, ctx.user.id);
+  const caption = ctx.msg.caption ?? "";
+  const personal = /^\/qp_import(?:@\w+)?\b/.test(caption) || (!/^\/qa_import(?:@\w+)?\b/.test(caption) && pending?.kind === "qp-import");
+  const byCaption = /^\/q[ap]_import(?:@\w+)?\b/.test(caption);
+  if (!byCaption && pending?.kind !== "qa-import" && pending?.kind !== "qp-import") return next();
+  clearPending(ctx.deps, ctx.user.id);
+  if (personal) {
+    const base = ctx.deps.personal;
+    if (!base) return void (await ctx.reply("Болталка выключена — загружать некуда."));
+    const text = await downloadCsv(ctx);
+    if (text === null) return;
+    const parsed = base.replace(text);
+    if (!parsed.entries.length) return void (await ctx.reply(`В файле не нашлось ни одной строки «ник;частота;сообщение» — старый файл оставил как был.\n\n${QP_FORMAT_HELP}`, { parse_mode: "HTML" }));
+    return void (await ctx.reply(`Готово: личных ответов ${parsed.entries.length}${parsed.skipped ? `, пропущено строк (нет ника, частоты или сообщения): ${parsed.skipped}` : ""}. Старый файл — рядом, .bak.`));
+  }
+  const chat = ctx.deps.chat;
+  if (!chat) return void (await ctx.reply("Болталка выключена — загружать некуда."));
+  const text = await downloadCsv(ctx);
+  if (text === null) return;
   const parsed = chat.qa.replace(text);
   if (!parsed.entries.length) return void (await ctx.reply(`В файле не нашлось ни одной пары «вопрос;ответ» — старый сценарий оставил как был.\n\n${QA_FORMAT_HELP}`, { parse_mode: "HTML" }));
   await ctx.reply(`Готово: ${parsed.entries.length} заготовок${parsed.skipped ? `, пропущено строк без вопроса или ответа: ${parsed.skipped}` : ""}. Старый файл — рядом, .bak.`);
+});
+
+// ---- личные ответы «ник;частота;сообщение» ----
+
+export const QP_FORMAT_HELP = [
+  "<b>Формат файла</b> (CSV, как у сценария):",
+  "<pre>ник;частота;сообщение",
+  "@ivan_petrov;30;Ваня, опять ты?",
+  "@kira;100;gif:&lt;file_id&gt; Кира пришла",
+  "123456789;0;только один раз</pre>",
+  "• человек зовёт бота в группе («@бот …» или ответом боту) — вместо ответа ИИ получает сообщение: первый раз всегда, дальше — с шансом «частота» в процентах (0 — только первый раз, 100 — всегда);",
+  "• «первый раз» — один за всё время; поменяешь текст — будет снова;",
+  "• ник — с «@» или без, можно числовой id; строк на человека может быть несколько — шанс у каждой свой;",
+  "• ИИ-лимит это не тратит. Просьбы про слайды и знакомства личный ответ не перебивает.",
+].join("\n");
+
+/** «@ник 30 текст», «@ник 30% текст» или «@ник;30;текст». */
+export function parseQpAdd(raw: string, media: QaMedia | null): PersonalEntry | null {
+  const m = /^\s*(\S+?)\s*[\s;]\s*(\d{1,3}(?:[.,]\d+)?\s*%?)\s*(?:[\s;]\s*([\s\S]*))?$/u.exec(raw);
+  if (!m) return null;
+  const who = parseWho(m[1]!);
+  const percent = parsePercent(m[2]!);
+  if (!who || percent === null) return null;
+  return makeEntry(who, percent, answerCell((m[3] ?? "").trim(), media));
+}
+
+async function qpAdd(ctx: BotContext, raw: string, media: QaMedia | null): Promise<void> {
+  const base = ctx.deps.personal;
+  if (!base) return void (await ctx.reply("Болталка выключена — добавлять некуда."));
+  const entry = parseQpAdd(raw, media);
+  if (!entry) return void (await ctx.reply("Так: <code>/qp_add @ник 30 текст</code> — 30% шанс после первого раза.\nГифкой: пришли гифку с подписью <code>/qp_add @ник 30 подпись</code> или ответь так на гифку.", { parse_mode: "HTML" }));
+  try {
+    base.append(entry);
+  } catch (err) {
+    logger.warn({ err: String(err) }, "qp_add failed");
+    return void (await ctx.reply(`Не смог записать файл: ${esc(String(err).slice(0, 200))}`, { parse_mode: "HTML" }));
+  }
+  await ctx.reply(`Добавил. Личных ответов теперь: ${base.stats().count}.\n<code>${esc(personalLine(entry))}</code>`, { parse_mode: "HTML" });
+}
+
+adminOnly.command("qp", async (ctx) => {
+  const base = ctx.deps.personal;
+  if (!base) return void (await ctx.reply("Болталка выключена (CHAT_AI=FALSE или нет ключа), личные ответы не загружены."));
+  const st = base.stats();
+  const list = base
+    .entries()
+    .slice(0, 30)
+    .map((e, i) => `${i + 1}. ${esc(whoLabel(e))} · ${e.percent}% → ${e.media ? `[${e.media.kind}] ` : ""}${esc(e.answer.length > 70 ? `${e.answer.slice(0, 70)}…` : e.answer)}`);
+  await ctx.reply(
+    clampHtml([
+      "<b>🎯 Личные ответы</b>",
+      `Файл: <code>${esc(st.file)}</code> · строк: <b>${st.count}</b>${st.skipped ? ` · пропущено: ${st.skipped}` : ""}${st.error ? ` · ${esc(st.error)}` : ""}`,
+      ...(list.length ? ["", ...list, st.count > 30 ? `…и ещё ${st.count - 30} — весь файл: /qp_file` : ""] : []),
+      "",
+      "<code>/qp_add @ник 30 текст</code> — добавить",
+      "<code>/qp_del 3</code> или <code>/qp_del @ник</code> — удалить",
+      "<code>/qp_file</code> — скачать файл, <code>/qp_import</code> — прислать исправленный",
+      "",
+      QP_FORMAT_HELP,
+    ]
+      .filter((x) => x !== "")
+      .join("\n")),
+    { parse_mode: "HTML" },
+  );
+});
+
+adminOnly.command("qp_add", async (ctx) => qpAdd(ctx, ctx.match ?? "", mediaOf(ctx.msg.reply_to_message)));
+
+adminOnly.command("qp_del", async (ctx) => {
+  const base = ctx.deps.personal;
+  if (!base) return void (await ctx.reply("Болталка выключена."));
+  const arg = (ctx.match ?? "").trim().replace(/^#/, "");
+  if (!arg) return void (await ctx.reply("Так: <code>/qp_del 3</code> (номер из /qp) или <code>/qp_del @ник</code> — все строки человека.", { parse_mode: "HTML" }));
+  let removed: number;
+  try {
+    // Номер — короткое число; id человека длиннее: «/qp_del 123456789» — это id.
+    removed = /^\d{1,3}$/.test(arg) ? base.removeAt(Number(arg)) : base.remove(arg);
+  } catch (err) {
+    return void (await ctx.reply(`Не удалил: ${err instanceof Error ? err.message : String(err)}.`));
+  }
+  await ctx.reply(removed ? `Удалил (${removed}). Личных ответов теперь: ${base.stats().count}. Старая версия файла — рядом, .bak.` : "Такой строки нет. Список с номерами: /qp");
+});
+
+adminOnly.command("qp_file", async (ctx) => {
+  const base = ctx.deps.personal;
+  const raw = base?.raw();
+  if (!base || raw == null) return void (await ctx.reply("Файла личных ответов пока нет. Добавь первый: /qp_add, или пришли CSV: /qp_import."));
+  await ctx.replyWithDocument(new InputFile(Buffer.from(raw, "utf8"), "chat-personal.csv"), { caption: `Личные ответы: ${base.stats().count}. Поправь и пришли обратно через /qp_import.` });
+});
+
+adminOnly.command("qp_import", async (ctx) => {
+  if (!ctx.deps.personal) return void (await ctx.reply("Болталка выключена — загружать некуда."));
+  setPending(ctx.deps, ctx.user.id, { kind: "qp-import" }, 10 * 60_000);
+  await ctx.reply(`Пришли CSV-файл документом — он заменит личные ответы целиком (старый останется рядом как .bak).\n\n${QP_FORMAT_HELP}`, { parse_mode: "HTML" });
 });

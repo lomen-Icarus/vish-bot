@@ -28,6 +28,15 @@ export const BTN = {
   more: "🗂 Ещё",
   /** 🙋, а не 💬: 💬 — у «Спросить ИИ», одна иконка на два раздела путала, куда писать вопрос. */
   complaint: "🙋 Поддержка",
+  // Кнопки, которые можно вынести вниз из панелей (⚙️ → 🧩 Кнопки внизу):
+  // подписи — как в панелях «Найти» и «Ещё», чтобы человек узнал кнопку.
+  groups: "👥 Другие группы",
+  /** То же у преподавателя: расписание любой группы. */
+  teacherGroups: "👥 Группы",
+  whereTeacher: "👨‍🏫 Где препод",
+  ppa: "📋 Пересдачи",
+  askAi: "💬 Спросить ИИ",
+  help: "❓ Как пользоваться",
   // stream mode
   streamYesterday: "Поток: вчера",
   streamToday: "Поток: сегодня",
@@ -124,32 +133,91 @@ function menuBehaviour(kb: Keyboard, mode: MenuMode): Keyboard {
 export const INPUT_HINT = "14-24, Иванова, матан, 15.10";
 
 /**
+ * Кнопки, которые человек может держать в нижнем меню (⚙️ Настройки →
+ * 🧩 Кнопки внизу). Порядок списка — порядок в меню: свои кнопки встают
+ * между «Найти» и «Ещё», а набор по умолчанию даёт ровно меню 2 × 3.
+ */
+export const MENU_CHOICES = ["today", "tomorrow", "week", "find", "changes", "ppa", "calendar", "groups", "teachers", "poisk", "stream", "ask", "settings", "help", "more", "complaint"] as const;
+export type MenuButton = (typeof MENU_CHOICES)[number];
+export const DEFAULT_MENU: readonly MenuButton[] = ["today", "tomorrow", "week", "find", "more", "complaint"];
+/** Хотя бы одна из них остаётся в меню: через них возвращают меню как было. */
+export const MENU_KEEP_ONE: readonly MenuButton[] = ["more", "settings"];
+
+export function menuButtonLabel(b: MenuButton, teacher = false): string {
+  switch (b) {
+    case "groups":
+      return teacher ? BTN.teacherGroups : BTN.groups;
+    case "teachers":
+      return BTN.whereTeacher;
+    case "poisk":
+      return BTN.whereStudent;
+    case "ask":
+      return BTN.askAi;
+    default:
+      return BTN[b];
+  }
+}
+
+/**
+ * Свои кнопки в порядке меню, без неизвестных и повторов. null — меню как
+ * у всех (не выбрано или выбрано ровно то же). Без «Ещё» и «Настроек» сразу
+ * человек не нашёл бы, где вернуть меню, — тогда «Ещё» возвращается.
+ */
+export function normalizeMenu(list: readonly string[] | null | undefined): MenuButton[] | null {
+  if (!list) return null;
+  const set = new Set(list);
+  const picked = MENU_CHOICES.filter((b) => set.has(b));
+  if (!picked.some((b) => MENU_KEEP_ONE.includes(b))) return normalizeMenu([...picked, "more"]);
+  return picked.length === DEFAULT_MENU.length && DEFAULT_MENU.every((b) => set.has(b)) ? null : picked;
+}
+
+/** Ряды по 3 и поровну: 7 кнопок — 3 + 2 + 2, а не 3 + 3 + 1. */
+export function menuRows<T>(items: readonly T[]): T[][] {
+  const rows = Math.ceil(items.length / 3);
+  const out: T[][] = [];
+  let i = 0;
+  for (let r = 0; r < rows; r++) {
+    const n = Math.floor(items.length / rows) + (r < items.length % rows ? 1 : 0);
+    out.push(items.slice(i, i + n));
+    i += n;
+  }
+  return out;
+}
+
+/**
  * Главное меню 2 × 3. Внизу — только то, что жмут каждый день; всё остальное
  * за «🔍 Найти» (группы, поток, преподаватели, вопрос ИИ) и «🗂 Ещё»
  * (изменения, календарь, настройки, справка) — панелями под сообщением,
  * которые меняются на месте и не засоряют чат. Старые кнопки 4 × 3 у кого-то
  * ещё висят в чате — их подписи по-прежнему работают (см. hears в обработчиках).
+ * Свои кнопки (buttons) — тем же порядком, рядами по 3.
  */
-export function mainKeyboard(mode: MenuMode = "collapsible"): Keyboard {
-  const kb = new Keyboard().text(BTN.today).text(BTN.tomorrow).text(BTN.week).row().text(BTN.find).text(BTN.more).text(BTN.complaint).placeholder(INPUT_HINT);
-  return menuBehaviour(kb, mode);
+export function mainKeyboard(mode: MenuMode = "collapsible", buttons?: readonly string[] | null, teacher = false): Keyboard {
+  const kb = new Keyboard();
+  menuRows(normalizeMenu(buttons) ?? DEFAULT_MENU).forEach((row, i) => {
+    if (i) kb.row();
+    for (const b of row) kb.text(menuButtonLabel(b, teacher));
+  });
+  return menuBehaviour(kb.placeholder(INPUT_HINT), mode);
 }
 
 /**
  * Меню режима преподавателя — те же кнопки: «Сегодня / Неделя» — его
  * собственные пары, а «🔍 Найти» начинается с «👥 Группы» (расписание любой группы).
  */
-export function teacherKeyboard(mode: MenuMode = "collapsible"): Keyboard {
-  return mainKeyboard(mode);
+export function teacherKeyboard(mode: MenuMode = "collapsible", buttons?: readonly string[] | null): Keyboard {
+  return mainKeyboard(mode, buttons, true);
 }
 
 export type MenuMarkup = Keyboard | ReplyKeyboardRemove;
 
+type MenuOwner = Pick<User, "teacherMode" | "menuMode"> & { menuButtons?: string[] | null };
+
 /** Нижнее меню этого человека: обычное или режима преподавателя — или «убрать», если он его скрыл. */
-export function menuFor(user: Pick<User, "teacherMode" | "menuMode"> | null | undefined): MenuMarkup {
+export function menuFor(user: MenuOwner | null | undefined): MenuMarkup {
   const mode = user?.menuMode ?? "collapsible";
   if (mode === "hidden") return { remove_keyboard: true };
-  return user?.teacherMode ? teacherKeyboard(mode) : mainKeyboard(mode);
+  return user?.teacherMode ? teacherKeyboard(mode, user.menuButtons) : mainKeyboard(mode, user?.menuButtons);
 }
 
 /** Отпечаток меню: то же меню — тот же отпечаток (по нему бот понимает, что меню уже стоит). */
@@ -157,10 +225,12 @@ export function menuStamp(markup: unknown): string {
   return createHash("sha1").update(JSON.stringify(markup)).digest("base64url").slice(0, 12);
 }
 
-/** Отпечатки возможных меню считаем один раз: вариантов всего пять. */
+/** Отпечатки меню считаем один раз на вариант: режимы и наборы своих кнопок. */
 const stamps = new Map<string, string>();
-export function menuStampFor(user: Pick<User, "teacherMode" | "menuMode">): string {
-  const key = `${user.teacherMode ? 1 : 0}|${user.menuMode}`;
+export function menuStampFor(user: MenuOwner): string {
+  const key = `${user.teacherMode ? 1 : 0}|${user.menuMode}|${normalizeMenu(user.menuButtons)?.join(",") ?? ""}`;
+  // Наборов кнопок много: кеш не растёт без конца.
+  if (stamps.size > 1000) stamps.clear();
   let stamp = stamps.get(key);
   if (!stamp) stamps.set(key, (stamp = menuStamp(menuFor(user))));
   return stamp;
@@ -368,6 +438,8 @@ export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: {
   if (opts.known) kb.text(`🕶 Усиленная анонимность: ${onoff(user.anon)}`, "s:anon").row();
   if (opts.teacherCount) kb.text(`👨‍🏫 Слежу за преподавателями (${opts.teacherCount})`, "s:teachers").row();
   kb.text(`⌨️ Нижнее меню: ${MENU_MODE_LABELS[user.menuMode]}`, "s:menu").row();
+  const own = normalizeMenu(user.menuButtons);
+  kb.text(`🧩 Кнопки внизу: ${own ? `свои (${own.length})` : "как у всех"}`, "s:buttons").row();
   kb.text("✖️ Закрыть", "s:close");
   return kb;
 }

@@ -4,7 +4,7 @@
  */
 import { Composer } from "grammy";
 import type { BotContext } from "../context.js";
-import { btnLabels } from "../keyboards.js";
+import { BTN, btnLabels } from "../keyboards.js";
 import { teacherMapByName } from "../../portal/teachers.js";
 import { promptPeople } from "../people.js";
 import { webinarNameKey } from "../../people/ref.js";
@@ -12,7 +12,8 @@ import { webinarNameKey } from "../../people/ref.js";
 export const teacherHandlers = new Composer<BotContext>();
 
 teacherHandlers.command("teachers", (ctx) => promptPeople(ctx, "teacher"));
-teacherHandlers.hears(btnLabels("teachers"), (ctx) => promptPeople(ctx, "teacher"));
+// «👨‍🏫 Где препод» — та же кнопка, вынесенная в нижнее меню из «🔍 Найти».
+teacherHandlers.hears([...btnLabels("teachers"), BTN.whereTeacher], (ctx) => promptPeople(ctx, "teacher"));
 
 /**
  * Callback key for a teacher known only from the webinar page (no portal id).

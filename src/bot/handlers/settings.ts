@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, FIND_BTN, groupPicker, menuFor, panelRef, MENU_MODE_LABELS, MENU_MODES, REMINDER_KINDS, reminderOff, REMINDERS, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL, type ReminderKind } from "../keyboards.js";
+import { BTN, DEFAULT_MENU, FIND_BTN, groupPicker, MENU_CHOICES, MENU_KEEP_ONE, menuButtonLabel, menuFor, normalizeMenu, panelRef, MENU_MODE_LABELS, MENU_MODES, REMINDER_KINDS, reminderOff, REMINDERS, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL, type MenuButton, type ReminderKind } from "../keyboards.js";
 import { THEMES, THEME_LABELS } from "../../render/themes.js";
 import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
@@ -203,6 +203,11 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
       // Выбор — в том же сообщении настроек: после него оно вернётся с новой подписью.
       await ctx.answerCallbackQuery();
       await ctx.editMessageText(menuChoiceText(user.menuMode), { parse_mode: "HTML", reply_markup: menuChoiceKeyboard(user.menuMode) }).catch(() => undefined);
+      return;
+    }
+    case "buttons": {
+      await ctx.answerCallbackQuery();
+      await ctx.editMessageText(buttonsText(user), { parse_mode: "HTML", reply_markup: buttonsKeyboard(ctx, user) }).catch(() => undefined);
       return;
     }
     case "teachers": {
@@ -444,4 +449,81 @@ settingsHandlers.callbackQuery(/^menu:(collapsible|once|hidden|back)$/, async (c
 settingsHandlers.command("menu", async (ctx) => {
   if (ctx.user.menuMode === "hidden") return applyMenu(ctx, "collapsible", "Меню снова внизу 👇 Свернуть — значком ▦ в поле ввода, скрыть насовсем — ⚙️ Настройки → «Нижнее меню».");
   await ctx.reply("Меню внизу 👇", { reply_markup: menuFor(ctx.user) });
+});
+
+// ---- свои кнопки нижнего меню (⚙️ → 🧩 Кнопки внизу) ----
+// Сколько кнопок — выбор человека: меню по умолчанию у остальных не меняется.
+
+/** Что можно вынести вниз: поиск студента и вопрос ИИ — только если они включены у бота. */
+function menuChoices(ctx: BotContext, picked: ReadonlySet<MenuButton>): MenuButton[] {
+  // Уже выбранную кнопку показываем, даже если функцию выключили: иначе её не убрать.
+  return MENU_CHOICES.filter((b) => picked.has(b) || ((b !== "poisk" || ctx.deps.config.POISK) && (b !== "ask" || !!ctx.deps.ask)));
+}
+
+function buttonsText(user: User): string {
+  const picked = normalizeMenu(user.menuButtons) ?? DEFAULT_MENU;
+  return [
+    "<b>🧩 Кнопки внизу</b>",
+    "",
+    "Нажми, чтобы добавить (➕) или убрать (✅). Кнопки встают по порядку этого списка, по 3 в ряд.",
+    `Выбрано: <b>${picked.length}</b>${user.menuButtons ? "" : " — как у всех"}. «🗂 Ещё» или «⚙️ Настройки» остаётся хотя бы одна: через них меню возвращают.`,
+    ...(user.menuMode === "hidden" ? ["", "Сейчас нижнее меню скрыто — кнопки появятся, когда вернёшь его: /menu."] : []),
+  ].join("\n");
+}
+
+function buttonsKeyboard(ctx: BotContext, user: User): InlineKeyboard {
+  const picked = new Set(normalizeMenu(user.menuButtons) ?? DEFAULT_MENU);
+  const kb = new InlineKeyboard();
+  menuChoices(ctx, picked).forEach((b, i) => {
+    if (i && i % 2 === 0) kb.row();
+    kb.text(`${picked.has(b) ? "✅" : "➕"} ${menuButtonLabel(b, user.teacherMode)}`, `mb:t:${b}`);
+  });
+  return kb.row().text("👌 Готово — обновить меню", "mb:done").row().text("↩️ Как было", "mb:reset").text("◀️ К настройкам", "mb:back");
+}
+
+/** Новое меню — новым сообщением: кнопки внизу меняются только так. */
+async function sendOwnMenu(ctx: BotContext, user: User): Promise<void> {
+  const text =
+    user.menuMode === "hidden"
+      ? "Сохранил. Нижнее меню сейчас скрыто — вернуть кнопки: /menu."
+      : user.menuButtons
+        ? "Готово: меню внизу 👇 Вернуть как было — ⚙️ Настройки → 🧩 Кнопки внизу → ↩️ Как было."
+        : "Меню как у всех 👇";
+  await ctx.reply(text, { reply_markup: menuFor(user) });
+}
+
+settingsHandlers.callbackQuery(/^mb:(?:t:(\w+)|(done|reset|back))$/, async (ctx) => {
+  const repo = ctx.deps.repo;
+  const user = repo.getUser(ctx.user.id) ?? ctx.user;
+  const action = ctx.match[2];
+  if (action === "back") {
+    await ctx.answerCallbackQuery();
+    return renderSettings(ctx, true);
+  }
+  if (action === "done") {
+    await ctx.answerCallbackQuery();
+    await sendOwnMenu(ctx, user);
+    return renderSettings(ctx, true);
+  }
+  if (action === "reset") {
+    if (!user.menuButtons) return void (await ctx.answerCallbackQuery({ text: "Меню и так как у всех" }));
+    repo.updateUser(user.id, { menuButtons: null });
+    user.menuButtons = ctx.user.menuButtons = null;
+    await ctx.answerCallbackQuery({ text: "Вернул меню как у всех" });
+    await sendOwnMenu(ctx, user);
+    return renderSettings(ctx, true);
+  }
+  const b = ctx.match[1] as MenuButton;
+  if (!MENU_CHOICES.includes(b)) return void (await ctx.answerCallbackQuery());
+  const current = normalizeMenu(user.menuButtons) ?? [...DEFAULT_MENU];
+  const removing = current.includes(b);
+  const next = removing ? current.filter((x) => x !== b) : [...current, b];
+  if (!next.some((x) => MENU_KEEP_ONE.includes(x))) {
+    return void (await ctx.answerCallbackQuery({ text: `Оставь «${BTN.more}» или «${BTN.settings}»: через них меню возвращают. Добавь одну — тогда убирай другую.`, show_alert: true }));
+  }
+  const saved = normalizeMenu(next);
+  repo.updateUser(user.id, { menuButtons: saved });
+  user.menuButtons = ctx.user.menuButtons = saved;
+  await ctx.answerCallbackQuery({ text: `${removing ? "Убрал" : "Добавил"}: ${menuButtonLabel(b, user.teacherMode)}. Нажми «Готово», чтобы обновить меню.` });
+  await ctx.editMessageText(buttonsText(user), { parse_mode: "HTML", reply_markup: buttonsKeyboard(ctx, user) }).catch(() => undefined);
 });

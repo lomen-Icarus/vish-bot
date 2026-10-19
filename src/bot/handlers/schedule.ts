@@ -101,6 +101,8 @@ export async function showOtherGroups(ctx: BotContext): Promise<void> {
 scheduleHandlers.hears(BTN.otherGroups, showOtherGroups);
 // В режиме преподавателя та же кнопка называется «Студенты»: расписание любой группы.
 scheduleHandlers.hears(BTN.students, showOtherGroups);
+// Те же «Группы», вынесенные в нижнее меню из «🔍 Найти» (⚙️ → 🧩 Кнопки внизу).
+scheduleHandlers.hears([BTN.groups, BTN.teacherGroups], showOtherGroups);
 scheduleHandlers.command("groups", showOtherGroups);
 
 scheduleHandlers.callbackQuery(/^pk:(.+)$/, async (ctx) => {

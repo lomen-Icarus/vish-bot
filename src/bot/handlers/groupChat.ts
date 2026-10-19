@@ -12,7 +12,8 @@
  * «Социальность» (src/bot/social.ts, src/chat/social.ts): войдя в чат, бот
  * спрашивает «а что это за группа?» и запоминает ответ; знакомится
  * («@ник это Фамилия Имя 12-23»); подписывает тему чата на слайды вебинаров;
- * ночью, если его долго не трогали, сначала сонно ворчит.
+ * ночью, если его долго не трогали, сначала сонно ворчит; людям из файла
+ * личных ответов (src/chat/personal.ts) вместо ответа ИИ шлёт их заготовку.
  */
 import { Composer, InlineKeyboard, type Api } from "grammy";
 import type { Message, UserFromGetMe } from "grammy/types";
@@ -25,6 +26,7 @@ import { todayMsk, wallClock, type WallClock } from "../../time.js";
 import { logger } from "../../logger.js";
 import type { ChatTool } from "../../chat/service.js";
 import type { QaMedia } from "../../chat/qa.js";
+import { pickPersonal, personalSentKey } from "../../chat/personal.js";
 import { featureReply, isNight, parseIntro, parseSlidesRequest, REFUSAL_PHRASE, SLEEPY_IDLE_MS, sleepyLine } from "../../chat/social.js";
 import { confirmSlideSub, forgetIntro, handleIntro, handleSlidesRequest, introGroup, introTargets, introTool, knownFirstName, slidesTool, type SlidesReply, type SlidesToolState } from "../social.js";
 import { sendDeck } from "../deck.js";
@@ -406,7 +408,9 @@ groupChatHandlers.on("message", async (ctx, next) => {
  * Ответ без модели, если реплика — одно из «социальных» действий:
  *  1) ответ на «а что это за группа?» от того, кто может описать чат;
  *  2) слайды вебинаров в эту тему: подписка, отписка, список;
- *  3) знакомство «@ник это Фамилия Имя 12-23» или «я — …».
+ *  3) знакомство «@ник это Фамилия Имя 12-23» или «я — …»;
+ *  4) личный ответ из CHAT_PERSONAL_DB: первый раз — всегда, дальше по шансу.
+ *     Последним: просьбы про слайды и знакомства он не перебивает.
  */
 type QuickReply = SlidesReply & { media?: QaMedia };
 
@@ -433,6 +437,12 @@ async function quickReply(ctx: BotContext, raw: string, text: string, group: Ret
   const intro = parseIntro(raw, msg.entities ?? msg.caption_entities ?? [], ctx.me.username, ctx.me.id, ctx.from!, true);
   const introAnswer = intro ? handleIntro(deps, intro, ctx.from!, chatId, true) : null;
   if (introAnswer) return { text: introAnswer };
+  const personal = deps.personal ? pickPersonal(deps.personal.entries(), ctx.from!, (key) => !!deps.repo.getMeta(personalSentKey(key)), chatClock.random) : null;
+  if (personal) {
+    if (personal.first) deps.repo.setMeta(personalSentKey(personal.entry.key), new Date().toISOString());
+    logger.info({ chat: chatId, first: personal.first }, "group chat: personal reply");
+    return personal.entry.media ? { text: personal.entry.answer, media: personal.entry.media } : { text: personal.entry.answer };
+  }
   return null;
 }
 

@@ -7,6 +7,7 @@
 import { Composer } from "grammy";
 import type { BotContext } from "../context.js";
 import { ppaItemText, ppaScreen } from "../ppaView.js";
+import { BTN } from "../keyboards.js";
 import { groupRequiredText, needGroup } from "../views.js";
 import { plural } from "../../schedule/format.js";
 import { subjectKey } from "../../schedule/subjects.js";
@@ -41,6 +42,8 @@ export async function showPpa(ctx: BotContext, edit: boolean): Promise<void> {
 }
 
 ppaHandlers.command("ppa", (ctx) => showPpa(ctx, false));
+// Кнопка, вынесенная в нижнее меню из «🗂 Ещё» (⚙️ → 🧩 Кнопки внизу).
+ppaHandlers.hears(BTN.ppa, (ctx) => showPpa(ctx, false));
 ppaHandlers.callbackQuery(["more:ppa", "ppa:open"], async (ctx) => {
   await ctx.answerCallbackQuery();
   await showPpa(ctx, false);

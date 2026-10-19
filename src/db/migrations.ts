@@ -501,4 +501,9 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (user_id, group_key)
   );
   `,
+  // Свои кнопки нижнего меню (⚙️ Настройки → 🧩 Кнопки внизу): ключи через
+  // запятую в порядке меню; NULL — меню как у всех.
+  `
+  ALTER TABLE users ADD COLUMN menu_buttons TEXT;
+  `,
 ];

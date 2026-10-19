@@ -23,6 +23,7 @@ import { resolveStudentGroup, whereNowText } from "./students/locate.js";
 import { filterSubgroup } from "./schedule/format.js";
 import { todayMsk } from "./time.js";
 import { QaBase } from "./chat/qa.js";
+import { PersonalReplies } from "./chat/personal.js";
 import { ChatService } from "./chat/service.js";
 import { importLegacyCanned, seedDefaultQa } from "./chat/importCanned.js";
 import { notifyRecorderEffect } from "./bot/recNotify.js";
@@ -117,8 +118,10 @@ async function main(): Promise<void> {
     seedDefaultQa(repo, chat.qa);
     logger.info({ model: chat.model, qa: chat.qa.stats().count, file: config.CHAT_QA_DB }, "group chat enabled");
   } else logger.info("group chat disabled (CHAT_AI=FALSE)");
+  // Личные ответы «ник;частота;сообщение» — тип рядом со сценарием, только при болталке.
+  const personal = chat ? new PersonalReplies(config.CHAT_PERSONAL_DB) : null;
 
-  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, known, teacherRegistry, chat, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
+  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, known, teacherRegistry, chat, personal, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
   const bot = createBot(deps);
   await bot.init();
   chat?.setBotUsername(bot.botInfo.username ?? null);
