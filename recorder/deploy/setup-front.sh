@@ -17,11 +17,16 @@
 #     → имена из CF_NAMES (certbot, DNS-01).
 #   /root/.secrets/selectel.env — сервисный пользователь Selectel (DNS actual):
 #       SL_Ver=v2, SL_Login_ID, SL_Project_Name, SL_Login_Name, SL_Pswd
-#     → имена из SEL_NAMES (acme.sh, DNS-01). Пока NS домена не указывают на
-#       Selectel, выпуск пропускается — перезапусти скрипт позже.
+#     → имена из SEL_NAMES (acme.sh, DNS-01), если NS домена — Selectel.
+#   Домен не у Selectel (или нет selectel.env) — имя из SEL_NAMES выпускается
+#   через сайт (certbot, HTTP-01): Let's Encrypt забирает файл с этого VPS.
+#   Для этого A-запись имени уже должна указывать сюда (VPS_IP); пока не
+#   указывает — имя пропускается. Здесь порядок обратный DNS-01: сначала
+#   A-запись, потом скрипт, и до «OK» HTTPS по этому имени не работает.
 # Продление — само: таймер certbot и cron acme.sh, nginx перечитывается.
 set -euo pipefail
 
+VPS_IP="${VPS_IP:-77.91.92.142}"                          # этот VPS — для проверки A-записи перед HTTP-01
 BOT_IP="${BOT_IP:-135.125.188.210}"                       # хостинг бота (OVH)
 BOT_PORT="${BOT_PORT:-443}"                               # его HTTPS-порт
 BOT_NAME="${BOT_NAME:-rezerve-adress.frienworld.com}"     # имя, под которым бот отвечает на хостинге
@@ -33,7 +38,9 @@ CF_INI=/root/.secrets/cloudflare.ini
 SEL_ENV=/root/.secrets/selectel.env
 CERTS=/etc/nginx/vish-certs
 CONF=/etc/nginx/conf.d/vish-front.conf
+PROXY_INC=/etc/nginx/vish-proxy.inc
 ACME=/root/.acme.sh/acme.sh
+WEBROOT=/var/www/vish-acme   # файлы проверки HTTP-01
 
 [ "$(id -u)" = 0 ] || { echo "Запусти под root" >&2; exit 1; }
 
@@ -70,8 +77,14 @@ if [ ${#need[@]} -gt 0 ]; then
   apt-get install -y "${need[@]}"
 fi
 systemctl enable --now nginx >/dev/null 2>&1 || true
-mkdir -p "$CERTS"
+mkdir -p "$CERTS" "$WEBROOT"
 chmod 700 "$CERTS"
+
+# Файрвол: если включён ufw — открыть порты входа (до выпуска: HTTP-01 идёт на 80).
+if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+  ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null
+  [ "$LEGACY_OK" = 1 ] && [ -n "$LEGACY_HTTP_PORT" ] && ufw allow "$LEGACY_HTTP_PORT/tcp" >/dev/null
+fi
 
 # Делегирован ли домен на нужные NS — по публичному DNS (как видят телефоны).
 # 0 — да, 1 — нет, 2 — не удалось узнать.
@@ -103,8 +116,22 @@ else
   echo "Нет $CF_INI — имена Cloudflare ($CF_NAMES) пропускаю"
 fi
 
-# ── 4. Сертификаты через Selectel (acme.sh, DNS actual).
-if [ -f "$SEL_ENV" ]; then
+# ── 4. Сертификаты через Selectel (acme.sh, DNS actual). Домен не у Selectel,
+# нет selectel.env или выпуск не удался — имя уходит на выпуск через сайт (шаг 6).
+HTTP_TODO=()
+for name in $SEL_NAMES; do
+  if [ ! -f "$SEL_ENV" ]; then
+    echo "Нет $SEL_ENV — $name выпущу через сайт"
+    HTTP_TODO+=("$name")
+    continue
+  fi
+  zone="$(zone_of "$name")"
+  set +e; ns_matches "$zone" "ns.selectel" ; rc=$?; set -e
+  if [ "$rc" = 1 ]; then
+    echo "$zone не у Selectel (NS в публичном DNS другие) — $name выпущу через сайт"
+    HTTP_TODO+=("$name")
+    continue
+  fi
   chmod 600 "$SEL_ENV"
   if [ ! -x "$ACME" ]; then
     echo "Ставлю acme.sh…"
@@ -112,44 +139,51 @@ if [ -f "$SEL_ENV" ]; then
     curl -fsSL https://get.acme.sh | sh -s >/dev/null || true
     [ -x "$ACME" ] || { echo "acme.sh не поставился (нужен доступ к raw.githubusercontent.com)" >&2; exit 1; }
   fi
-  for name in $SEL_NAMES; do
-    zone="$(zone_of "$name")"
-    set +e; ns_matches "$zone" "ns.selectel" ; rc=$?; set -e
-    if [ "$rc" = 1 ]; then
-      echo "⏳ $zone ещё не делегирован на Selectel (NS в публичном DNS другие) — $name пропускаю, запусти скрипт позже"
-      continue
-    fi
-    echo "Сертификат $name (Selectel)…"
-    set +e
-    ( set -a; . "$SEL_ENV"; set +a
-      "$ACME" --issue --server letsencrypt --dns dns_selectel -d "$name" --keylength ec-256 )
-    rc=$?
-    set -e
-    # 2 — сертификат ещё свежий, перевыпуск не нужен.
-    if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then
-      echo "⚠️ Сертификат $name не выпустился — проверь $SEL_ENV (сервисный пользователь, роль в проекте с зоной)" >&2
-      continue
-    fi
-    "$ACME" --install-cert -d "$name" --ecc \
-      --key-file "$CERTS/$name.key" --fullchain-file "$CERTS/$name.crt" \
-      --reloadcmd "systemctl reload nginx" >/dev/null
-  done
-else
-  echo "Нет $SEL_ENV — имена Selectel ($SEL_NAMES) пропускаю"
-fi
-
-for name in $CF_NAMES $SEL_NAMES; do
-  [ -s "$CERTS/$name.crt" ] && [ -s "$CERTS/$name.key" ] && HAVE+=("$name")
+  echo "Сертификат $name (Selectel)…"
+  set +e
+  ( set -a; . "$SEL_ENV"; set +a
+    "$ACME" --issue --server letsencrypt --dns dns_selectel -d "$name" --keylength ec-256 )
+  rc=$?
+  set -e
+  # 2 — сертификат ещё свежий, перевыпуск не нужен.
+  if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then
+    echo "⚠️ Сертификат $name через Selectel не выпустился (проверь $SEL_ENV) — пробую через сайт" >&2
+    HTTP_TODO+=("$name")
+    continue
+  fi
+  "$ACME" --install-cert -d "$name" --ecc \
+    --key-file "$CERTS/$name.key" --fullchain-file "$CERTS/$name.crt" \
+    --reloadcmd "systemctl reload nginx" >/dev/null
 done
-[ ${#HAVE[@]} -gt 0 ] || { echo "Нет ни одного сертификата — nginx не настраиваю" >&2; exit 1; }
 
-# ── 5. Конфиг nginx.
+have_cert() { [ -s "$CERTS/$1.crt" ] && [ -s "$CERTS/$1.key" ]; }
+collect_have() {
+  HAVE=()
+  for name in $CF_NAMES $SEL_NAMES; do have_cert "$name" && HAVE+=("$name"); done
+  return 0
+}
+
+# IPv4 имени в публичном DNS (как видят телефоны и Let's Encrypt); пусто — не резолвится.
+public_ip() {
+  curl -fsS -m 10 "https://dns.google/resolve?name=$1&type=A" 2>/dev/null | grep -o '"data":"[0-9.]*"' | head -1 | cut -d'"' -f4 || true
+}
+# Указывает ли A-запись на этот VPS: VPS_IP или один из адресов интерфейсов.
+is_here() {
+  local ip="$1" own
+  [ -n "$ip" ] || return 1
+  [ "$ip" = "$VPS_IP" ] && return 0
+  for own in $(hostname -I 2>/dev/null); do [ "$own" = "$ip" ] && return 0; done
+  return 1
+}
+
+# ── 5. Конфиг nginx (функция: при выпуске через сайт пишется дважды — до и после).
 https_of() {  # куда отправлять с http: своё имя, если есть сертификат, иначе первое имя с сертификатом
   local n
   for n in "${HAVE[@]}"; do [ "$n" = "$1" ] && { echo "$1"; return; }; done
-  echo "${HAVE[0]}"
+  echo "${HAVE[0]:-$1}"
 }
 
+write_nginx() {
 {
 cat <<EOF
 # Создано setup-front.sh — правки руками перезапишутся при следующем запуске.
@@ -170,7 +204,7 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_session_cache shared:vish:5m;
     ssl_session_timeout 1h;
-    location / { include /etc/nginx/vish-proxy.inc; }
+    location / { include $PROXY_INC; }
 }
 EOF
 done
@@ -184,14 +218,19 @@ cat <<EOF
 server {
     listen $port;
     server_name $name;
-    # Хостинг бота сам продлевает свой сертификат по HTTP — пропускаем к нему.
+    # Проверка HTTP-01: свой файл (сертификат этого VPS) — отсюда, остальное —
+    # хостингу бота: он сам продлевает свой сертификат по HTTP.
     location /.well-known/acme-challenge/ {
+        root $WEBROOT;
+        try_files \$uri @acme_bot;
+    }
+    location @acme_bot {
         proxy_pass http://$BOT_IP;
         proxy_set_header Host \$host;
     }
     # Старые подписки на календарь и проверка живости — как раньше, по http.
-    location /cal/ { include /etc/nginx/vish-proxy.inc; limit_except GET HEAD { deny all; } }
-    location = /health { include /etc/nginx/vish-proxy.inc; limit_except GET HEAD { deny all; } }
+    location /cal/ { include $PROXY_INC; limit_except GET HEAD { deny all; } }
+    location = /health { include $PROXY_INC; limit_except GET HEAD { deny all; } }
     location / { return 301 https://$(https_of "$name")\$request_uri; }
 }
 EOF
@@ -199,7 +238,7 @@ EOF
 done
 } > "$CONF.new"
 
-cat > /etc/nginx/vish-proxy.inc.new <<EOF
+cat > "$PROXY_INC.new" <<EOF
 # Создано setup-front.sh. Запрос — боту на хостинг, по HTTPS с проверкой сертификата.
 proxy_pass https://vish_bot;
 proxy_ssl_server_name on;
@@ -223,24 +262,57 @@ EOF
 
 # Старый конфиг — в сторону: битый новый не должен уронить работающий nginx.
 cp -a "$CONF" "$CONF.bak" 2>/dev/null || true
-cp -a /etc/nginx/vish-proxy.inc /etc/nginx/vish-proxy.inc.bak 2>/dev/null || true
+cp -a "$PROXY_INC" "$PROXY_INC.bak" 2>/dev/null || true
 mv "$CONF.new" "$CONF"
-mv /etc/nginx/vish-proxy.inc.new /etc/nginx/vish-proxy.inc
+mv "$PROXY_INC.new" "$PROXY_INC"
 if ! nginx -t 2>&1; then
   echo "Конфиг nginx не прошёл проверку — возвращаю прежний" >&2
   if [ -f "$CONF.bak" ]; then mv "$CONF.bak" "$CONF"; else rm -f "$CONF"; fi
-  [ -f /etc/nginx/vish-proxy.inc.bak ] && mv /etc/nginx/vish-proxy.inc.bak /etc/nginx/vish-proxy.inc
-  exit 1
+  [ -f "$PROXY_INC.bak" ] && mv "$PROXY_INC.bak" "$PROXY_INC"
+  return 1
 fi
 systemctl reload nginx
+}
 
-# Файрвол: если включён ufw — открыть порты входа.
-if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-  ufw allow 80/tcp >/dev/null; ufw allow 443/tcp >/dev/null
-  [ "$LEGACY_OK" = 1 ] && [ -n "$LEGACY_HTTP_PORT" ] && ufw allow "$LEGACY_HTTP_PORT/tcp" >/dev/null
+# ── 6. Сертификаты через сайт (certbot, HTTP-01): Let's Encrypt забирает файл
+# проверки по http://имя/.well-known/acme-challenge/ — значит, имя уже должно
+# указывать на этот VPS. Не указывает — пропускаем: каждая неудачная проверка
+# тратит лимит Let's Encrypt (5 в час на имя).
+collect_have
+PENDING=()
+for name in "${HTTP_TODO[@]}"; do
+  # Свежий сертификат от acme.sh (обычный файл, не ссылка certbot) — не трогаем.
+  if have_cert "$name" && [ ! -L "$CERTS/$name.crt" ] && openssl x509 -checkend 2592000 -noout -in "$CERTS/$name.crt" >/dev/null 2>&1; then
+    continue
+  fi
+  ip="$(public_ip "$name")"
+  if ! is_here "$ip"; then
+    echo "⏳ $name → ${ip:-не резолвится}, а не этот VPS ($VPS_IP) — переведи A-запись сюда и запусти скрипт снова"
+    continue
+  fi
+  PENDING+=("$name")
+done
+if [ ${#PENDING[@]} -gt 0 ]; then
+  # Файлы проверки должен отдавать уже nginx этого VPS — пишем конфиг до выпуска.
+  write_nginx || exit 1
+  for name in "${PENDING[@]}"; do
+    echo "Сертификат $name (через сайт)…"
+    if certbot certonly --non-interactive --agree-tos --register-unsafely-without-email \
+        --webroot -w "$WEBROOT" --keep-until-expiring --cert-name "$name" -d "$name" \
+        --deploy-hook "systemctl reload nginx"; then
+      ln -sfn "/etc/letsencrypt/live/$name/fullchain.pem" "$CERTS/$name.crt"
+      ln -sfn "/etc/letsencrypt/live/$name/privkey.pem" "$CERTS/$name.key"
+    else
+      echo "⚠️ Сертификат $name не выпустился: Let's Encrypt не забрал файл с http://$name/.well-known/acme-challenge/ — проверь, что A-запись → $VPS_IP и порт 80 открыт снаружи. Повторять — не чаще раза в час" >&2
+    fi
+  done
 fi
 
-# ── 6. Проверка через этот VPS, не дожидаясь смены DNS.
+collect_have
+[ ${#HAVE[@]} -gt 0 ] || { echo "Нет ни одного сертификата — nginx не настраиваю" >&2; exit 1; }
+write_nginx || exit 1
+
+# ── 7. Проверка через этот VPS, не дожидаясь смены DNS.
 sleep 1
 fail=0
 for name in "${HAVE[@]}"; do
@@ -258,7 +330,7 @@ for name in $SEL_NAMES; do
   [ "$h" = 200 ] && echo "OK http://$name/health (старые ссылки)" || { echo "❌ http://$name/health — $h" >&2; fail=1; }
 done
 for name in $CF_NAMES $SEL_NAMES; do
-  ip="$(curl -fsS -m 10 "https://dns.google/resolve?name=$name&type=A" 2>/dev/null | grep -o '"data":"[0-9.]*"' | head -1 | cut -d'"' -f4 || true)"
+  ip="$(public_ip "$name")"
   echo "DNS сейчас: $name → ${ip:-не резолвится}"
 done
 [ "$fail" = 0 ] || exit 1
