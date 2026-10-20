@@ -3,13 +3,15 @@
  * не привязанные. Например, организатору мероприятий — по ссылке на каждую
  * группу, чтобы видеть, когда у кого пары.
  *
- * Ссылка живёт сама по себе: в ней только расписание группы (все подгруппы,
- * без напоминаний и без чьих-то пересдач), и ничто, что кто-либо нажимает в
- * боте, её не меняет. Перестаёт работать, только если админ её отзовёт.
+ * Ссылка живёт сама по себе: в ней расписание группы с сессией (все
+ * подгруппы, без напоминаний; с «+ппа» — и все пересдачи группы), и ничто,
+ * что кто-либо нажимает в боте, её не меняет. Перестаёт работать, только
+ * если админ её отзовёт.
  *
  *   /calfeeds                       — для кого выпущены ссылки
  *   /calfeeds Петров                — ссылки Петрова (прислать ещё раз)
  *   /calfeed_new Петров             — по ссылке на каждую группу
+ *   /calfeed_new Петров +ппа        — то же, с пересдачами (ППА) групп
  *   /calfeed_new Петров: 12-23 14-24 — только на эти группы
  *   /calfeed_del Петров | 17        — отозвать все ссылки Петрова | одну (с подтверждением)
  */
@@ -36,12 +38,18 @@ function feedBase(ctx: BotContext): string | null {
   return base && ctx.deps.http?.listening === true ? base : null;
 }
 
-/** «Петров: 12-23, 14-24» → подпись и группы; без двоеточия — все группы. */
-export function parseFeedRequest(raw: string, groups: LogicalGroup[]): { label: string; groups: LogicalGroup[]; unknown: string[] } | null {
+/** «+ппа» где угодно в команде: календарь с пересдачами группы. */
+const PPA_FLAG = /(?:^|\s)\+\s?(?:ппа|ppa)(?=[\s,;:]|$)/giu;
+
+/** «Петров: 12-23, 14-24 +ппа» → подпись, группы и «с ППА»; без двоеточия — все группы. */
+export function parseFeedRequest(input: string, groups: LogicalGroup[]): { label: string; groups: LogicalGroup[]; unknown: string[]; ppa: boolean } | null {
+  const ppa = PPA_FLAG.test(input);
+  PPA_FLAG.lastIndex = 0;
+  const raw = input.replace(PPA_FLAG, " ");
   const colon = raw.indexOf(":");
   const label = (colon >= 0 ? raw.slice(0, colon) : raw).replace(/\s+/g, " ").trim();
   if (!label || label.length > LABEL_MAX) return null;
-  if (colon < 0) return { label, groups: [...groups], unknown: [] };
+  if (colon < 0) return { label, groups: [...groups], unknown: [], ppa };
   const picked: LogicalGroup[] = [];
   const unknown: string[] = [];
   for (const q of raw.slice(colon + 1).split(/[\s,;]+/).filter(Boolean)) {
@@ -49,8 +57,10 @@ export function parseFeedRequest(raw: string, groups: LogicalGroup[]): { label: 
     if (!g) unknown.push(q);
     else if (!picked.some((p) => p.key === g.key)) picked.push(g);
   }
-  return { label, groups: picked, unknown };
+  return { label, groups: picked, unknown, ppa };
 }
+
+const withPpa = (feeds: CalFeed[]): string => (feeds.some((f) => f.ppa) ? ", с ППА" : "");
 
 function feedLine(ctx: BotContext, base: string, f: CalFeed): string {
   const title = ctx.deps.service.group(f.groupKey)?.title ?? f.groupKey;
@@ -90,7 +100,7 @@ adminOnly.command("calfeeds", async (ctx) => {
     const feeds = ctx.deps.repo.calFeeds(label);
     if (!feeds.length) return void (await ctx.reply(`Для «${label}» ссылок нет. Выпустить: /calfeed_new ${label}`));
     if (!base) return void (await ctx.reply("Подписки сейчас не работают: нет публичного адреса (PUBLIC_URL) или HTTP-сервер бота не запущен."));
-    return sendFeeds(ctx, base, `📆 <b>Календари групп для «${esc(feeds[0]!.label)}»</b> (${feeds.length})`, feeds);
+    return sendFeeds(ctx, base, `📆 <b>Календари групп для «${esc(feeds[0]!.label)}»</b> (${feeds.length}${withPpa(feeds)})`, feeds);
   }
   const all = ctx.deps.repo.calFeeds();
   const byLabel = new Map<string, CalFeed[]>();
@@ -99,14 +109,15 @@ adminOnly.command("calfeeds", async (ctx) => {
     [
       "📆 <b>Календари групп</b> — ссылки-подписки без привязки к человеку",
       "",
-      ...(byLabel.size ? [...byLabel].map(([l, fs]) => `• ${esc(l)} — ${fs.length} ${plural(fs.length, "группа", "группы", "групп")} · <code>/calfeeds ${esc(l)}</code>`) : ["Пока ни одной."]),
+      ...(byLabel.size ? [...byLabel].map(([l, fs]) => `• ${esc(l)} — ${fs.length} ${plural(fs.length, "группа", "группы", "групп")}${withPpa(fs)} · <code>/calfeeds ${esc(l)}</code>`) : ["Пока ни одной."]),
       "",
       "<code>/calfeed_new Петров</code> — по ссылке на каждую группу",
+      "<code>/calfeed_new Петров +ппа</code> — то же, с пересдачами (ППА) групп",
       "<code>/calfeed_new Петров: 12-23 14-24</code> — только на эти группы",
       "<code>/calfeeds Петров</code> — прислать ссылки ещё раз (те же самые)",
       "<code>/calfeed_del Петров</code> или <code>/calfeed_del 17</code> — отозвать все или одну",
       "",
-      "<i>В календаре — расписание группы со всеми подгруппами, без напоминаний и без личных пересдач. Повторный выпуск для того же человека ссылок не меняет.</i>",
+      "<i>В календаре — расписание группы с сессией, все подгруппы, без напоминаний; с «+ппа» — и все пересдачи группы. Повторный выпуск для того же человека ссылок не меняет (а «+ппа» включает или выключает пересдачи в тех же ссылках).</i>",
     ].join("\n"),
     { parse_mode: "HTML" },
   );
@@ -116,12 +127,13 @@ adminOnly.command("calfeed_new", async (ctx) => {
   const base = feedBase(ctx);
   if (!base) return void (await ctx.reply("Подписки сейчас не работают: нет публичного адреса (PUBLIC_URL) или HTTP-сервер бота не запущен."));
   const req = parseFeedRequest(ctx.match ?? "", ctx.deps.service.groups());
-  if (!req) return void (await ctx.reply(`Так: <code>/calfeed_new Петров</code> (все группы) или <code>/calfeed_new Петров: 12-23 14-24</code>. Подпись — для кого, до ${LABEL_MAX} символов.`, { parse_mode: "HTML" }));
+  if (!req) return void (await ctx.reply(`Так: <code>/calfeed_new Петров</code> (все группы), <code>/calfeed_new Петров +ппа</code> (с пересдачами) или <code>/calfeed_new Петров: 12-23 14-24</code>. Подпись — для кого, до ${LABEL_MAX} символов.`, { parse_mode: "HTML" }));
   if (!req.groups.length) return void (await ctx.reply(`Не нашёл ни одной группы${req.unknown.length ? `: ${req.unknown.join(", ")}` : ""}. Пиши как 12-23.`));
-  const feeds = req.groups.map((g) => ctx.deps.repo.ensureCalFeed(g.key, req.label, ctx.from!.id));
+  const feeds = req.groups.map((g) => ctx.deps.repo.ensureCalFeed(g.key, req.label, ctx.from!.id, req.ppa));
   logger.info({ feeds: feeds.length }, "calendar group feeds issued");
   const note = req.unknown.length ? `\nНе нашёл группы: ${esc(req.unknown.join(", "))}.` : "";
-  await sendFeeds(ctx, base, `📆 <b>Календари групп для «${esc(req.label)}»</b> (${feeds.length})${note}\n\nПерешли это сообщение — ссылки работают у любого, кому их дать.`, feeds);
+  const what = req.ppa ? "расписание с сессией и пересдачами (ППА), без напоминаний" : "расписание с сессией, без пересдач и напоминаний";
+  await sendFeeds(ctx, base, `📆 <b>Календари групп для «${esc(req.label)}»</b> (${feeds.length}${withPpa(feeds)})${note}\n\nВ календарях — ${what}. Перешли это сообщение — ссылки работают у любого, кому их дать.`, feeds);
 });
 
 adminOnly.command("calfeed_del", async (ctx) => {

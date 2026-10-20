@@ -179,6 +179,8 @@ export interface CalFeed {
   groupKey: string;
   /** Для кого выпущена: «Петров, мероприятия». */
   label: string;
+  /** С пересдачами (ППА) группы — всеми, а не чьими-то отмеченными. */
+  ppa: boolean;
   createdBy: number;
   createdAt: string;
 }
@@ -188,12 +190,13 @@ interface CalFeedRow {
   token: string;
   group_key: string;
   label: string;
+  ppa: number;
   created_by: number;
   created_at: string;
 }
 
 function rowToCalFeed(r: CalFeedRow): CalFeed {
-  return { id: r.id, token: r.token, groupKey: r.group_key, label: r.label, createdBy: r.created_by, createdAt: r.created_at };
+  return { id: r.id, token: r.token, groupKey: r.group_key, label: r.label, ppa: r.ppa === 1, createdBy: r.created_by, createdAt: r.created_at };
 }
 
 function rowToUser(r: UserRow): User {
@@ -481,13 +484,17 @@ export class Repo {
   }
   /**
    * Ссылка группы для получателя: уже есть — та же (повторный выпуск не плодит
-   * ссылок и не ломает выданные), нет — новая.
+   * ссылок и не ломает выданные; «с ППА» или без — как в последнем выпуске),
+   * нет — новая.
    */
-  ensureCalFeed(groupKey: string, label: string, createdBy: number): CalFeed {
+  ensureCalFeed(groupKey: string, label: string, createdBy: number, ppa = false): CalFeed {
     const existing = this.calFeeds(label).find((f) => f.groupKey === groupKey);
-    if (existing) return existing;
+    if (existing) {
+      if (existing.ppa !== ppa) this.db.prepare("UPDATE cal_feeds SET ppa = ? WHERE id = ?").run(ppa ? 1 : 0, existing.id);
+      return { ...existing, ppa };
+    }
     const token = randomBytes(18).toString("base64url");
-    this.db.prepare("INSERT INTO cal_feeds (token, group_key, label, created_by, created_at) VALUES (?, ?, ?, ?, ?)").run(token, groupKey, label.trim(), createdBy, nowIso());
+    this.db.prepare("INSERT INTO cal_feeds (token, group_key, label, ppa, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(token, groupKey, label.trim(), ppa ? 1 : 0, createdBy, nowIso());
     return this.calFeedByToken(token)!;
   }
   /** Отозвать ссылки по номерам; сколько отозвано. */

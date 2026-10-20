@@ -11,6 +11,7 @@ import type { LogicalGroup } from "../src/schedule/groups.js";
 import type { Occurrence } from "../src/schedule/model.js";
 import type { BotContext, Deps } from "../src/bot/context.js";
 import { addDays, todayMsk } from "../src/time.js";
+import { subjectKey } from "../src/schedule/subjects.js";
 
 const g = (n: number, intake = 23): LogicalGroup => ({ key: `виш-${n}-${intake}`, title: `ВИШ-${n}-${intake}`, prefix: "ВИШ", number: n, intake, course: 4, portalIds: [n], portalNames: [`ВИШ-${n}-${intake}`] });
 const GROUPS = [g(11), g(12), g(14, 24)];
@@ -19,15 +20,19 @@ function lesson(groupKey: string, date: string, subject: string, subgroup: numbe
   return { groupKey, period: 1, date, slot: 2, start: 9 * 60 + 50, end: 11 * 60 + 10, subject, type: "лк", room: "Т-310", teacher: null, subgroup, isDistance: false, status: "scheduled", sources: [] };
 }
 
+/** Пересдача группы 12-23: «Матанализ» — в ленту попадает только с «+ппа». */
+const PPA_DATE = addDays(todayMsk(), 2);
+
 function makeService(lessons: Occurrence[]): ScheduleService {
   return {
+    ppaItems: (grp: LogicalGroup) => (grp.key === "виш-12-23" ? [{ subject: "Матанализ", date: PPA_DATE }] : []),
+    ppaLessons: (grp: LogicalGroup, keys: readonly string[]) => (keys.includes(subjectKey("Матанализ")) ? [{ ...lesson(grp.key, PPA_DATE, "Матанализ"), type: "ппа" }] : []),
     group: (key: string) => GROUPS.find((x) => x.key === key) ?? null,
     groups: () => GROUPS,
     materialize: (grp: LogicalGroup, from: string, to: string) => lessons.filter((l) => l.groupKey === grp.key && l.date >= from && l.date <= to),
     weekInfo: () => ({ week: 3, parity: "odd" as const, semester: 1 as const }),
     semesterFor: () => 1 as const,
     weekOneMonday: () => "2026-09-01",
-    ppaLessons: () => [],
   } as unknown as ScheduleService;
 }
 
@@ -40,6 +45,13 @@ describe("календари групп от админа: разбор и ба�
     expect(some.unknown).toEqual(["99-99"]);
     expect(parseFeedRequest("   ", GROUPS)).toBeNull();
     expect(parseFeedRequest(": 12-23", GROUPS)).toBeNull();
+    expect(parseFeedRequest("Петров", GROUPS)!.ppa).toBe(false);
+    const ppa = parseFeedRequest("Петров +ППА: 12-23", GROUPS)!;
+    expect(ppa).toMatchObject({ label: "Петров", ppa: true });
+    expect(ppa.groups.map((x) => x.title)).toEqual(["ВИШ-12-23"]);
+    expect(parseFeedRequest("Петров: 12-23 +ппа", GROUPS)!).toMatchObject({ label: "Петров", ppa: true, unknown: [] });
+    // «ППА» без плюса — часть подписи, а не пометка.
+    expect(parseFeedRequest("Отдел ППА", GROUPS)!).toMatchObject({ label: "Отдел ППА", ppa: false });
   });
 
   it("повторный выпуск для того же получателя отдаёт те же ссылки; отозванная не находится", () => {
@@ -56,6 +68,12 @@ describe("календари групп от админа: разбор и ба�
     expect(repo.calFeeds().map((f) => f.id)).toEqual([b.id]);
     // После отзыва выпуск даёт новую ссылку, старая так и не работает.
     expect(repo.ensureCalFeed("виш-12-23", "Петров", 99).token).not.toBe(a.token);
+    // «+ппа» в повторном выпуске включает пересдачи в той же ссылке.
+    const c = repo.ensureCalFeed("виш-14-24", "Петров", 99);
+    expect(c.ppa).toBe(false);
+    const d = repo.ensureCalFeed("виш-14-24", "Петров", 99, true);
+    expect(d).toMatchObject({ token: c.token, ppa: true });
+    expect(repo.calFeedByToken(c.token)!.ppa).toBe(true);
   });
 });
 
@@ -88,6 +106,13 @@ describe("календари групп от админа: лента", () => {
     const again = await (await fetch(url)).text();
     expect(again).toContain("Химия");
     expect(again).not.toContain("VALARM");
+    expect(again).not.toContain("Матанализ");
+    // С «+ппа» — все пересдачи группы, в той же ссылке и сразу (ключ кеша другой).
+    repo.ensureCalFeed("виш-12-23", "Петров", 99, true);
+    const withPpa = await (await fetch(url)).text();
+    expect(withPpa).toContain("Матанализ");
+    expect(withPpa).toContain("Химия");
+    expect(withPpa).not.toContain("VALARM");
     repo.revokeCalFeeds([feed.id]);
     // Кеш ленты — по ссылке; отозванная перестаёт открываться сразу.
     expect((await fetch(url)).status).toBe(404);
@@ -128,7 +153,11 @@ describe("/calfeed_new, /calfeeds, /calfeed_del", () => {
     const again = texts(await run(cmd("/calfeed_new Петров"), repo));
     expect(again.match(/https:\/\/bot\.example\/cal\/[A-Za-z0-9_-]+\.ics/g)).toEqual(links);
     expect(texts(await run(cmd("/calfeeds Петров"), repo)).match(/https:\/\/bot\.example\/cal\/[A-Za-z0-9_-]+\.ics/g)).toEqual(links);
-    expect(texts(await run(cmd("/calfeeds"), repo))).toContain("Петров — 3 группы");
+    expect(texts(await run(cmd("/calfeeds"), repo))).toContain("Петров — 3 группы · ");
+    const ppa = texts(await run(cmd("/calfeed_new Петров +ппа"), repo));
+    expect(ppa).toContain("(3, с ППА)");
+    expect(ppa).toContain("с сессией и пересдачами (ППА), без напоминаний");
+    expect(ppa.match(/https:\/\/bot\.example\/cal\/[A-Za-z0-9_-]+\.ics/g)).toEqual(links);
     expect(await run(cmd("/calfeed_new Чужой"), repo, { admin: false })).toEqual([]);
     expect(repo.calFeeds("Чужой")).toHaveLength(0);
   });

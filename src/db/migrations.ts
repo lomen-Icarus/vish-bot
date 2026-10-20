@@ -508,13 +508,15 @@ export const MIGRATIONS: string[] = [
   `,
   // Ссылки-подписки на календарь группы, которые выпускает админ (например,
   // организатору мероприятий): ни к кому не привязаны, живут сами по себе.
-  // label — для кого выпущены; revoked_at — отозвана (ссылка больше не открывается).
+  // label — для кого выпущены; ppa — с пересдачами группы; revoked_at — отозвана
+  // (ссылка больше не открывается).
   `
   CREATE TABLE cal_feeds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     token TEXT NOT NULL UNIQUE,
     group_key TEXT NOT NULL,
     label TEXT NOT NULL,
+    ppa INTEGER NOT NULL DEFAULT 0,
     created_by INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     revoked_at TEXT

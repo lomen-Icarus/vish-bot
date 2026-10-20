@@ -117,17 +117,17 @@ export function createHttpServer(deps: HttpDeps): Server {
   };
 
   /**
-   * Ссылка группы от админа (cal_feeds): только расписание группы — все
-   * подгруппы, без напоминаний и без чьих-то пересдач. Ни от чьих настроек в
-   * боте не зависит.
+   * Ссылка группы от админа (cal_feeds): расписание группы с сессией — все
+   * подгруппы, без напоминаний; пересдачи — все пересдачи группы, если ссылку
+   * выпустили «+ппа», а не чьи-то отмеченные. Ни от чьих настроек в боте не зависит.
    */
   const groupFeed = (token: string): FeedResult | null => {
     const f = deps.repo.calFeedByToken(token);
     if (!f) return null;
     const group = deps.service.group(f.groupKey);
     if (!group) return notFound("group not found");
-    const key = [token, group.key, "feed", deps.repo.lastPollRun()?.finishedAt ?? ""].join("|");
-    return cached(token, key, () => groupCalendar(deps.service, group, { subgroup: null, alarmMinutes: null, refreshInterval: "PT1H", stableSequence: true }).ics);
+    const key = [token, group.key, f.ppa ? "feed+ppa" : "feed", deps.repo.lastPollRun()?.finishedAt ?? ""].join("|");
+    return cached(token, key, () => groupCalendar(deps.service, group, { subgroup: null, alarmMinutes: null, refreshInterval: "PT1H", stableSequence: true, allPpa: f.ppa }).ics);
   };
 
   const feed = (token: string): FeedResult => {
