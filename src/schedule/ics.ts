@@ -33,6 +33,8 @@ export interface IcsOptions {
    * win over the events already in the calendar.
    */
   stableSequence?: boolean;
+  /** Добавка к UID событий (см. icsUid): ключ группы в календаре группы от админа. */
+  uidScope?: string;
 }
 
 function pad(n: number): string {
@@ -72,8 +74,13 @@ export function icsSequence(now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - SEQUENCE_EPOCH) / 60_000));
 }
 
-export function icsUid(o: Pick<Occurrence, "date" | "slot" | "start" | "subject" | "type" | "subgroup">): string {
-  return `${Buffer.from(positionKey(o)).toString("base64url")}@vish-bot`;
+/**
+ * scope — для календарей групп от админа: организатор подписывает в один
+ * аккаунт ленты всех групп, и общая потоковая пара не должна получить один
+ * UID в разных календарях. Личные ленты — без scope, их UID прежние.
+ */
+export function icsUid(o: Pick<Occurrence, "date" | "slot" | "start" | "subject" | "type" | "subgroup">, scope?: string): string {
+  return `${Buffer.from(scope ? `${scope}|${positionKey(o)}` : positionKey(o)).toString("base64url")}@vish-bot`;
 }
 
 function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: number, cancelled: boolean): string[] | null {
@@ -90,7 +97,7 @@ function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: nu
   if (o.movedFrom) desc.push(`перенос с ${o.movedFrom.date}`);
   if (o.isDistance) desc.push("дистанционно");
   if (cancelled) desc.push(o.movedTo ? `перенесена на ${o.movedTo.date}${o.movedTo.slot ? ` (${o.movedTo.slot} пара)` : ""}` : "убрана из расписания");
-  const lines = ["BEGIN:VEVENT", `UID:${icsUid(o)}`, `DTSTAMP:${stamp}`, `LAST-MODIFIED:${stamp}`, `SEQUENCE:${sequence}`, `DTSTART:${utcStamp(startMs)}`, `DTEND:${utcStamp(endMs)}`];
+  const lines = ["BEGIN:VEVENT", `UID:${icsUid(o, opts.uidScope)}`, `DTSTAMP:${stamp}`, `LAST-MODIFIED:${stamp}`, `SEQUENCE:${sequence}`, `DTSTART:${utcStamp(startMs)}`, `DTEND:${utcStamp(endMs)}`];
   lines.push(`SUMMARY:${escapeText(cancelled ? `Отменено: ${summary}` : summary)}`);
   if (o.room && !o.isDistance) lines.push(`LOCATION:${escapeText(`ауд. ${o.room}, ЧувГУ`)}`);
   lines.push(`DESCRIPTION:${escapeText(desc.join(" · "))}`);
@@ -111,7 +118,7 @@ export function buildIcs(opts: IcsOptions): string {
   if (opts.refreshInterval) lines.push(`REFRESH-INTERVAL;VALUE=DURATION:${opts.refreshInterval}`, `X-PUBLISHED-TTL:${opts.refreshInterval}`);
   const seen = new Set<string>();
   const push = (o: Occurrence, cancelled: boolean) => {
-    const uid = icsUid(o);
+    const uid = icsUid(o, opts.uidScope);
     if (seen.has(uid)) return;
     const ev = eventLines(o, opts, stamp, sequence, cancelled);
     if (!ev) return;

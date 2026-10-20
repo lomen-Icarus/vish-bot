@@ -195,6 +195,11 @@ interface CalFeedRow {
   created_at: string;
 }
 
+/** Подпись получателя для сравнения: без регистра и лишних пробелов. */
+export function calFeedLabelKey(label: string): string {
+  return label.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 function rowToCalFeed(r: CalFeedRow): CalFeed {
   return { id: r.id, token: r.token, groupKey: r.group_key, label: r.label, ppa: r.ppa === 1, createdBy: r.created_by, createdAt: r.created_at };
 }
@@ -479,22 +484,28 @@ export class Repo {
   calFeeds(label?: string): CalFeed[] {
     const rows = (this.db.prepare("SELECT * FROM cal_feeds WHERE revoked_at IS NULL ORDER BY id").all() as CalFeedRow[]).map(rowToCalFeed);
     // lower() в SQLite знает только латиницу: «Петров» и «петров» сравниваем здесь.
-    const want = label?.trim().toLowerCase();
-    return want ? rows.filter((f) => f.label.toLowerCase() === want) : rows;
+    const want = label === undefined ? "" : calFeedLabelKey(label);
+    return want ? rows.filter((f) => calFeedLabelKey(f.label) === want) : rows;
   }
   /**
    * Ссылка группы для получателя: уже есть — та же (повторный выпуск не плодит
-   * ссылок и не ломает выданные; «с ППА» или без — как в последнем выпуске),
-   * нет — новая.
+   * ссылок и не ломает выданные), нет — новая. ppa: true/false — включить или
+   * выключить пересдачи; не задано — не трогать, а новая ссылка берёт то же,
+   * что у остальных ссылок получателя. Подпись — как у первой его ссылки:
+   * «Петров» и «петров» — один получатель и одна строка в /calfeeds.
    */
-  ensureCalFeed(groupKey: string, label: string, createdBy: number, ppa = false): CalFeed {
-    const existing = this.calFeeds(label).find((f) => f.groupKey === groupKey);
+  ensureCalFeed(groupKey: string, label: string, createdBy: number, ppa?: boolean): CalFeed {
+    const mine = this.calFeeds(label);
+    const existing = mine.find((f) => f.groupKey === groupKey);
     if (existing) {
-      if (existing.ppa !== ppa) this.db.prepare("UPDATE cal_feeds SET ppa = ? WHERE id = ?").run(ppa ? 1 : 0, existing.id);
-      return { ...existing, ppa };
+      if (ppa !== undefined && existing.ppa !== ppa) this.db.prepare("UPDATE cal_feeds SET ppa = ? WHERE id = ?").run(ppa ? 1 : 0, existing.id);
+      return { ...existing, ppa: ppa ?? existing.ppa };
     }
+    const withPpa = ppa ?? (mine.length > 0 && mine.every((f) => f.ppa));
     const token = randomBytes(18).toString("base64url");
-    this.db.prepare("INSERT INTO cal_feeds (token, group_key, label, ppa, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(token, groupKey, label.trim(), ppa ? 1 : 0, createdBy, nowIso());
+    this.db
+      .prepare("INSERT INTO cal_feeds (token, group_key, label, ppa, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(token, groupKey, mine[0]?.label ?? label.replace(/\s+/g, " ").trim(), withPpa ? 1 : 0, createdBy, nowIso());
     return this.calFeedByToken(token)!;
   }
   /** Отозвать ссылки по номерам; сколько отозвано. */

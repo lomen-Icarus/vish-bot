@@ -195,12 +195,15 @@ export class ScheduleService {
     return this.ppaItems(group).filter((i) => i.date >= today);
   }
 
-  /** Пересдачи по отмеченным предметам (ключи subjectKey) как пары расписания за [from, to]. */
-  ppaLessons(group: LogicalGroup, keys: ReadonlySet<string> | readonly string[], from: LocalDate, to: LocalDate): Occurrence[] {
-    const set = keys instanceof Set ? keys : new Set(keys as readonly string[]);
-    if (!set.size) return [];
+  /**
+   * Пересдачи по отмеченным предметам (ключи subjectKey) как пары расписания
+   * за [from, to]; "all" — все пересдачи группы (календарь группы от админа).
+   */
+  ppaLessons(group: LogicalGroup, keys: ReadonlySet<string> | readonly string[] | "all", from: LocalDate, to: LocalDate): Occurrence[] {
+    const set = keys === "all" ? null : keys instanceof Set ? keys : new Set(keys as readonly string[]);
+    if (set && !set.size) return [];
     return this.ppaItems(group)
-      .filter((i) => i.date >= from && i.date <= to && set.has(subjectKey(i.subject)))
+      .filter((i) => i.date >= from && i.date <= to && (!set || set.has(subjectKey(i.subject))))
       .map((i) => ppaOccurrence(group.key, i, this.sessionFor(this.semesterFor(i.date))));
   }
 
