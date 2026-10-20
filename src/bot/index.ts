@@ -6,6 +6,7 @@ import { scheduleHandlers } from "./handlers/schedule.js";
 import { settingsHandlers } from "./handlers/settings.js";
 import { adminHandlers } from "./handlers/admin.js";
 import { freeTextSearch, miscHandlers } from "./handlers/misc.js";
+import { calFeedHandlers } from "./handlers/calFeeds.js";
 import { ppaHandlers } from "./handlers/ppa.js";
 import { hubHandlers } from "./handlers/hub.js";
 import { slidesHandlers } from "./handlers/slides.js";
@@ -128,6 +129,8 @@ export function createBot(deps: Deps): Bot<BotContext> {
   });
 
   bot.use(adminHandlers);
+  // Календари групп без привязки к человеку: /calfeeds (только админ).
+  bot.use(calFeedHandlers);
   bot.use(chatAdminHandlers);
   bot.use(recSlotsHandlers);
   // Режим преподавателя: только команда /prepod, кнопок нет.

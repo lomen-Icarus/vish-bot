@@ -172,6 +172,30 @@ interface UserRow {
   last_seen_at: string;
 }
 
+/** Подписка на календарь группы, выпущенная админом: ни к кому не привязана. */
+export interface CalFeed {
+  id: number;
+  token: string;
+  groupKey: string;
+  /** Для кого выпущена: «Петров, мероприятия». */
+  label: string;
+  createdBy: number;
+  createdAt: string;
+}
+
+interface CalFeedRow {
+  id: number;
+  token: string;
+  group_key: string;
+  label: string;
+  created_by: number;
+  created_at: string;
+}
+
+function rowToCalFeed(r: CalFeedRow): CalFeed {
+  return { id: r.id, token: r.token, groupKey: r.group_key, label: r.label, createdBy: r.created_by, createdAt: r.created_at };
+}
+
 function rowToUser(r: UserRow): User {
   let topics: string[] = [];
   try {
@@ -441,6 +465,36 @@ export class Repo {
     if (!token) return null;
     const row = this.db.prepare("SELECT * FROM users WHERE cal_token = ?").get(token) as UserRow | undefined;
     return row ? rowToUser(row) : null;
+  }
+  /** Ссылка группы, выпущенная админом; отозванная не находится. */
+  calFeedByToken(token: string): CalFeed | null {
+    if (!token) return null;
+    const row = this.db.prepare("SELECT * FROM cal_feeds WHERE token = ? AND revoked_at IS NULL").get(token) as CalFeedRow | undefined;
+    return row ? rowToCalFeed(row) : null;
+  }
+  /** Действующие ссылки групп: все или для одного получателя (без учёта регистра). */
+  calFeeds(label?: string): CalFeed[] {
+    const rows = (this.db.prepare("SELECT * FROM cal_feeds WHERE revoked_at IS NULL ORDER BY id").all() as CalFeedRow[]).map(rowToCalFeed);
+    // lower() в SQLite знает только латиницу: «Петров» и «петров» сравниваем здесь.
+    const want = label?.trim().toLowerCase();
+    return want ? rows.filter((f) => f.label.toLowerCase() === want) : rows;
+  }
+  /**
+   * Ссылка группы для получателя: уже есть — та же (повторный выпуск не плодит
+   * ссылок и не ломает выданные), нет — новая.
+   */
+  ensureCalFeed(groupKey: string, label: string, createdBy: number): CalFeed {
+    const existing = this.calFeeds(label).find((f) => f.groupKey === groupKey);
+    if (existing) return existing;
+    const token = randomBytes(18).toString("base64url");
+    this.db.prepare("INSERT INTO cal_feeds (token, group_key, label, created_by, created_at) VALUES (?, ?, ?, ?, ?)").run(token, groupKey, label.trim(), createdBy, nowIso());
+    return this.calFeedByToken(token)!;
+  }
+  /** Отозвать ссылки по номерам; сколько отозвано. */
+  revokeCalFeeds(ids: number[]): number {
+    let n = 0;
+    for (const id of ids) n += Number(this.db.prepare("UPDATE cal_feeds SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL").run(nowIso(), id).changes);
+    return n;
   }
   /** Returns the user's calendar token, minting one on first use. */
   ensureCalToken(id: number): string {
