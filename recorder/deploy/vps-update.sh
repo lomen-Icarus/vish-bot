@@ -57,6 +57,12 @@ else
   rm -rf "$DIR/app"
   mv "$DIR/app.new" "$DIR/app"
   rm -f "$ARCHIVE"
+  # Страница «Кворум» (setup-quorum.sh): если она заведена — свежие index.html
+  # и totals.json с каждым деплоем. Не вышло — записывалку это не останавливает.
+  if [ -f /etc/nginx/conf.d/vish-quorum.conf ] && [ -d "$DIR/app/deploy/quorum" ]; then
+    install -m 644 "$DIR/app/deploy/quorum/index.html" "$DIR/app/deploy/quorum/totals.json" /var/www/vish-quorum/quorum/ \
+      && echo "Страница «Кворум» обновлена" || echo "⚠️ Страница «Кворум» не обновилась (см. выше)" >&2
+  fi
 fi
 
 # Свои флаги docker run (например, --add-host, пока у домена бота лежит DNS) —

@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Парламент ВИШ</title>
+<meta name="description" content="Сколько студентов каждой группы ВИШ уже пользуются ботом расписания">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap">
+<style>
+/* Тёмно-синий фон ВИШ со световыми пятнами; стеклянная панель с полукругом и вторая — со списком групп по курсам */
+:root {
+  --navy: #023753;
+  --blue: #385e8a;
+  --cyan: #00a1e3;
+  --ice: #cdd7e2;
+  --ink: #ffffff;
+  --reg: #d9ead3;
+  --unreg: #f4cccc;
+  --glass: rgba(255, 255, 255, .075);
+  --glass-strong: rgba(255, 255, 255, .13);
+  --glass-edge: rgba(255, 255, 255, .22);
+  --glass-hi: rgba(255, 255, 255, .42);
+  --shadow: rgba(0, 12, 32, .55);
+  --font: "Montserrat", Arial, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  color: var(--ink);
+  font: 14px/1.4 var(--font);
+  min-height: 100vh;
+  background-color: var(--navy);
+  background-image:
+    radial-gradient(38% 42% at 14% 10%, rgba(0, 161, 227, .38), transparent 70%),
+    radial-gradient(34% 40% at 86% 22%, rgba(217, 234, 211, .20), transparent 70%),
+    radial-gradient(40% 46% at 78% 92%, rgba(244, 204, 204, .20), transparent 70%),
+    radial-gradient(46% 40% at 20% 88%, rgba(56, 94, 138, .85), transparent 75%),
+    linear-gradient(160deg, var(--navy) 0%, #0b4469 45%, var(--blue) 100%);
+}
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-block: max(40px, env(safe-area-inset-top, 0px)) max(64px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 24px;
+}
+header { display: grid; gap: 10px; max-width: 760px; }
+.overline { font-size: 12px; font-weight: 500; letter-spacing: .15em; text-transform: uppercase; color: var(--ice); }
+h1 { margin: 0; font-weight: 800; font-size: clamp(28px, 4.6vw, 48px); line-height: 1.05; text-wrap: balance; }
+.lede { margin: 0; color: var(--ice); font-size: 16px; line-height: 1.5; }
+.status { margin: 0; display: inline-flex; align-items: center; gap: 8px; color: var(--ice); font-size: 13px; font-variant-numeric: tabular-nums; }
+.status::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--reg); box-shadow: 0 0 0 3px rgba(217, 234, 211, .2); }
+.status.wait::before { background: var(--ice); box-shadow: none; }
+.status.err::before { background: var(--unreg); box-shadow: 0 0 0 3px rgba(244, 204, 204, .2); }
+
+.slab {
+  position: relative; isolation: isolate;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(26px) saturate(160%);
+  backdrop-filter: blur(26px) saturate(160%);
+  border: 1px solid var(--glass-edge);
+  border-radius: 32px;
+  box-shadow: inset 0 1px 0 var(--glass-hi), inset 0 -1px 0 rgba(255, 255, 255, .06), 0 40px 80px -30px var(--shadow);
+  overflow: hidden;
+}
+.slab::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(90% 55% at 0% 0%, rgba(255, 255, 255, .16), transparent 60%),
+    radial-gradient(60% 40% at 100% 100%, rgba(255, 255, 255, .06), transparent 70%);
+}
+.hemi { padding: 24px 12px 20px; display: grid; gap: 18px; }
+.chart svg { display: block; width: 100%; height: auto; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.pill {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 9px 16px 9px 12px; border-radius: 999px;
+  background: var(--glass-strong); border: 1px solid var(--glass-edge); box-shadow: inset 0 1px 0 var(--glass-hi);
+  font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.pill b { font-weight: 800; }
+.pill span { color: var(--ice); font-weight: 500; }
+.sw { width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .8), 0 0 0 1px rgba(255, 255, 255, .5); }
+.sw.reg { background: var(--reg); }
+.sw.unreg { background: var(--unreg); }
+.hint { text-align: center; color: var(--ice); font-size: 13px; margin: 0; }
+
+.tile { stroke: rgba(255, 255, 255, .75); stroke-width: .8; }
+.grp, .lbl { transition: opacity .25s ease; }
+.grp { cursor: pointer; }
+svg.focus .grp:not(.on) { opacity: .16; }
+svg.focus .lbl:not(.on) { opacity: .28; }
+.lbl-name { fill: var(--ink); font: 700 15px var(--font); }
+.lbl-num { fill: var(--ice); font: 500 15px var(--font); font-variant-numeric: tabular-nums; }
+.course-arc { fill: none; stroke: rgba(205, 215, 226, .45); stroke-width: 1.4; stroke-linecap: round; }
+.course-txt { fill: var(--ice); font: 600 13px var(--font); letter-spacing: .14em; text-transform: uppercase; }
+.c-over { fill: var(--ice); font: 600 15px var(--font); letter-spacing: .16em; text-transform: uppercase; }
+.c-big { fill: var(--ink); font: 800 132px var(--font); font-variant-numeric: tabular-nums; }
+.c-sub { fill: var(--ice); font: 500 26px var(--font); font-variant-numeric: tabular-nums; }
+.c-sub .strong { fill: var(--ink); font-weight: 700; }
+
+.ledger { padding: 24px; display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.course { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.course h2 {
+  margin: 0 0 6px; font-size: 13px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--ice);
+  display: flex; justify-content: space-between; gap: 8px;
+}
+.course h2 span { font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.row {
+  all: unset; box-sizing: border-box; cursor: pointer;
+  display: grid; gap: 7px; padding: 10px 12px; border-radius: 16px; border: 1px solid transparent;
+  transition: background .2s ease, border-color .2s ease;
+}
+.row:hover, .row.on, .row:focus-visible { background: var(--glass-strong); border-color: var(--glass-edge); box-shadow: inset 0 1px 0 var(--glass-hi); }
+.row:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.row-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.row-name { font-weight: 700; font-size: 15px; }
+.row-name small { font-weight: 500; color: var(--ice); font-size: 12px; margin-left: 4px; }
+.row-num { font-variant-numeric: tabular-nums; font-size: 14px; color: var(--ice); white-space: nowrap; }
+.row-num b { color: var(--ink); font-weight: 700; }
+.bar { height: 8px; border-radius: 999px; overflow: hidden; display: flex; background: var(--unreg); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7); }
+.bar i { display: block; height: 100%; background: var(--reg); box-shadow: inset -1px 0 0 rgba(2, 55, 83, .35); }
+.empty { grid-column: 1 / -1; color: var(--ice); text-align: center; margin: 0; padding: 12px; }
+
+footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; gap: 4px; }
+
+@media (max-width: 560px) {
+  .wrap { padding-block: max(24px, env(safe-area-inset-top, 0px)) max(48px, env(safe-area-inset-bottom, 0px)); }
+  .hemi { padding: 16px 4px; }
+  .ledger { padding: 16px 12px; }
+  .slab { border-radius: 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .grp, .lbl, .row { transition: none; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header>
+    <div class="overline">Высшая инженерная школа · бот расписания</div>
+    <h1>Кто из ВИШ уже в боте</h1>
+    <p class="lede" id="lede">Каждый квадрат — один студент. Зелёные уже пользуются ботом, красные пока нет.</p>
+    <p class="status wait" id="status">Загружаю цифры из бота…</p>
+  </header>
+
+  <section class="slab hemi" aria-label="Схема по группам">
+    <div class="chart"><svg id="chart" role="img" aria-label="Схема загружается"></svg></div>
+    <div class="legend">
+      <div class="pill"><i class="sw reg"></i><b id="lg-reg">—</b><span>в боте</span></div>
+      <div class="pill"><i class="sw unreg"></i><b id="lg-unreg">—</b><span>пока нет</span></div>
+    </div>
+    <p class="hint">Наведи или нажми на сектор, чтобы увидеть группу</p>
+  </section>
+
+  <section class="slab ledger" id="ledger" aria-label="Список групп">
+    <p class="empty">Список групп появится, как только бот ответит.</p>
+  </section>
+
+  <footer>
+    <span>Слева в каждом секторе — зарегистрированные в боте, справа — остальные студенты группы.</span>
+    <span>Если в бот зашло больше людей, чем в списке группы, считаем по боту.</span>
+  </footer>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  // Пути от корня: страница открыта как /quorum (без «/» в конце), и «live.json» ушёл бы в /live.json.
+  const LIVE_URL = "/quorum/live.json";      // nginx → бот, /quorum.json
+  const TOTALS_URL = "/quorum/totals.json";  // сколько студентов в группе по спискам
+  const REFRESH_MS = 60_000;
+
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("chart");
+  const ledger = document.getElementById("ledger");
+  const statusEl = document.getElementById("status");
+
+  const norm = (s) => String(s).toLowerCase().replace(/[^0-9a-zа-яё]/g, "");
+  const pct = (a, b) => (b ? Math.round(a / b * 100) : 0);
+  const plural = (n, one, few, many) => {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+    return many;
+  };
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const parseTitle = (title) => {
+    const m = /^ВИШ-(\d{1,2})-(\d{2})(?:\s*\((.+?)\))?\s*$/u.exec(String(title).trim());
+    return m ? { code: `ВИШ-${m[1]}-${m[2]}`, number: Number(m[1]), intake: Number(m[2]), sub: m[3] || "" } : { code: String(title), number: 99, intake: 99, sub: "" };
+  };
+  // Учебный год начинается 1 сентября: в октябре 2026 набор 2026 — 1 курс.
+  const courseOf = (intake, now = new Date()) => {
+    const start = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+    return Math.max(1, start - (2000 + intake) + 1);
+  };
+
+  /**
+   * Группы для схемы: порядок и «всего» — из списков, «в боте» — от бота.
+   * Всего = больше из двух: если зарегистрировалось больше, чем в списке, — 21/21, а не 21/20.
+   * Группа, которой нет в списках, но в которой кто-то уже есть в боте, тоже показывается.
+   */
+  function merge(totals, live) {
+    const liveBy = new Map((live.groups || []).map((g) => [norm(g.title), g]));
+    const seen = new Set();
+    const out = [];
+    const push = (title, total, l) => {
+      const p = parseTitle(title);
+      const reg = Math.max(0, Number(l && l.users) || 0);
+      const all = Math.max(Number(total) || 0, reg);
+      if (all <= 0) return;
+      out.push({ ...p, title, name: p.sub ? `${p.code} (${p.sub})` : p.code, short: p.code.replace("ВИШ-", "") + (p.sub ? " " + p.sub : ""), reg, total: all, course: (l && l.course) || courseOf(p.intake) });
+    };
+    for (const t of totals.groups || []) {
+      const k = norm(t.title);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      push(t.title, t.total, liveBy.get(k));
+    }
+    for (const l of live.groups || []) if (!seen.has(norm(l.title)) && l.users > 0) { seen.add(norm(l.title)); push(l.title, 0, l); }
+    out.sort((a, b) => a.intake - b.intake || a.number - b.number || a.title.localeCompare(b.title, "ru"));
+    out.forEach((g, i) => { g.idx = i; });
+    return out;
+  }
+
+  // ---------- Геометрия полукруга ----------
+  const largestRemainder = (weights, total) => {
+    const sw = weights.reduce((a, b) => a + b, 0);
+    const raw = weights.map((w) => (sw ? w / sw * total : 0));
+    const out = raw.map(Math.floor);
+    const left = total - out.reduce((a, b) => a + b, 0);
+    raw.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]).slice(0, left).forEach(([, i]) => out[i]++);
+    return out;
+  };
+
+  function layout(groups) {
+    const N = groups.reduce((s, g) => s + g.total, 0);
+    const G = groups.length;
+    const K = Math.max(3, Math.min(14, Math.round(Math.sqrt(N / 4.4)))); // рядов: на 354 места — 9
+    const GAPS = G - 1;                // по одному пустому месту между группами в каждом ряду
+    const SLOTS = N + GAPS * K;
+    // внутренний радиус — чтобы шаг по дуге ≈ шагу между рядами (квадратная сетка)
+    let r0 = 0.5, d = 0, lo = 0.2, hi = 0.92;
+    for (let it = 0; it < 60; it++) {
+      r0 = (lo + hi) / 2; d = (1 - r0) / (K - 1);
+      let tot = 0;
+      for (let i = 0; i < K; i++) tot += Math.PI * (r0 + i * d) / d + 1;
+      if (tot > SLOTS) hi = r0; else lo = r0;
+    }
+    const radii = Array.from({ length: K }, (_, i) => r0 + i * d);
+    const slots = largestRemainder(radii, SLOTS);
+    const seatsRow = slots.map((s) => s - GAPS);
+
+    // Каждая группа — две части подряд: в боте, затем остальные. Для каждой границы в каждом
+    // ряду — одна и та же доля мест, поэтому границы идут ровными лучами от центра.
+    const parts = groups.flatMap((g) => [g.reg, g.total - g.reg]);
+    const B = [new Array(K).fill(0)];
+    let cum = 0;
+    parts.forEach((size, c) => {
+      cum += size;
+      if (c === parts.length - 1) { B.push(seatsRow.slice()); return; }
+      B.push(largestRemainder(seatsRow, cum));
+    });
+    // монотонность: если округление сделало ряд «отрицательным», берём место у соседнего ряда
+    for (let c = 1; c < B.length - 1; c++) {
+      for (let i = 0; i < K; i++) {
+        while (B[c][i] < B[c - 1][i]) {
+          let j = -1, best = 0;
+          for (let k = 0; k < K; k++) {
+            const spare = B[c][k] - B[c - 1][k];
+            if (k !== i && spare > best) { best = spare; j = k; }
+          }
+          if (j < 0) break;
+          B[c][i]++; B[c][j]--;
+        }
+      }
+    }
+    const tiles = [];
+    for (let i = 0; i < K; i++) {
+      for (let g = 0; g < G; g++) {
+        for (let k = B[2 * g][i]; k < B[2 * g + 2][i]; k++) {
+          const th = Math.PI * (1 - (k + g) / (slots[i] - 1));
+          tiles.push({ g, row: i, th, reg: k < B[2 * g + 1][i], r: radii[i] });
+        }
+      }
+    }
+    const minPitch = Math.min(...radii.map((r, i) => Math.PI * r / (slots[i] - 1)));
+    return { N, K, r0, tiles, side: 0.8 * Math.min(d, minPitch) };
+  }
+
+  // ---------- Рисование ----------
+  const el = (tag, attrs, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+
+  let state = { groups: [], pinned: null, grpEls: [], lblEls: [], rowEls: [], setCenter: () => {} };
+
+  function setActive(title) {
+    const gi = title == null ? -1 : state.groups.findIndex((g) => g.title === title);
+    const on = gi >= 0;
+    svg.classList.toggle("focus", on);
+    state.grpEls.forEach((e, i) => e.classList.toggle("on", i === gi));
+    state.lblEls.forEach((e, i) => e.classList.toggle("on", i === gi));
+    state.rowEls.forEach((e, i) => e.classList.toggle("on", i === gi));
+    state.setCenter(on ? state.groups[gi] : null);
+  }
+  function bind(node, title) {
+    node.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") setActive(title); });
+    node.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") setActive(state.pinned); });
+    node.addEventListener("click", () => { state.pinned = state.pinned === title ? null : title; setActive(state.pinned); });
+  }
+
+  function render(groups) {
+    const R = 500;
+    const L = layout(groups);
+    const N = L.N, REG = groups.reduce((s, g) => s + g.reg, 0);
+    const side = L.side * R, h = side / 2, rx = side * 0.24;
+    svg.textContent = "";
+    const W = R + h + 14 + 150;
+    svg.setAttribute("viewBox", `${-W} ${-W} ${2 * W} ${W + 26}`);
+    svg.setAttribute("aria-label", `${REG} из ${N} студентов ВИШ в боте; схема по ${groups.length} группам`);
+
+    const defs = el("defs", {}, svg);
+    const grad = (id, light, base, deep) => {
+      const lg = el("linearGradient", { id, x1: "0", y1: "0", x2: "0", y2: "1" }, defs);
+      el("stop", { offset: "0", "stop-color": light }, lg);
+      el("stop", { offset: ".5", "stop-color": base }, lg);
+      el("stop", { offset: "1", "stop-color": deep }, lg);
+    };
+    grad("gReg", "#f6fbf3", "#d9ead3", "#bfd8b5");
+    grad("gUnreg", "#fdf0f0", "#f4cccc", "#e3b0b0");
+    const sh = el("filter", { id: "lift", x: "-20%", y: "-20%", width: "140%", height: "140%" }, defs);
+    el("feDropShadow", { dx: "0", dy: "3", stdDeviation: "3", "flood-color": "#00142a", "flood-opacity": ".45" }, sh);
+
+    const tileLayer = el("g", { filter: "url(#lift)" }, svg);
+    const grpEls = groups.map((g) => el("g", { class: "grp" }, tileLayer));
+    const byGroup = groups.map(() => []);
+    for (const t of L.tiles) {
+      byGroup[t.g].push(t);
+      const x = R * t.r * Math.cos(t.th), y = -R * t.r * Math.sin(t.th);
+      el("rect", {
+        class: "tile", x: -h, y: -h, width: side, height: side, rx, ry: rx,
+        fill: t.reg ? "url(#gReg)" : "url(#gUnreg)",
+        transform: `translate(${x.toFixed(2)} ${y.toFixed(2)}) rotate(${(90 - t.th * 180 / Math.PI).toFixed(2)})`,
+      }, grpEls[t.g]);
+    }
+
+    // подписи групп по радиусу
+    const lblLayer = el("g", {}, svg);
+    const lblEls = groups.map((g, gi) => {
+      const arr = byGroup[gi];
+      const lg = el("g", { class: "lbl" }, lblLayer);
+      if (!arr.length) return lg;
+      const thC = (Math.max(...arr.map((t) => t.th)) + Math.min(...arr.map((t) => t.th))) / 2;
+      const rho = R + h + 14, deg = thC * 180 / Math.PI, left = thC > Math.PI / 2;
+      const tx = el("text", {
+        "dominant-baseline": "central", "text-anchor": left ? "end" : "start",
+        transform: `translate(${(rho * Math.cos(thC)).toFixed(2)} ${(-rho * Math.sin(thC)).toFixed(2)}) rotate(${(left ? 180 - deg : -deg).toFixed(2)})`,
+      }, lg);
+      const parts = left ? [["lbl-num", `${g.reg}/${g.total}  `], ["lbl-name", g.short]] : [["lbl-name", g.short], ["lbl-num", `  ${g.reg}/${g.total}`]];
+      for (const [cls, txt] of parts) el("tspan", { class: cls }, tx).textContent = txt;
+      return lg;
+    });
+
+    // дуги курсов внутри полукруга
+    const courses = [...new Set(groups.map((g) => g.course))].sort((a, b) => b - a);
+    for (const c of courses) {
+      const inner = L.tiles.filter((t) => t.row === 0 && groups[t.g].course === c);
+      if (!inner.length) continue;
+      const a1 = Math.max(...inner.map((t) => t.th)) + 0.012, a2 = Math.min(...inner.map((t) => t.th)) - 0.012;
+      const arc = (rr) => `M ${(rr * Math.cos(a1)).toFixed(2)} ${(-rr * Math.sin(a1)).toFixed(2)} A ${rr} ${rr} 0 0 1 ${(rr * Math.cos(a2)).toFixed(2)} ${(-rr * Math.sin(a2)).toFixed(2)}`;
+      el("path", { class: "course-arc", d: arc(R * L.r0 - h - 16) }, svg);
+      el("path", { id: `course${c}t`, d: arc(R * L.r0 - h - 30), fill: "none" }, defs);
+      const tp = el("textPath", { href: `#course${c}t`, startOffset: "50%", "text-anchor": "middle" }, el("text", { class: "course-txt" }, svg));
+      tp.textContent = `${c} курс`;
+    }
+
+    // центр
+    const cG = el("g", { "text-anchor": "middle" }, svg);
+    const cOver = el("text", { class: "c-over", x: 0, y: -196 }, cG);
+    const cBig = el("text", { class: "c-big", x: 0, y: -62 }, cG);
+    const cSub = el("text", { class: "c-sub", x: 0, y: -14 }, cG);
+    const setCenter = (g) => {
+      const reg = g ? g.reg : REG, tot = g ? g.total : N;
+      cOver.textContent = g ? `${g.name} · ${g.course} курс` : "Уже в боте";
+      cBig.textContent = `${pct(reg, tot)}%`;
+      cSub.textContent = "";
+      el("tspan", { class: "strong" }, cSub).textContent = reg;
+      el("tspan", {}, cSub).textContent = ` из ${tot} ${plural(tot, "студента", "студентов", "студентов")}`;
+    };
+
+    document.getElementById("lg-reg").textContent = REG;
+    document.getElementById("lg-unreg").textContent = N - REG;
+    document.getElementById("lede").textContent =
+      `${groups.length} ${plural(groups.length, "группа", "группы", "групп")}, ${N} ${plural(N, "студент", "студента", "студентов")}. Каждый квадрат — один человек.`;
+
+    // список по курсам
+    ledger.textContent = "";
+    const rowEls = [];
+    for (const c of [...courses].reverse()) {
+      const gs = groups.filter((g) => g.course === c);
+      const sec = document.createElement("div");
+      sec.className = "course";
+      sec.innerHTML = `<h2>${c} курс <span>${gs.reduce((s, g) => s + g.reg, 0)} / ${gs.reduce((s, g) => s + g.total, 0)}</span></h2>`;
+      for (const g of gs) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "row";
+        b.setAttribute("aria-label", `${g.name}: ${g.reg} из ${g.total} в боте`);
+        b.innerHTML = `
+          <div class="row-top">
+            <div class="row-name">${esc(g.code)}${g.sub ? `<small>${esc(g.sub)}</small>` : ""}</div>
+            <div class="row-num"><b>${g.reg}</b> / ${g.total} · ${pct(g.reg, g.total)}%</div>
+          </div>
+          <div class="bar"><i style="width:${(g.reg / g.total * 100).toFixed(2)}%"></i></div>`;
+        sec.appendChild(b);
+        rowEls[g.idx] = b;
+      }
+      ledger.appendChild(sec);
+    }
+
+    state = { groups, pinned: state.pinned, grpEls, lblEls, rowEls, setCenter };
+    groups.forEach((g, i) => {
+      bind(grpEls[i], g.title);
+      bind(lblEls[i], g.title);
+      bind(rowEls[i], g.title);
+      rowEls[i].addEventListener("focus", () => setActive(g.title));
+      rowEls[i].addEventListener("blur", () => setActive(state.pinned));
+    });
+    if (!groups.some((g) => g.title === state.pinned)) state.pinned = null;
+    setActive(state.pinned);
+  }
+
+  // ---------- Данные ----------
+  let totals = null, lastSig = "";
+  const hhmm = (iso) => new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow" });
+  const getJson = async (url) => {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    return r.json();
+  };
+
+  async function refresh() {
+    try {
+      if (!totals) totals = await getJson(TOTALS_URL);
+      const live = await getJson(LIVE_URL);
+      const groups = merge(totals, live);
+      const sig = JSON.stringify(groups.map((g) => [g.title, g.reg, g.total, g.course]));
+      if (groups.length && sig !== lastSig) { render(groups); lastSig = sig; }
+      statusEl.className = "status";
+      statusEl.textContent = `Обновлено в ${hhmm(live.updatedAt || Date.now())} по Москве · цифры обновляются сами раз в минуту`;
+    } catch {
+      statusEl.className = "status err";
+      statusEl.textContent = lastSig ? "Бот сейчас не отвечает — на схеме последние полученные цифры" : "Бот сейчас не отвечает — цифры появятся, как только он ответит";
+    }
+  }
+  refresh();
+  setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+})();
+</script>
+</body>
+</html>
