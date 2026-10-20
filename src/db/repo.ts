@@ -652,6 +652,18 @@ export class Repo {
       .all() as Array<{ groupKey: string; users: number }>;
   }
 
+  /**
+   * Студентов в боте по группам — для открытой страницы «Кворум»: как
+   * groupPopulation, но без преподавателей в режиме преподавателя (группа у
+   * них в профиле могла остаться от выбора до /prepod).
+   */
+  studentsPerGroup(): Map<string, number> {
+    const rows = this.db
+      .prepare(`SELECT group_key AS groupKey, COUNT(*) AS users FROM users WHERE group_key IS NOT NULL AND blocked = 0 AND teacher_mode = 0 GROUP BY group_key`)
+      .all() as Array<{ groupKey: string; users: number }>;
+    return new Map(rows.map((r) => [r.groupKey, r.users]));
+  }
+
   /** Users that want change notifications for a logical group (primary group or watch list). */
   usersForGroupChanges(groupKey: string, session: boolean): User[] {
     const rows = this.db

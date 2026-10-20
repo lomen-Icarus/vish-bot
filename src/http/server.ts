@@ -14,6 +14,7 @@ import { applyRecorderReport, GENERAL_SLOT_TITLE, recorderTasks, type RecReport,
 import { tmaContext, tmaSubmit } from "../bot/tma.js";
 import { verifyInitData } from "./initData.js";
 import { TMA_PAGE } from "./tmaPage.js";
+import { quorumSnapshot } from "./quorum.js";
 import { logger } from "../logger.js";
 
 /** Сравнение секрета за постоянное время: по задержке ответа токен не подобрать. */
@@ -90,6 +91,8 @@ function readBody(req: IncomingMessage, limit: number, drain = false): Promise<B
 }
 
 const FEED_CACHE_MS = 5 * 60_000;
+/** Страница «Кворум» обновляется раз в минуту; чаще базу не трогаем, сколько бы её ни открывали. */
+const QUORUM_CACHE_MS = 30_000;
 /** A semester feed is ~100 KB, so the cache stays small on a 2 GB container. */
 const MAX_CACHE_ENTRIES = 50;
 
@@ -99,6 +102,7 @@ export function calendarPath(token: string): string {
 
 export function createHttpServer(deps: HttpDeps): Server {
   const cache = new Map<string, { at: number; body: Buffer }>();
+  let quorum: { at: number; body: string } | null = null;
 
   type FeedResult = { status: number; body: Buffer; type: string };
   const notFound = (why: string): FeedResult => ({ status: 404, body: Buffer.from(why), type: "text/plain; charset=utf-8" });
@@ -359,6 +363,13 @@ export function createHttpServer(deps: HttpDeps): Server {
       const slides = deps.slidesToken ? { decks: deps.repo.slideDeckCount(), last: last ? { date: last.date, subject: last.subject, slides: last.slides, receivedAt: last.createdAt } : null } : null;
       const rec = deps.slidesToken ? { lastReportAt: deps.repo.recorderMarkValue("last_report_at"), portal: deps.repo.recorderMarkValue("portal"), slots: deps.repo.recSlots().filter((s) => s.groupTitle !== GENERAL_SLOT_TITLE).length } : null;
       send(200, JSON.stringify({ ok: true, lastPoll: p?.finishedAt ?? null, groups: deps.service.groups().length, slides, recorder: rec }), "application/json; charset=utf-8", { "Cache-Control": "no-store" });
+      return;
+    }
+    // Открытые числа для страницы «Кворум»: группы и сколько их студентов в боте.
+    if (url.pathname === "/quorum.json") {
+      const now = Date.now();
+      if (!quorum || now - quorum.at >= QUORUM_CACHE_MS) quorum = { at: now, body: JSON.stringify(quorumSnapshot(deps.service.groups(), deps.repo.studentsPerGroup(), new Date(now))) };
+      send(200, quorum.body, "application/json; charset=utf-8", { "Cache-Control": "public, max-age=30", "Access-Control-Allow-Origin": "*" });
       return;
     }
     if (url.pathname === "/rec/sync") {
