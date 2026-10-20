@@ -100,24 +100,45 @@ export function calendarPath(token: string): string {
 export function createHttpServer(deps: HttpDeps): Server {
   const cache = new Map<string, { at: number; body: Buffer }>();
 
-  const feed = (token: string): { status: number; body: Buffer; type: string } => {
-    // A user who blocked the bot in Telegram still keeps their calendar subscription.
-    const user = deps.repo.userByCalToken(token);
-    if (!user) return { status: 404, body: Buffer.from("not found"), type: "text/plain; charset=utf-8" };
-    const group = user.groupKey ? deps.service.group(user.groupKey) : null;
-    if (!group) return { status: 404, body: Buffer.from("group not chosen"), type: "text/plain; charset=utf-8" };
-    // Cache key changes whenever the user's settings or the portal data change, so a fresh feed is never stale.
-    const key = [token, group.key, user.subgroup ?? "", user.calAlarmMin ?? "", deps.repo.lastPollRun()?.finishedAt ?? ""].join("|");
+  type FeedResult = { status: number; body: Buffer; type: string };
+  const notFound = (why: string): FeedResult => ({ status: 404, body: Buffer.from(why), type: "text/plain; charset=utf-8" });
+
+  /** Лента из кеша или собранная заново; ключ меняется вместе с настройками и данными портала. */
+  const cached = (token: string, key: string, build: () => string): FeedResult => {
     const now = Date.now();
     for (const [k, v] of cache) if (now - v.at >= FEED_CACHE_MS) cache.delete(k);
     const hit = cache.get(key);
     if (hit) return { status: 200, body: hit.body, type: "text/calendar; charset=utf-8" };
-    const { ics } = groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H", stableSequence: true, ppaDebts: deps.repo.ppaDebts(user.id, group.key) });
+    const body = Buffer.from(build(), "utf8");
     for (const k of cache.keys()) if (k.startsWith(`${token}|`)) cache.delete(k);
     if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
-    const body = Buffer.from(ics, "utf8");
     cache.set(key, { at: now, body });
     return { status: 200, body, type: "text/calendar; charset=utf-8" };
+  };
+
+  /**
+   * Ссылка группы от админа (cal_feeds): расписание группы с сессией — все
+   * подгруппы, без напоминаний; пересдачи — все пересдачи группы, если ссылку
+   * выпустили «+ппа», а не чьи-то отмеченные. Ни от чьих настроек в боте не зависит.
+   */
+  const groupFeed = (token: string): FeedResult | null => {
+    const f = deps.repo.calFeedByToken(token);
+    if (!f) return null;
+    const group = deps.service.group(f.groupKey);
+    if (!group) return notFound("group not found");
+    const key = [token, group.key, f.ppa ? "feed+ppa" : "feed", deps.repo.lastPollRun()?.finishedAt ?? ""].join("|");
+    return cached(token, key, () => groupCalendar(deps.service, group, { subgroup: null, alarmMinutes: null, refreshInterval: "PT1H", stableSequence: true, allPpa: f.ppa }).ics);
+  };
+
+  const feed = (token: string): FeedResult => {
+    // A user who blocked the bot in Telegram still keeps their calendar subscription.
+    const user = deps.repo.userByCalToken(token);
+    if (!user) return groupFeed(token) ?? notFound("not found");
+    const group = user.groupKey ? deps.service.group(user.groupKey) : null;
+    if (!group) return notFound("group not chosen");
+    // Cache key changes whenever the user's settings or the portal data change, so a fresh feed is never stale.
+    const key = [token, group.key, user.subgroup ?? "", user.calAlarmMin ?? "", deps.repo.lastPollRun()?.finishedAt ?? ""].join("|");
+    return cached(token, key, () => groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H", stableSequence: true, ppaDebts: deps.repo.ppaDebts(user.id, group.key) }).ics);
   };
 
   const slidesDir = (): string => deps.slidesDir ?? "./data/slides";
