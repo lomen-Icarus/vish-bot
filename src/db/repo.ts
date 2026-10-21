@@ -457,6 +457,23 @@ export class Repo {
     this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
   }
 
+  // ---------- МАКС: внутренние uid ----------
+  /** uid человека из МАКС (выдаётся при первом обращении, дальше тот же). */
+  maxUid(maxId: number, base: number): number {
+    const row = this.db.prepare("SELECT uid FROM max_users WHERE max_id = ?").get(maxId) as { uid: number } | undefined;
+    if (row) return row.uid;
+    const last = this.db.prepare("SELECT MAX(uid) AS uid FROM max_users").get() as { uid: number | null };
+    const uid = Math.max(last.uid ?? base, base) + 1;
+    this.db.prepare("INSERT INTO max_users (uid, max_id, created_at) VALUES (?, ?, ?)").run(uid, maxId, nowIso());
+    return uid;
+  }
+
+  /** id в МАКС по внутреннему uid; null — такого человека бот не знает. */
+  maxIdOf(uid: number): number | null {
+    const row = this.db.prepare("SELECT max_id AS maxId FROM max_users WHERE uid = ?").get(uid) as { maxId: number } | undefined;
+    return row?.maxId ?? null;
+  }
+
   // ---------- users ----------
   getUser(id: number): User | null {
     const row = this.db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;

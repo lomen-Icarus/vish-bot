@@ -523,4 +523,14 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX cal_feeds_label ON cal_feeds (label);
   `,
+  // Люди из мессенджера МАКС (src/max/): у них свой id, а весь бот живёт на
+  // id Telegram. Каждому выдаётся внутренний uid от 2^52 — Telegram обещает id
+  // не длиннее 52 бит, так что с его чатами uid не пересечётся никогда.
+  `
+  CREATE TABLE max_users (
+    uid INTEGER PRIMARY KEY,
+    max_id INTEGER NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];

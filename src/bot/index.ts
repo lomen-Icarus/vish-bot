@@ -34,6 +34,9 @@ const PANEL_PREFIXES = new Set(["hub", "more"]);
 
 export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
+  // Вызовы к людям из МАКС уходят в МАКС (src/max/). Первым, то есть ближе всех
+  // к сети: autoRetry и меню снаружи работают и для них.
+  if (deps.max) bot.api.config.use(deps.max.transformer());
   bot.api.config.use(autoRetry({ maxRetryAttempts: 3, maxDelaySeconds: 30 }));
 
   // Меню человека — с первым его сообщением, если поменялось (menuRefresh.ts).
@@ -63,6 +66,9 @@ export function createBot(deps: Deps): Bot<BotContext> {
     ctx.isAdmin = deps.config.ADMIN_IDS.includes(from.id);
     await next();
   });
+
+  // Рассылки и ответы поддержки копируют сообщения Telegram — людям из МАКС мост пересоздаёт их по снимку.
+  if (deps.max) bot.use(deps.max.snapshotMiddleware());
 
   // News sources (channels / chats) are handled before the private-chat guard.
   bot.use(newsHandlers);
