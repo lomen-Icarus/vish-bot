@@ -13,6 +13,7 @@ import type { Server } from "node:http";
 import type { ChatService } from "../chat/service.js";
 import type { PersonalReplies } from "../chat/personal.js";
 import type { PublicUrl } from "../http/publicUrl.js";
+import type { MaxBridge } from "../max/bridge.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
@@ -82,6 +83,8 @@ export interface Deps {
   botUsername: string | null;
   pending: Map<number, PendingState>;
   startedAt: Date;
+  /** Мост в мессенджер МАКС (MAX_BOT_TOKEN); null — бот только в Telegram. */
+  max?: MaxBridge | null;
 }
 
 export interface BotContextFlavor {

@@ -83,6 +83,11 @@ const schema = z.object({
   PORTAL_PASSWORD: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   /** Telegram channel/chat ids whose posts are relayed to topic subscribers by hashtag. */
   NEWS_CHANNEL_IDS: idList,
+  /**
+   * Токен бота в мессенджере МАКС (business.max.ru → Чат-боты → ⋮ → Настройки).
+   * Задан — тот же бот работает и в МАКС (src/max/); пусто — только Telegram.
+   */
+  MAX_BOT_TOKEN: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   /** VK service token (app "service key") for wall.get on VK sources. */
   VK_SERVICE_TOKEN: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   NEWS_SCAN_CRON: z.string().default("30 10 * * *"),

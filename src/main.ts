@@ -27,6 +27,8 @@ import { PersonalReplies } from "./chat/personal.js";
 import { ChatService } from "./chat/service.js";
 import { importLegacyCanned, seedDefaultQa } from "./chat/importCanned.js";
 import { notifyRecorderEffect } from "./bot/recNotify.js";
+import { MaxBridge } from "./max/bridge.js";
+import { menuFor } from "./bot/keyboards.js";
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -121,7 +123,12 @@ async function main(): Promise<void> {
   // Личные ответы «ник;частота;сообщение» — тип рядом со сценарием, только при болталке.
   const personal = chat ? new PersonalReplies(config.CHAT_PERSONAL_DB) : null;
 
-  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, known, teacherRegistry, chat, personal, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date() };
+  // Тот же бот в мессенджере МАКС: люди оттуда для бота — те же пользователи (src/max/).
+  const max = config.MAX_BOT_TOKEN
+    ? new MaxBridge({ token: config.MAX_BOT_TOKEN, proxyUrl: config.HTTPS_PROXY, repo, botToken: config.BOT_TOKEN, newsChatIds: config.NEWS_CHANNEL_IDS, menuFor })
+    : null;
+  if (!max) logger.info("MAX bridge disabled: MAX_BOT_TOKEN not set");
+  const deps: Deps = { config, repo, service, renderer, ask, teachers, webinars, students, known, teacherRegistry, chat, personal, news: null, http: null, inline: false, botUsername: null, pending: new Map(), startedAt: new Date(), max };
   const bot = createBot(deps);
   await bot.init();
   chat?.setBotUsername(bot.botInfo.username ?? null);
@@ -172,6 +179,8 @@ async function main(): Promise<void> {
 
   const runner = run(bot, { runner: { fetch: { allowed_updates: ["message", "callback_query", "inline_query", "my_chat_member", "channel_post"] } } });
   logger.info("polling Telegram for updates");
+  // МАКС не должен ронять Telegram: не пустил токен — бот работает дальше без моста.
+  if (max) await max.start(bot).catch((err: unknown) => logger.error({ err: String(err).slice(0, 200) }, "MAX bridge not started"));
 
   // Warm up: first portal poll right away (does not block Telegram handling).
   void scheduler.pollNow();
@@ -179,6 +188,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "shutting down");
     scheduler.stop();
+    max?.stop();
     renderer?.stop();
     http?.close();
     if (runner.isRunning()) await runner.stop();
