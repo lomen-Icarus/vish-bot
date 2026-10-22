@@ -73,6 +73,28 @@ h1 { margin: 0; font-weight: 800; font-size: clamp(28px, 4.6vw, 48px); line-heig
     radial-gradient(60% 40% at 100% 100%, rgba(255, 255, 255, .06), transparent 70%);
 }
 .hemi { padding: 24px 12px 20px; display: grid; gap: 18px; }
+
+/* Переключатель «Telegram | МАКС»: в левом верхнем углу панели со схемой */
+.pf {
+  justify-self: start; margin-left: 4px;
+  display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px;
+  background: rgba(0, 20, 42, .28); border: 1px solid var(--glass-edge); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12);
+}
+.pf-btn {
+  all: unset; box-sizing: border-box; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 40px; padding: 8px 16px; border-radius: 999px;
+  font: 600 14px/1 var(--font); color: var(--ice);
+  transition: background .2s ease, color .2s ease;
+}
+.pf-btn b { font-weight: 800; font-variant-numeric: tabular-nums; opacity: .8; }
+.pf-btn:hover { color: var(--ink); background: rgba(255, 255, 255, .08); }
+.pf-btn[aria-pressed="true"] { color: var(--navy); background: var(--ink); box-shadow: 0 4px 14px -6px var(--shadow); }
+.pf-btn[aria-pressed="true"] b { opacity: 1; }
+.pf-btn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+@media (min-width: 700px) {
+  .pf { position: absolute; top: 20px; left: 20px; margin: 0; z-index: 1; }
+}
 .chart svg { display: block; width: 100%; height: auto; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
@@ -167,7 +189,7 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
   .slab { border-radius: 24px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .grp, .lbl, .row, .snd { transition: none; }
+  .grp, .lbl, .row, .snd, .pf-btn { transition: none; }
 }
 </style>
 </head>
@@ -189,6 +211,10 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
   </header>
 
   <section class="slab hemi" aria-label="Схема по группам">
+    <div class="pf" role="group" aria-label="Чей парламент показать">
+      <button type="button" class="pf-btn" data-p="tg" aria-pressed="true">Telegram <b id="pf-tg">—</b></button>
+      <button type="button" class="pf-btn" data-p="max" aria-pressed="false">МАКС <b id="pf-max">—</b></button>
+    </div>
     <div class="chart"><svg id="chart" role="img" aria-label="Схема загружается"></svg></div>
     <div class="legend">
       <div class="pill"><i class="sw reg"></i><b id="lg-reg">—</b><span>в боте</span></div>
@@ -204,6 +230,7 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
   <footer>
     <span>Слева в каждом секторе — зарегистрированные в боте, справа — остальные студенты группы.</span>
     <span>Если в бот зашло больше людей, чем в списке группы, считаем по боту.</span>
+    <span>Telegram и МАКС считаются отдельно: кто есть в обоих, иначе попал бы в счёт дважды.</span>
   </footer>
 </main>
 
@@ -214,6 +241,13 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
   const LIVE_URL = "/quorum/live.json";      // nginx → бот, /quorum.json
   const TOTALS_URL = "/quorum/totals.json";  // сколько студентов в группе по спискам
   const REFRESH_MS = 60_000;
+
+  // Какой «парламент» показываем: выбор из ссылки (#max) или прошлый, иначе Telegram.
+  const PLATFORMS = { tg: "Telegram", max: "МАКС" };
+  const PLATFORM_KEY = "vish-quorum-platform";
+  const savedPlatform = () => { try { return localStorage.getItem(PLATFORM_KEY); } catch { return null; } };
+  let platform = [location.hash.slice(1), savedPlatform()].find((p) => Object.hasOwn(PLATFORMS, p || "")) || "tg";
+  const showPlatform = () => document.querySelectorAll(".pf-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.p === platform)));
 
   const NS = "http://www.w3.org/2000/svg";
   const svg = document.getElementById("chart");
@@ -244,13 +278,15 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
    * Всего = больше из двух: если зарегистрировалось больше, чем в списке, — 21/21, а не 21/20.
    * Группа, которой нет в списках, но в которой кто-то уже есть в боте, тоже показывается.
    */
-  function merge(totals, live) {
+  // Telegram и МАКС — отдельно: человек в обоих — две записи в боте. Старый бот присылал одно users (= Telegram).
+  const regOf = (l, platform) => Math.max(0, Number(l && (platform === "max" ? l.max : l.tg ?? l.users)) || 0);
+  function merge(totals, live, platform) {
     const liveBy = new Map((live.groups || []).map((g) => [norm(g.title), g]));
     const seen = new Set();
     const out = [];
     const push = (title, total, l) => {
       const p = parseTitle(title);
-      const reg = Math.max(0, Number(l && l.users) || 0);
+      const reg = regOf(l, platform);
       const all = Math.max(Number(total) || 0, reg);
       if (all <= 0) return;
       out.push({ ...p, title, name: p.sub ? `${p.code} (${p.sub})` : p.code, short: p.code.replace("ВИШ-", "") + (p.sub ? " " + p.sub : ""), reg, total: all, course: (l && l.course) || courseOf(p.intake) });
@@ -261,7 +297,7 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
       seen.add(k);
       push(t.title, t.total, liveBy.get(k));
     }
-    for (const l of live.groups || []) if (!seen.has(norm(l.title)) && l.users > 0) { seen.add(norm(l.title)); push(l.title, 0, l); }
+    for (const l of live.groups || []) if (!seen.has(norm(l.title))) { seen.add(norm(l.title)); push(l.title, 0, l); }
     out.sort((a, b) => a.intake - b.intake || a.number - b.number || a.title.localeCompare(b.title, "ru"));
     out.forEach((g, i) => { g.idx = i; });
     return out;
@@ -365,7 +401,7 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
     svg.textContent = "";
     const W = R + h + 14 + 150;
     svg.setAttribute("viewBox", `${-W} ${-W} ${2 * W} ${W + 26}`);
-    svg.setAttribute("aria-label", `${REG} из ${N} студентов ВИШ в боте; схема по ${groups.length} группам`);
+    svg.setAttribute("aria-label", `${REG} из ${N} студентов ВИШ в боте в ${PLATFORMS[platform]}; схема по ${groups.length} группам`);
 
     const defs = el("defs", {}, svg);
     const grad = (id, light, base, deep) => {
@@ -429,7 +465,7 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
     const cSub = el("text", { class: "c-sub", x: 0, y: -14 }, cG);
     const setCenter = (g) => {
       const reg = g ? g.reg : REG, tot = g ? g.total : N;
-      cOver.textContent = g ? `${g.name} · ${g.course} курс` : "Уже в боте";
+      cOver.textContent = g ? `${g.name} · ${g.course} курс` : `Уже в боте · ${PLATFORMS[platform]}`;
       cBig.textContent = `${pct(reg, tot)}%`;
       cSub.textContent = "";
       el("tspan", { class: "strong" }, cSub).textContent = reg;
@@ -478,7 +514,7 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
   }
 
   // ---------- Данные ----------
-  let totals = null, lastSig = "";
+  let totals = null, live = null, lastSig = "";
   const hhmm = (iso) => new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Moscow" });
   const getJson = async (url) => {
     const r = await fetch(url, { cache: "no-store" });
@@ -486,13 +522,36 @@ footer { color: var(--ice); font-size: 12px; text-align: center; display: grid; 
     return r.json();
   };
 
+  // Схема и счётчики в переключателе — по последним цифрам бота; перерисовка только если что-то изменилось.
+  function draw() {
+    if (!totals || !live) return;
+    for (const p of Object.keys(PLATFORMS)) {
+      document.getElementById(`pf-${p}`).textContent = merge(totals, live, p).reduce((s, g) => s + g.reg, 0);
+    }
+    const groups = merge(totals, live, platform);
+    const sig = JSON.stringify([platform, groups.map((g) => [g.title, g.reg, g.total, g.course])]);
+    if (groups.length && sig !== lastSig) { render(groups); lastSig = sig; }
+  }
+
+  const setPlatform = (p) => {
+    platform = p;
+    try { localStorage.setItem(PLATFORM_KEY, platform); } catch {}
+    history.replaceState(null, "", `#${platform}`);
+    showPlatform();
+    draw();
+  };
+  document.querySelectorAll(".pf-btn").forEach((b) => b.addEventListener("click", () => setPlatform(b.dataset.p)));
+  addEventListener("hashchange", () => {
+    const p = location.hash.slice(1);
+    if (Object.hasOwn(PLATFORMS, p) && p !== platform) setPlatform(p);
+  });
+  showPlatform();
+
   async function refresh() {
     try {
       if (!totals) totals = await getJson(TOTALS_URL);
-      const live = await getJson(LIVE_URL);
-      const groups = merge(totals, live);
-      const sig = JSON.stringify(groups.map((g) => [g.title, g.reg, g.total, g.course]));
-      if (groups.length && sig !== lastSig) { render(groups); lastSig = sig; }
+      live = await getJson(LIVE_URL);
+      draw();
       statusEl.className = "status";
       statusEl.textContent = `Обновлено в ${hhmm(live.updatedAt || Date.now())} по Москве · цифры обновляются сами раз в минуту`;
     } catch {

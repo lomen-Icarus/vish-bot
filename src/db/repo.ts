@@ -11,6 +11,9 @@ import type { TeacherView } from "../schedule/format.js";
 export type ScheduleFormat = "text" | "image" | "both";
 export type { TeacherView };
 
+/** 1 — человек пришёл из МАКС (у него uid моста, см. max_users), 0 — из Telegram. */
+const IS_MAX = "(CASE WHEN id IN (SELECT uid FROM max_users) THEN 1 ELSE 0 END)";
+
 export interface NewsSource {
   id: number;
   kind: "tg" | "vk" | "web";
@@ -663,22 +666,46 @@ export class Repo {
     return { total: r.total, active: r.active ?? 0, withGroup: r.withGroup ?? 0, customMenu: r.customMenu ?? 0 };
   }
 
-  groupPopulation(): Array<{ groupKey: string; users: number }> {
+  /**
+   * Пользователи отдельно Telegram и МАКС: один человек в обоих — две записи,
+   * которые не связать, поэтому вместе их не складываем.
+   */
+  countUsersByPlatform(): Record<"tg" | "max", { total: number; active: number; withGroup: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT ${IS_MAX} AS isMax, COUNT(*) AS total, SUM(CASE WHEN blocked = 0 THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN group_key IS NOT NULL AND blocked = 0 THEN 1 ELSE 0 END) AS withGroup
+         FROM users GROUP BY isMax`,
+      )
+      .all() as Array<{ isMax: number; total: number; active: number | null; withGroup: number | null }>;
+    const out = { tg: { total: 0, active: 0, withGroup: 0 }, max: { total: 0, active: 0, withGroup: 0 } };
+    for (const r of rows) out[r.isMax ? "max" : "tg"] = { total: r.total, active: r.active ?? 0, withGroup: r.withGroup ?? 0 };
+    return out;
+  }
+
+  groupPopulation(): Array<{ groupKey: string; tg: number; max: number }> {
     return this.db
-      .prepare(`SELECT group_key AS groupKey, COUNT(*) AS users FROM users WHERE group_key IS NOT NULL AND blocked = 0 GROUP BY group_key ORDER BY users DESC`)
-      .all() as Array<{ groupKey: string; users: number }>;
+      .prepare(
+        `SELECT group_key AS groupKey, SUM(1 - ${IS_MAX}) AS tg, SUM(${IS_MAX}) AS max FROM users
+         WHERE group_key IS NOT NULL AND blocked = 0 GROUP BY group_key ORDER BY COUNT(*) DESC`,
+      )
+      .all() as Array<{ groupKey: string; tg: number; max: number }>;
   }
 
   /**
    * Студентов в боте по группам — для открытой страницы «Кворум»: как
    * groupPopulation, но без преподавателей в режиме преподавателя (группа у
-   * них в профиле могла остаться от выбора до /prepod).
+   * них в профиле могла остаться от выбора до /prepod). Telegram и МАКС —
+   * отдельно: человек в обоих иначе считался бы дважды.
    */
-  studentsPerGroup(): Map<string, number> {
+  studentsPerGroup(): Map<string, { tg: number; max: number }> {
     const rows = this.db
-      .prepare(`SELECT group_key AS groupKey, COUNT(*) AS users FROM users WHERE group_key IS NOT NULL AND blocked = 0 AND teacher_mode = 0 GROUP BY group_key`)
-      .all() as Array<{ groupKey: string; users: number }>;
-    return new Map(rows.map((r) => [r.groupKey, r.users]));
+      .prepare(
+        `SELECT group_key AS groupKey, SUM(1 - ${IS_MAX}) AS tg, SUM(${IS_MAX}) AS max FROM users
+         WHERE group_key IS NOT NULL AND blocked = 0 AND teacher_mode = 0 GROUP BY group_key`,
+      )
+      .all() as Array<{ groupKey: string; tg: number; max: number }>;
+    return new Map(rows.map((r) => [r.groupKey, { tg: r.tg, max: r.max }]));
   }
 
   /** Users that want change notifications for a logical group (primary group or watch list). */

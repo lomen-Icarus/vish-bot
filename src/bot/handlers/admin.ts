@@ -55,13 +55,16 @@ adminOnly.command("admin", async (ctx) => {
 function statsText(ctx: BotContext): string {
   const repo = ctx.deps.repo;
   const c = repo.countUsers();
+  const by = repo.countUsersByPlatform();
   const pop = repo.groupPopulation();
+  // Один человек в Telegram и в МАКС — две записи, поэтому платформы не складываем.
   const lines = [
     "<b>📊 Статистика</b>",
-    `Пользователей: ${c.total}, активных: ${c.active}, с группой: ${c.withGroup}`,
+    `Telegram: ${by.tg.total}, активных: ${by.tg.active}, с группой: ${by.tg.withGroup}`,
+    ...(by.max.total ? [`МАКС: ${by.max.total}, активных: ${by.max.active}, с группой: ${by.max.withGroup}`] : []),
     `Собрали своё нижнее меню: ${c.customMenu}`,
     "",
-    ...pop.slice(0, 30).map((p) => `${esc(ctx.deps.service.group(p.groupKey)?.title ?? p.groupKey)} — ${p.users}`),
+    ...pop.slice(0, 30).map((p) => `${esc(ctx.deps.service.group(p.groupKey)?.title ?? p.groupKey)} — ${p.tg}${p.max ? ` + МАКС ${p.max}` : ""}`),
   ];
   // Что жмут: кнопки меню, кнопки под сообщениями и команды за неделю (без id людей).
   const clicks = repo.countersSince(addDays(todayMsk(), -6));
