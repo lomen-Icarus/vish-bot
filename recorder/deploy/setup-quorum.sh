@@ -33,6 +33,7 @@ command -v certbot >/dev/null || { echo "Нет certbot — его ставит 
 
 mkdir -p "$SITE/quorum" "$WEBROOT" "$CERTS"
 install -m 644 "$SRC/index.html" "$SRC/totals.json" "$SITE/quorum/"
+[ -f "$SRC/anthem.mp3" ] && install -m 644 "$SRC/anthem.mp3" "$SITE/quorum/"
 
 # IPv4 имени в публичном DNS (как видят телефоны и Let's Encrypt); пусто — не резолвится.
 public_ip() {
@@ -81,6 +82,12 @@ server {
     }
     location = /quorum/totals.json {
         add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options nosniff always;
+        try_files \$uri =404;
+    }
+    # Гимн при открытии страницы (тихий, играет один раз — см. index.html).
+    location = /quorum/anthem.mp3 {
+        add_header Cache-Control "public, max-age=86400" always;
         add_header X-Content-Type-Options nosniff always;
         try_files \$uri =404;
     }
