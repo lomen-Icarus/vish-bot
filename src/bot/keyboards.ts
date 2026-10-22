@@ -4,6 +4,7 @@ import type { ReplyKeyboardRemove } from "grammy/types";
 import type { LogicalGroup } from "../schedule/groups.js";
 import type { MenuMode, User } from "../db/repo.js";
 import { isTheme, THEME_LABELS } from "../render/themes.js";
+import { isMaxChat } from "../max/store.js";
 import { addDays, fmtDDMM, type LocalDate } from "../time.js";
 
 export const BTN = {
@@ -240,7 +241,9 @@ export function menuStampFor(user: MenuOwner): string {
 }
 
 /** Где искать меню — для подсказок в тексте («Нажми кнопку ниже» не годится, если меню скрыто). */
-export function menuHint(user: Pick<User, "menuMode"> | null | undefined): string {
+export function menuHint(user: (Pick<User, "menuMode"> & { id?: number }) | null | undefined): string {
+  // В МАКС нижнего меню нет: меню — кнопка под каждым сообщением (src/max/screen.ts).
+  if (isMaxChat(user?.id)) return "Меню — кнопка «◀️ Меню» под сообщением";
   return user?.menuMode === "hidden" ? "Команды — в кнопке «Меню» слева от поля ввода, вернуть кнопки внизу — /menu" : "Меню — внизу 👇";
 }
 

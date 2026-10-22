@@ -40,7 +40,7 @@ function knownName(ctx: BotContext): string | null {
  */
 /**
  * «💬 Спросить?» в приветствии /start. В МАКС его нет (просьба владельца):
- * там меню и так стоит под каждым сообщением, и «🔍 Найти с ИИ» в нём есть.
+ * там «🔍 Найти с ИИ» — в «◀️ Меню» под каждым сообщением.
  */
 function askButton(ctx: BotContext): InlineKeyboard | null {
   return ctx.deps.ask && !isMaxChat(ctx.chat?.id) ? new InlineKeyboard().text("💬 Спросить?", "ask:open") : null;
