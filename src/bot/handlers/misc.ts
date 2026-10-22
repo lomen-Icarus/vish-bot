@@ -20,6 +20,7 @@ import { findGroup } from "../../schedule/groups.js";
 import { lessonTypeLabel, type Occurrence } from "../../schedule/model.js";
 import { addDays, fmtDDMM, fmtHHMM, parseRuDate, todayMsk, weekdayName, type LocalDate } from "../../time.js";
 import { logger } from "../../logger.js";
+import { isMaxChat } from "../../max/store.js";
 
 export const miscHandlers = new Composer<BotContext>();
 
@@ -37,8 +38,12 @@ function knownName(ctx: BotContext): string | null {
  * нижнем меню, а про «спросить своими словами» никто не догадывается. Это тот
  * же ИИ-поиск, что и «🔍 ИИ поисковик», с теми же дневными лимитами из админки.
  */
+/**
+ * «💬 Спросить?» в приветствии /start. В МАКС его нет (просьба владельца):
+ * там меню и так стоит под каждым сообщением, и «🔍 Найти с ИИ» в нём есть.
+ */
 function askButton(ctx: BotContext): InlineKeyboard | null {
-  return ctx.deps.ask ? new InlineKeyboard().text("💬 Спросить?", "ask:open") : null;
+  return ctx.deps.ask && !isMaxChat(ctx.chat?.id) ? new InlineKeyboard().text("💬 Спросить?", "ask:open") : null;
 }
 
 /**

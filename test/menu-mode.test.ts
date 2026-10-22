@@ -35,10 +35,10 @@ describe("нижнее меню: сворачивается, сворачива�
   });
 
   it("меню 2 × 3: «Сегодня · Завтра · Неделя» / «Найти · Ещё · Поддержка»; подсказка в поле ввода; старые кнопки 4 × 3 ещё работают", () => {
-    expect(plain(mainKeyboard()).keyboard).toEqual([[{ text: "📅 Сегодня" }, { text: "📅 Завтра" }, { text: "🗓 Неделя" }], [{ text: "🔍 Найти" }, { text: "🗂 Ещё" }, { text: "🙋 Поддержка" }]]);
+    expect(plain(mainKeyboard()).keyboard).toEqual([[{ text: "📅 Сегодня" }, { text: "📅 Завтра" }, { text: "🗓 Неделя" }], [{ text: "🔍 Найти с ИИ" }, { text: "🗂 Ещё" }, { text: "🙋 Поддержка" }]]);
     expect(plain(mainKeyboard()).input_field_placeholder).toBe("14-24, Иванова, матан, 15.10");
     // У кого в чате ещё висит старое меню — его кнопки понимаются как раньше.
-    for (const old of ["👥 Др. группы", "🗓 Следующая", "🎓 Поток", "🔔 Изменения", "📆 Календарь", "👨‍🏫 Преподы", "👨‍🏫 Преподаватели", "🧭 Функции", "🔍 ИИ поисковик", "⚙️ Настройки", "🏛 Жалоба", "👥 Поддержка", "☰ Ещё"]) expect(isMenuText(old)).toBe(true);
+    for (const old of ["👥 Др. группы", "👥 Другие группы", "🔍 Найти", "🗓 Следующая", "🎓 Поток", "🔔 Изменения", "📆 Календарь", "👨‍🏫 Преподы", "👨‍🏫 Преподаватели", "🧭 Функции", "🔍 ИИ поисковик", "⚙️ Настройки", "🏛 Жалоба", "👥 Поддержка", "☰ Ещё"]) expect(isMenuText(old)).toBe(true);
   });
 
   it("заблокировал бота или вернулся после блокировки — отпечаток меню забыт: меню придёт снова", () => {
@@ -235,6 +235,6 @@ describe("/menu_refresh: предпросмотр, подтверждение, �
     const sent = go.find((c) => c.method === "sendMessage" && c.payload.chat_id === 8)!;
     expect(sent.payload.disable_notification).toBe(true);
     expect(plain(sent.payload.reply_markup).one_time_keyboard).toBe(true);
-    expect(String(sent.payload.text)).toContain("🔍 Найти");
+    expect(String(sent.payload.text)).toContain("🔍 Найти с ИИ");
   });
 });

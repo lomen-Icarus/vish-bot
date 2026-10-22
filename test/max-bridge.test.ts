@@ -140,7 +140,7 @@ interface MaxCall {
   body: Record<string, unknown> | null;
 }
 
-function setup() {
+function setup(opts: { ask?: boolean } = {}) {
   const repo = new Repo(openDatabase(":memory:"));
   const calls: MaxCall[] = [];
   let mid = 0;
@@ -157,11 +157,20 @@ function setup() {
   }) as never;
   const config = loadConfig({ BOT_TOKEN: `123456:${"x".repeat(30)}`, ADMIN_IDS: "42" } as NodeJS.ProcessEnv);
   const max = new MaxBridge({ token: "max-token", repo, botToken: config.BOT_TOKEN, newsChatIds: [], menuFor, fetch: fakeFetch });
-  const deps: Deps = { config, repo, service: service(), renderer: null, ask: null, teachers: null, webinars: null, students: null, known: null, news: null, http: null, inline: false, botUsername: "vish_bot", pending: new Map(), startedAt: new Date(), max };
+  const deps: Deps = { config, repo, service: service(), renderer: null, ask: opts.ask ? ({} as Deps["ask"]) : null, teachers: null, webinars: null, students: null, known: null, news: null, http: null, inline: false, botUsername: "vish_bot", pending: new Map(), startedAt: new Date(), max };
   const bot = createBot(deps);
   bot.botInfo = ME;
   return { repo, calls, max, bot };
 }
+
+/** Меню по умолчанию кнопками «message» — то, что МАКС ставит под каждым сообщением. */
+const MENU_ROWS = [
+  ["📅 Сегодня", "📅 Завтра", "🗓 Неделя"],
+  ["🔍 Найти с ИИ", "🗂 Ещё", "🙋 Поддержка"],
+].map((row) => row.map((text) => ({ type: "message", text })));
+
+type Btn = { type: string; text: string; payload?: string };
+const buttonsOf = (c: MaxCall | undefined): Btn[][] => ((c?.body?.attachments as Array<{ type: string; payload: { buttons: Btn[][] } }> | undefined) ?? []).find((a) => a.type === "inline_keyboard")?.payload.buttons ?? [];
 
 const textFromMax = (text: string): MaxUpdate =>
   ({ update_type: "message_created", timestamp: Date.now(), message: { sender: { user_id: 5, first_name: "Аня" }, recipient: { chat_id: 1, chat_type: "dialog", user_id: 900 }, timestamp: Date.now(), body: { mid: `in.${text}`, text } } }) as MaxUpdate;
@@ -220,7 +229,7 @@ describe("МАКС: тот же бот", () => {
     expect(sent?.body?.text).toBe("<b>Пары</b>");
     expect(sent?.body?.attachments).toEqual([
       { type: "image", payload: { photos: { p1: { token: "photo-token" } } } },
-      { type: "inline_keyboard", payload: { buttons: [[{ type: "callback", text: "🔕 Отключить", payload: "rm:off:first" }]] } },
+      { type: "inline_keyboard", payload: { buttons: [[{ type: "callback", text: "🔕 Отключить", payload: "rm:off:first" }], ...MENU_ROWS] } },
     ]);
     // Telegram-чаты мост не трогает.
     await api.sendMessage(12345, "hi");
@@ -250,5 +259,64 @@ describe("МАКС: тот же бот", () => {
     const api = new Api(`123456:${"x".repeat(30)}`);
     api.config.use(max.transformer());
     await expect(api.sendMessage(MAX_UID_BASE + 999, "x")).rejects.toThrow(/chat not found/);
+  });
+});
+
+describe("МАКС: меню под каждым сообщением", () => {
+  const today7 = async (menu: Parameters<Repo["updateUser"]>[1] = {}) => {
+    const env = setup({ ask: true });
+    const uid = env.max.uid(5);
+    env.repo.touchUser(uid, null, "Аня");
+    env.repo.updateUser(uid, { groupKey: group.key, format: "text", ...menu });
+    await env.max.handle(env.bot, textFromMax("📅 Сегодня"));
+    return { ...env, uid, day: env.calls.find((c) => c.path === "/messages" && c.method === "POST") };
+  };
+
+  it("под расписанием дня — свои стрелки, а ниже меню человека", async () => {
+    const { day } = await today7();
+    const rows = buttonsOf(day);
+    expect(rows.slice(-2)).toEqual(MENU_ROWS);
+    expect(rows[0]!.every((b) => b.type === "callback")).toBe(true);
+  });
+
+  it("свои кнопки меню (⚙️ → 🧩) — они и под сообщением; «скрыто» — без меню", async () => {
+    const custom = await today7({ menuButtons: ["today", "changes", "more"] });
+    expect(buttonsOf(custom.day).slice(-1)).toEqual([[{ type: "message", text: "📅 Сегодня" }, { type: "message", text: "🔔 Изменения" }, { type: "message", text: "🗂 Ещё" }]]);
+    const hidden = await today7({ menuMode: "hidden" });
+    expect(buttonsOf(hidden.day).flat().some((b) => b.type === "message")).toBe(false);
+  });
+
+  it("стрелка правит сообщение — меню остаётся под ним", async () => {
+    const { calls, max, bot } = await today7();
+    calls.length = 0;
+    await max.handle(bot, {
+      update_type: "message_callback",
+      timestamp: Date.now(),
+      callback: { callback_id: "cb8", payload: `d:${today}`, user: { user_id: 5, first_name: "Аня" }, timestamp: Date.now() },
+      message: { recipient: { chat_id: 1, chat_type: "dialog", user_id: 5 }, timestamp: Date.now(), body: { mid: "mid.1", text: "день" } },
+    } as MaxUpdate);
+    expect(buttonsOf(calls.find((c) => c.method === "PUT")).slice(-2)).toEqual(MENU_ROWS);
+  });
+
+  it("тихое сообщение без своих кнопок (текст перед постером) — без меню: оно будет под постером", async () => {
+    const { calls, max, uid } = await today7();
+    calls.length = 0;
+    const api = new Api(`123456:${"x".repeat(30)}`);
+    api.config.use(max.transformer());
+    await api.sendMessage(uid, "неделя текстом", { disable_notification: true });
+    expect(buttonsOf(calls[0])).toEqual([]);
+    await api.sendMessage(uid, "ответ");
+    expect(buttonsOf(calls[1])).toEqual(MENU_ROWS);
+  });
+
+  it("/start в МАКС — без плашки «💬 Спросить?»: «Найти с ИИ» и так в меню", async () => {
+    const { calls, max, bot } = await today7();
+    calls.length = 0;
+    await max.handle(bot, { update_type: "bot_started", timestamp: Date.now(), chat_id: 1, user: { user_id: 5, first_name: "Аня" } } as MaxUpdate);
+    const sent = calls.filter((c) => c.path === "/messages" && c.method === "POST");
+    expect(sent).toHaveLength(1);
+    expect(String(sent[0]!.body?.text)).toContain("С возвращением");
+    expect(buttonsOf(sent[0]).flat().some((b) => b.text.includes("Спросить"))).toBe(false);
+    expect(buttonsOf(sent[0])).toEqual(MENU_ROWS);
   });
 });

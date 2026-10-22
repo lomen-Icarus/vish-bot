@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, FIND_BTN, formatPicker, groupPicker, menuFor, menuHint, onboardingKeyboard, panelRef } from "../keyboards.js";
+import { BTN, btnLabels, FIND_BTN, formatPicker, groupPicker, menuFor, menuHint, onboardingKeyboard, panelRef } from "../keyboards.js";
 import { groupRequiredText, needGroup, sendDay, sendWeek } from "../views.js";
 import { addDays, fmtDDMM, isLocalDate, mondayOf, parseDayWord, parseRuDate, todayMsk, wallClock, type LocalDate } from "../../time.js";
 import { showOwnTeacher } from "../teacherMode.js";
@@ -102,7 +102,7 @@ scheduleHandlers.hears(BTN.otherGroups, showOtherGroups);
 // В режиме преподавателя та же кнопка называется «Студенты»: расписание любой группы.
 scheduleHandlers.hears(BTN.students, showOtherGroups);
 // Те же «Группы», вынесенные в нижнее меню из «🔍 Найти» (⚙️ → 🧩 Кнопки внизу).
-scheduleHandlers.hears([BTN.groups, BTN.teacherGroups], showOtherGroups);
+scheduleHandlers.hears([...btnLabels("groups"), BTN.teacherGroups], showOtherGroups);
 scheduleHandlers.command("groups", showOtherGroups);
 
 scheduleHandlers.callbackQuery(/^pk:(.+)$/, async (ctx) => {

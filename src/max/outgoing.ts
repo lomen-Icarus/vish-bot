@@ -77,16 +77,27 @@ function keyboard(buttons: MaxButton[][] | null): MaxAttachment[] {
   return buttons ? [{ type: "inline_keyboard", payload: { buttons } }] : [];
 }
 
+/** Лимиты клавиатуры МАКС: больше — сообщение не примут целиком. */
+const MAX_ROWS = 30;
+const MAX_BUTTONS = 210;
+
 /**
- * Кнопки сообщения. Свои — как есть. Своих нет — нижнее меню человека: в
- * Telegram оно всегда под полем ввода, а в МАКС его нет вовсе, и без кнопок
- * под ответом человеку некуда нажать. Тихие сообщения (первая половина
- * «текст + постер», ночные) — без меню: следом придёт сообщение со своими кнопками.
+ * Кнопки сообщения: свои, а под ними — нижнее меню человека. В Telegram меню
+ * всегда под полем ввода, у МАКС такого нет, поэтому меню едет с каждым
+ * сообщением: у последнего оно есть всегда, и «Сегодня» — одно нажатие. Меню —
+ * то же, что в Telegram: свои кнопки (⚙️ → 🧩), режим преподавателя, «скрыто»
+ * (тогда без меню). Сообщение, которое само несёт меню (поток, новое меню), —
+ * как есть. Тихое сообщение без своих кнопок (первая половина «текст +
+ * постер») — без меню: следом придёт постер, и меню будет под ним.
  */
-function buttonsFor(d: OutgoingDeps, uid: number, p: Payload): MaxButton[][] | null {
-  if (p.reply_markup !== undefined) return hasOwnMarkup(p.reply_markup) ? markupToButtons(p.reply_markup) : null;
-  if (p.disable_notification === true) return null;
-  return markupToButtons(d.menuFor(uid));
+function buttonsFor(d: OutgoingDeps, uid: number, markup: unknown, silent = false): MaxButton[][] | null {
+  const own = hasOwnMarkup(markup) ? markupToButtons(markup) : null;
+  if (markup && typeof markup === "object" && "keyboard" in markup) return own;
+  if (!own && silent) return null;
+  const menu = markupToButtons(d.menuFor(uid));
+  if (!menu || !own) return own ?? menu;
+  const rows = [...own, ...menu];
+  return rows.length <= MAX_ROWS && rows.flat().length <= MAX_BUTTONS ? rows : own;
 }
 
 async function collect(raw: unknown): Promise<Buffer> {
@@ -136,7 +147,7 @@ function fakeMessage(uid: number, id: number, html: string | null, withMedia: bo
 async function send(d: OutgoingDeps, uid: number, p: Payload, html: string | null, media: MaxAttachment[]): Promise<Message> {
   const maxId = d.maxIdOf(uid);
   if (maxId == null) throw new TgLikeError(400, "Bad Request: chat not found");
-  const body: MaxNewMessage = { text: html, format: "html", notify: p.disable_notification !== true, attachments: [...media, ...keyboard(buttonsFor(d, uid, p))] };
+  const body: MaxNewMessage = { text: html, format: "html", notify: p.disable_notification !== true, attachments: [...media, ...keyboard(buttonsFor(d, uid, p.reply_markup, p.disable_notification === true))] };
   const preview = p.link_preview_options as { is_disabled?: boolean } | undefined;
   const sent = await d.api.sendMessage(maxId, body, { disableLinkPreview: preview?.is_disabled === true || p.disable_web_page_preview === true });
   const id = d.messages.remember({ mid: sent.body.mid, uid, text: html, media });
@@ -151,7 +162,8 @@ function stored(d: OutgoingDeps, p: Payload): StoredMaxMessage & { id: number } 
 }
 
 async function edit(d: OutgoingDeps, msg: StoredMaxMessage & { id: number }, html: string | null, media: MaxAttachment[], markup: unknown): Promise<true> {
-  const buttons = hasOwnMarkup(markup) ? markupToButtons(markup) : null;
+  // Правка (стрелки, переключатели) заменяет кнопки целиком — меню ставим снова.
+  const buttons = buttonsFor(d, msg.uid, markup);
   await d.api.editMessage(msg.mid, { text: html, format: "html", attachments: [...media, ...keyboard(buttons)] });
   d.messages.remember({ ...msg, text: html, media });
   return true;
@@ -211,7 +223,7 @@ async function toMax(d: OutgoingDeps, prev: Prev, method: string, p: Payload): P
       const media: MaxAttachment[] = [];
       for (const it of items) media.push(it.type === "photo" ? await imageAttachment(d, prev, it.media) : await fileAttachment(d, prev, it.media));
       const first = items.find((it) => typeof it.caption === "string" && it.caption);
-      const msg = await send(d, uid, { ...p, reply_markup: { remove_keyboard: true } }, first ? htmlOf(d, first.caption, first.parse_mode, first.caption_entities) : null, media);
+      const msg = await send(d, uid, p, first ? htmlOf(d, first.caption, first.parse_mode, first.caption_entities) : null, media);
       return items.map(() => msg);
     }
     case "editMessageText": {
