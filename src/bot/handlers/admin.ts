@@ -7,7 +7,9 @@ import { BTN, FIND_BTN, isMenuText, menuFor, menuStampFor, MORE_BTN, TOPIC_LABEL
 import { lastPoll } from "../views.js";
 import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
 import { addDays, todayMsk } from "../../time.js";
-import type { User } from "../../db/repo.js";
+import type { Repo, User } from "../../db/repo.js";
+import { CAL_LINK_COUNTER } from "./calendar.js";
+import type { PollResult } from "../../schedule/service.js";
 import { logger } from "../../logger.js";
 import { sleep } from "../../time.js";
 import { isUnreachable } from "../errors.js";
@@ -52,6 +54,36 @@ adminOnly.command("admin", async (ctx) => {
   await ctx.reply("<b>Админка</b>", { parse_mode: "HTML", reply_markup: adminMenu() });
 });
 
+const FEED_CLIENTS: Array<[string, string]> = [
+  ["google", "Google"],
+  ["yandex", "Яндекс"],
+  ["apple", "Apple"],
+  ["outlook", "Outlook"],
+  ["browser", "браузер"],
+  ["other", "другое"],
+];
+
+/** Пустые страницы портала в ответе на ручной опрос. */
+function emptyNote(r: PollResult): string {
+  return `${r.pagesHeld ? ` Пустых страниц придержано: ${r.pagesHeld} (в базе прежние).` : ""}${r.emptyAccepted.length ? ` Пустое расписание принято: ${r.emptyAccepted.length} ${plural(r.emptyAccepted.length, "группа", "группы", "групп")}.` : ""}`;
+}
+
+/**
+ * Воронка подписки на календарь: выдали ссылку → ленту хоть раз забрали →
+ * забирают сейчас (за 7 дней), и чем. Одна лента на двух устройствах
+ * считается в каждом клиенте, поэтому сумма по клиентам бывает больше.
+ */
+export function calendarFunnel(repo: Repo, linksWeek: number): string[] {
+  const s = repo.calFetchStats(new Date(Date.now() - 7 * 86_400_000).toISOString());
+  const clients = (c: Record<string, number>): string => FEED_CLIENTS.filter(([k]) => c[k]).map(([k, label]) => `${label} ${c[k]}`).join(" · ") || "никто";
+  return [
+    "<b>📆 Подписка на календарь</b>",
+    `Ссылку получили: ${s.issued} (за 7 дней — ${linksWeek}) · забирали хоть раз: ${s.byKind.u.ever} · за 7 дней: ${s.byKind.u.live}`,
+    `Чем забирают за 7 дней: ${clients(s.byKind.u.clients)}`,
+    ...(s.feeds || s.byKind.f.ever ? [`Ссылки групп от админа: ${s.feeds} · забирали за 7 дней: ${s.byKind.f.live}${s.byKind.f.live ? ` (${clients(s.byKind.f.clients)})` : ""}`] : []),
+  ];
+}
+
 function statsText(ctx: BotContext): string {
   const repo = ctx.deps.repo;
   const c = repo.countUsers();
@@ -64,7 +96,9 @@ function statsText(ctx: BotContext): string {
     ...pop.slice(0, 30).map((p) => `${esc(ctx.deps.service.group(p.groupKey)?.title ?? p.groupKey)} — ${p.users}`),
   ];
   // Что жмут: кнопки меню, кнопки под сообщениями и команды за неделю (без id людей).
-  const clicks = repo.countersSince(addDays(todayMsk(), -6));
+  const allClicks = repo.countersSince(addDays(todayMsk(), -6));
+  const clicks = allClicks.filter((c) => !c.key.startsWith("cal:"));
+  lines.push("", ...calendarFunnel(repo, allClicks.find((c) => c.key === CAL_LINK_COUNTER)?.n ?? 0));
   if (clicks.length) lines.push("", "<b>Нажатия за 7 дней</b>", ...clicks.slice(0, 20).map((c) => `${esc((panelClick(c.key) ?? c.key).replace(/^btn:/, "").replace(/^cb:/, "под сообщением: ").replace(/^cmd:/, "").replace(/^text:found$/, "текст → нашёл").replace(/^text:miss$/, "текст → не нашёл"))} — ${c.n}`));
   return lines.join("\n");
 }
@@ -427,7 +461,7 @@ adminOnly.callbackQuery(/^adm:(\w+)$/, async (ctx, next) => {
       await ctx.answerCallbackQuery({ text: "Опрашиваю…" });
       try {
         const r = await ctx.deps.service.poll({ force: false });
-        await ctx.reply(`Готово за ${Math.round(r.durationMs / 1000)} с: страниц ${r.pagesFetched}, групп с изменениями ${r.groupsChanged.length}, событий ${r.events.length}.`);
+        await ctx.reply(`Готово за ${Math.round(r.durationMs / 1000)} с: страниц ${r.pagesFetched}, групп с изменениями ${r.groupsChanged.length}, событий ${r.events.length}.${emptyNote(r)}`);
       } catch (err) {
         await ctx.reply(`Ошибка опроса: <code>${esc(String(err)).slice(0, 500)}</code>`, { parse_mode: "HTML" });
       }
@@ -463,7 +497,7 @@ adminOnly.command("poll", async (ctx) => {
   await ctx.reply("Опрашиваю портал…");
   try {
     const r = await ctx.deps.service.poll({ force: ctx.match?.trim() === "force" });
-    await ctx.reply(`Готово за ${Math.round(r.durationMs / 1000)} с: страниц ${r.pagesFetched}, групп с изменениями ${r.groupsChanged.length}, событий ${r.events.length}.`);
+    await ctx.reply(`Готово за ${Math.round(r.durationMs / 1000)} с: страниц ${r.pagesFetched}, групп с изменениями ${r.groupsChanged.length}, событий ${r.events.length}.${emptyNote(r)}`);
   } catch (err) {
     await ctx.reply(`Ошибка: ${String(err).slice(0, 500)}`);
   }

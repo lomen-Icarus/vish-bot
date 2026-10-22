@@ -20,6 +20,10 @@ export interface PollResult {
   events: ChangeEvent[];
   noticeChanged: string | null;
   durationMs: number;
+  /** Страницы, что вдруг пришли пустыми: придержаны, в базе прежние. */
+  pagesHeld: number;
+  /** Группы, чью пустую страницу приняли после EMPTY_PAGE_CONFIRMATIONS опросов подряд (о них — админу). */
+  emptyAccepted: string[];
 }
 
 export interface WeekInfo {
@@ -36,6 +40,20 @@ export const BASELINE_FUTURE_DAYS = 35;
 export const SEMESTER_WEEKS = 17;
 
 const SESSION_FETCH_IDLE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Сколько опросов подряд страница группы должна прийти пустой, чтобы ей
+ * поверили. Портал бывает отдаёт настоящую страницу (с периодом) без единой
+ * пары — сбой у него, а не отмена всех пар; принять её сразу значило бы
+ * стереть расписание группы из ленты календаря и разослать «пары убраны».
+ * Пустое расписание бывает и по-настоящему (конец семестра) — тогда оно
+ * повторится и будет принято.
+ */
+export const EMPTY_PAGE_CONFIRMATIONS = 3;
+
+function lessonCount(days: ParsedScheduleDay[] | null | undefined): number {
+  return (days ?? []).reduce((n, d) => n + (d.blocks ?? []).reduce((m, b) => m + (b.lessons?.length ?? 0), 0), 0);
+}
 
 export interface ScheduleServiceOptions {
   facultyId: number;
@@ -272,7 +290,7 @@ export class ScheduleService {
     const started = Date.now();
     const runId = this.repo.startPollRun();
     const today = todayMsk();
-    const result: PollResult = { groupsTotal: 0, pagesFetched: 0, pagesFailed: 0, groupsChanged: [], events: [], noticeChanged: null, durationMs: 0 };
+    const result: PollResult = { groupsTotal: 0, pagesFetched: 0, pagesFailed: 0, groupsChanged: [], events: [], noticeChanged: null, durationMs: 0, pagesHeld: 0, emptyAccepted: [] };
     try {
       const groups = await this.refreshGroups();
       result.groupsTotal = groups.length;
@@ -330,6 +348,19 @@ export class ScheduleService {
               calibrated = true;
             }
             const stored = this.repo.getPage(portalId, period);
+            const emptyKey = `emptyPage:${portalId}:${period}`;
+            if (stored && lessonCount(page.days) === 0 && lessonCount(stored.parsed as ParsedScheduleDay[]) > 0) {
+              const seen = Number(this.repo.getMeta(emptyKey) || 0) + 1;
+              if (seen < EMPTY_PAGE_CONFIRMATIONS) {
+                this.repo.setMeta(emptyKey, String(seen));
+                result.pagesHeld++;
+                logger.warn({ portalId, period, seen }, "group page came empty, kept the previous one");
+                continue;
+              }
+              logger.warn({ portalId, period, seen }, "group page empty again, accepted");
+              if (!result.emptyAccepted.includes(group.key)) result.emptyAccepted.push(group.key);
+            }
+            if (this.repo.getMeta(emptyKey)) this.repo.setMeta(emptyKey, "");
             const changed = !stored || stored.htmlHash !== page.htmlHash;
             const contentChanged = !stored || JSON.stringify(stored.parsed) !== JSON.stringify(page.days);
             if (changed) this.repo.savePage(portalId, period, page.htmlHash, page.days, contentChanged);

@@ -4,9 +4,10 @@ import type { Update, UserFromGetMe } from "grammy/types";
 import type { Server } from "node:http";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
-import { createHttpServer } from "../src/http/server.js";
+import { createHttpServer, feedClient } from "../src/http/server.js";
 import { calFeedHandlers, chunkBlocks, parseFeedRequest } from "../src/bot/handlers/calFeeds.js";
-import { groupCalendar } from "../src/schedule/calendar.js";
+import { calendarFunnel } from "../src/bot/handlers/admin.js";
+import { FEED_PAST_DAYS, groupCalendar } from "../src/schedule/calendar.js";
 import type { ScheduleService } from "../src/schedule/service.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
 import type { Occurrence } from "../src/schedule/model.js";
@@ -177,6 +178,90 @@ describe("календари групп от админа: лента", () => {
     // Группа исчезла из расписания — ссылка отвечает 404, а не падает.
     groups.splice(groups.findIndex((x) => x.key === "виш-12-23"), 1);
     expect((await fetch(url(other.token))).status).toBe(404);
+  });
+});
+
+describe("прошедшие пары в лентах", () => {
+  let server: Server | null = null;
+  afterAll(() => server?.close());
+
+  it("лента держит полгода прошлого без напоминаний; файл .ics — с сегодня", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    const today = todayMsk();
+    const service = makeService([
+      lesson("виш-12-23", addDays(today, -3), "Недавняя"),
+      lesson("виш-12-23", addDays(today, -FEED_PAST_DAYS - 5), "Давняя"),
+      lesson("виш-12-23", addDays(today, 1), "Завтрашняя"),
+    ]);
+    repo.touchUser(7, "s", "S");
+    repo.updateUser(7, { groupKey: "виш-12-23", calAlarmMin: 15 });
+    const token = repo.ensureCalToken(7);
+    const feed = repo.ensureCalFeed("виш-12-23", "Петров", 99);
+    server = createHttpServer({ repo, service, port: 0, host: "127.0.0.1" });
+    await new Promise<void>((resolve) => server!.once("listening", resolve));
+    const port = (server.address() as { port: number }).port;
+    const get = async (t: string) => (await fetch(`http://127.0.0.1:${port}/cal/${t}.ics`)).text();
+    for (const body of [await get(token), await get(feed.token)]) {
+      expect(body).toContain("Недавняя");
+      expect(body).toContain("Завтрашняя");
+      expect(body).not.toContain("Давняя");
+    }
+    // Напоминание — только у будущей пары.
+    const own = await get(token);
+    expect(own.match(/BEGIN:VALARM/g)).toHaveLength(1);
+    expect(own.split("BEGIN:VEVENT").find((e) => e.includes("Недавняя"))).not.toContain("VALARM");
+    const file = groupCalendar(service, GROUPS[1]!, { subgroup: null, alarmMinutes: 15 }).ics;
+    expect(file).not.toContain("Недавняя");
+    expect(file).toContain("Завтрашняя");
+  });
+});
+
+describe("воронка подписки: кто забирает ленты", () => {
+  let server: Server | null = null;
+  afterAll(() => server?.close());
+
+  it("клиент — по User-Agent", () => {
+    expect(feedClient("Google-Calendar-Importer")).toBe("google");
+    expect(feedClient("Mozilla/5.0 (compatible; Google-Calendar-Importer)")).toBe("google");
+    expect(feedClient("Mozilla/5.0 (compatible; YandexCalendar/1.0; +http://yandex.com/bots)")).toBe("yandex");
+    expect(feedClient("iOS/18.1 (22B83) dataaccessd/1.0")).toBe("apple");
+    expect(feedClient("macOS/15.1 (24B83) CalendarAgent/1000")).toBe("apple");
+    expect(feedClient("Microsoft Office/16.0 (Windows NT 10.0; Microsoft Outlook 16.0)")).toBe("outlook");
+    expect(feedClient("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0 Mobile Safari/537.36")).toBe("browser");
+    expect(feedClient("okhttp/4.12")).toBe("other");
+    expect(feedClient(undefined)).toBe("other");
+  });
+
+  it("забор ленты записывается по владельцу и клиенту; HEAD и 404 не считаются", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    const service = makeService([lesson("виш-12-23", addDays(todayMsk(), 1), "Физика")]);
+    repo.touchUser(7, "s", "S");
+    repo.updateUser(7, { groupKey: "виш-12-23" });
+    const token = repo.ensureCalToken(7);
+    repo.touchUser(8, "t", "T");
+    repo.ensureCalToken(8);
+    const feed = repo.ensureCalFeed("виш-12-23", "Петров", 99);
+    server = createHttpServer({ repo, service, port: 0, host: "127.0.0.1" });
+    await new Promise<void>((resolve) => server!.once("listening", resolve));
+    const port = (server.address() as { port: number }).port;
+    const get = (t: string, ua: string, method = "GET") => fetch(`http://127.0.0.1:${port}/cal/${t}.ics`, { method, headers: { "user-agent": ua } });
+    await get(token, "Google-Calendar-Importer");
+    await get(token, "Google-Calendar-Importer");
+    await get(token, "iOS/18.1 (22B83) dataaccessd/1.0");
+    await get(feed.token, "YandexCalendar/1.0");
+    await get(feed.token, "okhttp/4", "HEAD");
+    await get("nonexistent-token-123", "Google-Calendar-Importer");
+    const s = repo.calFetchStats(new Date(Date.now() - 86_400_000).toISOString());
+    expect(s.issued).toBe(2);
+    expect(s.feeds).toBe(1);
+    expect(s.byKind.u).toEqual({ ever: 1, live: 1, clients: { google: 1, apple: 1 } });
+    expect(s.byKind.f).toEqual({ ever: 1, live: 1, clients: { yandex: 1 } });
+    // «За 7 дней» считает по последнему забору.
+    expect(repo.calFetchStats(new Date(Date.now() + 60_000).toISOString()).byKind.u).toEqual({ ever: 1, live: 0, clients: {} });
+    const lines = calendarFunnel(repo, 3).join("\n");
+    expect(lines).toContain("Ссылку получили: 2 (за 7 дней — 3) · забирали хоть раз: 1 · за 7 дней: 1");
+    expect(lines).toContain("Чем забирают за 7 дней: Google 1 · Apple 1");
+    expect(lines).toContain("Ссылки групп от админа: 1 · забирали за 7 дней: 1 (Яндекс 1)");
   });
 });
 

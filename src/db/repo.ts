@@ -1644,6 +1644,36 @@ export class Repo {
     return this.db.prepare("SELECT key, SUM(n) AS n FROM ui_counters WHERE day >= ? GROUP BY key ORDER BY n DESC, key").all(day) as Array<{ key: string; n: number }>;
   }
 
+  // ---- кто забирает ленты календаря (без id в выдаче) ----
+  noteCalFetch(owner: string, client: string): void {
+    const ts = nowIso();
+    this.db
+      .prepare("INSERT INTO cal_fetches (owner, client, first_at, last_at) VALUES (?, ?, ?, ?) ON CONFLICT(owner, client) DO UPDATE SET last_at = excluded.last_at")
+      .run(owner, client, ts, ts);
+  }
+
+  /**
+   * Воронка подписки: сколько личных ссылок выдано, сколько лент хоть раз
+   * забирали и сколько забирают с since — всего и по клиентам. Личные ленты
+   * («u:») и ссылки групп («f:») — отдельно.
+   */
+  calFetchStats(since: string): { issued: number; feeds: number; byKind: Record<"u" | "f", { ever: number; live: number; clients: Record<string, number> }> } {
+    const one = (sql: string, ...args: unknown[]): number => Number((this.db.prepare(sql).get(...args) as { n: number }).n);
+    const byKind = { u: { ever: 0, live: 0, clients: {} as Record<string, number> }, f: { ever: 0, live: 0, clients: {} as Record<string, number> } };
+    for (const kind of ["u", "f"] as const) {
+      const like = `${kind}:%`;
+      byKind[kind].ever = one("SELECT COUNT(DISTINCT owner) AS n FROM cal_fetches WHERE owner LIKE ?", like);
+      byKind[kind].live = one("SELECT COUNT(DISTINCT owner) AS n FROM cal_fetches WHERE owner LIKE ? AND last_at >= ?", like, since);
+      const rows = this.db.prepare("SELECT client, COUNT(*) AS n FROM cal_fetches WHERE owner LIKE ? AND last_at >= ? GROUP BY client").all(like, since) as Array<{ client: string; n: number }>;
+      for (const r of rows) byKind[kind].clients[r.client] = r.n;
+    }
+    return {
+      issued: one("SELECT COUNT(*) AS n FROM users WHERE cal_token IS NOT NULL"),
+      feeds: one("SELECT COUNT(*) AS n FROM cal_feeds WHERE revoked_at IS NULL"),
+      byKind,
+    };
+  }
+
   // ---- «Министерство Жалоб» ----
   addSupportTicket(userId: number, anon: boolean): number {
     const r = this.db.prepare("INSERT INTO support_tickets (user_id, anon, created_at) VALUES (?, ?, ?)").run(userId, anon ? 1 : 0, nowIso());

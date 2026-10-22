@@ -83,7 +83,7 @@ export function icsUid(o: Pick<Occurrence, "date" | "slot" | "start" | "subject"
   return `${Buffer.from(scope ? `${scope}|${positionKey(o)}` : positionKey(o)).toString("base64url")}@vish-bot`;
 }
 
-function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: number, cancelled: boolean): string[] | null {
+function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: number, cancelled: boolean, nowMs: number): string[] | null {
   if (o.start == null || o.end == null) return null;
   const startMs = localToMs(o.date, o.start);
   const endMs = localToMs(o.date, o.end);
@@ -103,7 +103,8 @@ function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: nu
   lines.push(`DESCRIPTION:${escapeText(desc.join(" · "))}`);
   lines.push(`CATEGORIES:${escapeText(occTypeLabel(o))}`);
   lines.push(`STATUS:${cancelled ? "CANCELLED" : "CONFIRMED"}`);
-  if (!cancelled && opts.alarmMinutes != null && opts.alarmMinutes > 0) {
+  // Прошедшим парам (ленты держат полгода прошлого) напоминание ни к чему.
+  if (!cancelled && opts.alarmMinutes != null && opts.alarmMinutes > 0 && endMs > nowMs) {
     lines.push("BEGIN:VALARM", "ACTION:DISPLAY", `TRIGGER:-PT${opts.alarmMinutes}M`, `DESCRIPTION:${escapeText(`Через ${opts.alarmMinutes} мин: ${summary}`)}`, "END:VALARM");
   }
   lines.push("END:VEVENT");
@@ -120,7 +121,7 @@ export function buildIcs(opts: IcsOptions): string {
   const push = (o: Occurrence, cancelled: boolean) => {
     const uid = icsUid(o, opts.uidScope);
     if (seen.has(uid)) return;
-    const ev = eventLines(o, opts, stamp, sequence, cancelled);
+    const ev = eventLines(o, opts, stamp, sequence, cancelled, now.getTime());
     if (!ev) return;
     seen.add(uid);
     lines.push(...ev);
