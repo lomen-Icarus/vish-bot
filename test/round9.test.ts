@@ -118,7 +118,7 @@ describe("преподаватель из реестра на /start", () => {
     expect(out).toMatch(/Включить напоминания/);
     // Новое меню: «Студенты» — в панели «🔍 Найти», приветствие ведёт туда.
     expect(JSON.stringify(calls.map((c) => c.payload.reply_markup))).toContain(BTN.find);
-    expect(out).toContain("🔍 Найти → 👥 Группы");
+    expect(out).toContain("🔍 Найти с ИИ → 👥 Группы");
     expect(JSON.stringify(calls.map((c) => c.payload.reply_markup))).toContain("ob:on");
     const u = deps.repo.getUser(7)!;
     expect(u.teacherMode).toBe(true);

@@ -14,7 +14,7 @@ const labels = (kb: unknown): string[][] => (plain(kb).keyboard as Array<Array<{
 
 describe("свои кнопки нижнего меню: сборка", () => {
   it("у кого ничего не выбрано — меню прежнее 2 × 3, тот же отпечаток (никому не придёт «новое меню»)", () => {
-    expect(labels(mainKeyboard())).toEqual([["📅 Сегодня", "📅 Завтра", "🗓 Неделя"], ["🔍 Найти", "🗂 Ещё", "🙋 Поддержка"]]);
+    expect(labels(mainKeyboard())).toEqual([["📅 Сегодня", "📅 Завтра", "🗓 Неделя"], ["🔍 Найти с ИИ", "🗂 Ещё", "🙋 Поддержка"]]);
     expect(menuStamp(mainKeyboard("collapsible", null))).toBe(menuStamp(mainKeyboard()));
     // Выбрали ровно то же — это «как у всех».
     expect(normalizeMenu([...DEFAULT_MENU].reverse())).toBeNull();
@@ -36,7 +36,7 @@ describe("свои кнопки нижнего меню: сборка", () => {
     expect(all.every((r) => r.length <= 3)).toBe(true);
     expect(labels(mainKeyboard("collapsible", ["today", "tomorrow", "week", "find", "changes", "teachers", "more", "complaint"]))).toEqual([
       ["📅 Сегодня", "📅 Завтра", "🗓 Неделя"],
-      ["🔍 Найти", "🔔 Изменения", "👨‍🏫 Где препод"],
+      ["🔍 Найти с ИИ", "🔔 Изменения", "👨‍🏫 Где препод"],
       ["🗂 Ещё", "🙋 Поддержка"],
     ]);
   });
@@ -47,7 +47,7 @@ describe("свои кнопки нижнего меню: сборка", () => {
       expect(isMenuText(menuButtonLabel(b, true))).toBe(true);
     }
     expect(labels(menuFor({ teacherMode: true, menuMode: "collapsible", menuButtons: ["groups", "more"] })).flat()).toEqual(["👥 Группы", "🗂 Ещё"]);
-    expect(labels(menuFor({ teacherMode: false, menuMode: "collapsible", menuButtons: ["groups", "more"] })).flat()).toEqual(["👥 Другие группы", "🗂 Ещё"]);
+    expect(labels(menuFor({ teacherMode: false, menuMode: "collapsible", menuButtons: ["groups", "more"] })).flat()).toEqual(["👥 Др. группы", "🗂 Ещё"]);
     // Скрытое меню остаётся скрытым, какие бы кнопки ни выбрали.
     expect(menuFor({ teacherMode: false, menuMode: "hidden", menuButtons: ["changes", "more"] })).toEqual({ remove_keyboard: true });
   });
