@@ -27,6 +27,8 @@ export interface PendingState {
   text?: string;
   /** For broadcast: whether the admin asked to pin it to the board. */
   board?: boolean;
+  /** Рассылка — опрос: бот разошлёт его сам и посчитает голоса (bcPoll.ts). */
+  poll?: { question: string; options: string[]; multiple: boolean };
   /** «Министерство Жалоб»: отправить анонимно; ticket — на какое обращение отвечает админ. */
   anon?: boolean;
   ticket?: number;

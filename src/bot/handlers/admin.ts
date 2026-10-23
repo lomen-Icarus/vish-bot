@@ -12,6 +12,7 @@ import { logger } from "../../logger.js";
 import { sleep } from "../../time.js";
 import { isUnreachable } from "../errors.js";
 import { CHANGES_HELD_KEY, CHANGES_RELEASE_KEY } from "../../notify/dispatcher.js";
+import { sendBcPoll } from "./bcPoll.js";
 
 export const adminHandlers = new Composer<BotContext>();
 
@@ -472,7 +473,7 @@ adminOnly.command("poll", async (ctx) => {
 async function startBroadcast(ctx: BotContext): Promise<void> {
   setPending(ctx.deps, ctx.user.id, { kind: "broadcast" });
   await ctx.reply(
-    `Пришли сообщение для рассылки: текст, фото с подписью, документ. Перед отправкой покажу, кому и скольким людям, и попрошу подтвердить.\n\nТам же можно повесить текст на доску объявлений в «${MORE_BTN.changes}» на ${BOARD_HOURS} ч. По умолчанию не вешаю: доска только для важного.`,
+    `Пришли сообщение для рассылки: текст, фото с подписью, документ или опрос (голоса посчитаю сам). Перед отправкой покажу, кому и скольким людям, и попрошу подтвердить.\n\nТам же можно повесить текст на доску объявлений в «${MORE_BTN.changes}» на ${BOARD_HOURS} ч. По умолчанию не вешаю: доска только для важного.`,
     { reply_markup: cancelKeyboard() },
   );
 }
@@ -514,7 +515,15 @@ adminOnly.on("message", async (ctx, next) => {
     return next();
   }
   const text = (ctx.msg.text ?? ctx.msg.caption ?? "").trim();
-  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: ctx.chat.id, messageId: ctx.msg.message_id, text }, 15 * 60_000);
+  // Опрос бот разошлёт сам (bcPoll.ts): у копий голоса не собрать.
+  const p = ctx.msg.poll;
+  if (p?.type === "quiz") {
+    setPending(ctx.deps, ctx.user.id, { kind: "broadcast" });
+    await ctx.reply("Викторину разослать не могу. Пришли обычный опрос или другое сообщение.", { reply_markup: cancelKeyboard() });
+    return;
+  }
+  const poll = p ? { question: p.question, options: p.options.map((o) => o.text), multiple: p.allows_multiple_answers } : undefined;
+  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: ctx.chat.id, messageId: ctx.msg.message_id, text, ...(poll ? { poll } : {}) }, 15 * 60_000);
   await ctx.reply("Кому отправить?", { reply_markup: targetKeyboard() });
 });
 
@@ -548,9 +557,9 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go(?::\d+)?|topic:\w+|c\d)$/, as
   }
   if (action !== "go") {
     // Target chosen: ask for confirmation.
-    setPending(ctx.deps, ctx.user.id, { kind: "broadcast-confirm", chatId: pending.chatId, messageId: pending.messageId, text: pending.text, target: action, board: false }, 15 * 60_000);
+    setPending(ctx.deps, ctx.user.id, { kind: "broadcast-confirm", chatId: pending.chatId, messageId: pending.messageId, text: pending.text, poll: pending.poll, target: action, board: false }, 15 * 60_000);
     await ctx.answerCallbackQuery();
-    await showConfirm(ctx, action, false, !!pending.text, pending.messageId);
+    await showConfirm(ctx, action, false, !!pending.text, pending.messageId, !!pending.poll);
     return;
   }
   if (pending.kind !== "broadcast-confirm" || !pending.target) {
@@ -568,11 +577,14 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go(?::\d+)?|topic:\w+|c\d)$/, as
   clearPending(ctx.deps, ctx.user.id);
   await ctx.answerCallbackQuery();
   await ctx.editMessageText(`Отправляю ${label}: ${users.length} чел…`);
+  const repo = ctx.deps.repo;
+  const poll = pending.poll ? repo.bcPoll(repo.createBcPoll(pending.poll.question, pending.poll.options, pending.poll.multiple, ctx.user.id)) : null;
   let ok = 0;
   let failed = 0;
   for (const u of users) {
     try {
-      await ctx.api.copyMessage(u.id, pending.chatId, pending.messageId);
+      if (poll) await sendBcPoll(ctx.api, repo, poll, u.id);
+      else await ctx.api.copyMessage(u.id, pending.chatId, pending.messageId);
       ok++;
     } catch (err) {
       failed++;
@@ -583,6 +595,11 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go(?::\d+)?|topic:\w+|c\d)$/, as
   }
   let boardNote = "";
   let kb: InlineKeyboard | undefined;
+  if (poll) {
+    repo.setBcPollSent(poll.id, ok);
+    boardNote = "\nОпрос анонимный: голоса считаю сам, итоги — по кнопке.";
+    kb = new InlineKeyboard().text("📊 Итоги опроса", `bpr:${poll.id}`);
+  }
   if (board && pending.text) {
     const id = ctx.deps.repo.addAnnouncement(pending.text.slice(0, 2000), ctx.user.id, BOARD_HOURS);
     boardNote = `\nНа доске объявлений ${BOARD_HOURS} ч как #${id}.`;
@@ -592,12 +609,13 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go(?::\d+)?|topic:\w+|c\d)$/, as
 });
 
 /** The confirmation screen, with the board toggle. */
-async function showConfirm(ctx: BotContext, target: string, board: boolean, hasText: boolean, messageId: number): Promise<void> {
+async function showConfirm(ctx: BotContext, target: string, board: boolean, hasText: boolean, messageId: number, isPoll = false): Promise<void> {
   const { users, label } = resolveTarget(ctx, target);
   const kb = new InlineKeyboard().text(`✅ Отправить ${users.length} чел.`, `bc:go:${messageId}`).row();
   if (hasText) kb.text(`📌 На доску объявлений: ${board ? `да, ${BOARD_HOURS} ч` : "нет"}`, "bc:board").row();
   kb.text("◀️ Другая аудитория", "bc:back").text("✖️ Отмена", "bc:cancel");
-  const note = hasText ? `\n\nДоска объявлений висит в «${BTN.more} → ${MORE_BTN.changes}» и видна всем, кто откроет этот экран. Вешай туда только важное.` : "";
+  const pollNote = isPoll ? "\n\nОпрос разошлю от бота анонимным: голоса соберу в одни итоги, кто как голосовал — не узнаю." : "";
+  const note = pollNote + (hasText ? `\n\nДоска объявлений висит в «${BTN.more} → ${MORE_BTN.changes}» и видна всем, кто откроет этот экран. Вешай туда только важное.` : "");
   await ctx.editMessageText(`Отправить ${label}: <b>${users.length}</b> чел.?${note}\n\nЭто нельзя отменить после нажатия.`, { parse_mode: "HTML", reply_markup: kb });
 }
 
@@ -608,7 +626,7 @@ adminOnly.callbackQuery("bc:board", async (ctx) => {
   setPending(ctx.deps, ctx.user.id, { ...pending, board }, 15 * 60_000);
   await ctx.answerCallbackQuery({ text: board ? `Повешу на доску на ${BOARD_HOURS} ч` : "На доску не вешаю" });
   try {
-    await showConfirm(ctx, pending.target, board, !!pending.text, pending.messageId ?? 0);
+    await showConfirm(ctx, pending.target, board, !!pending.text, pending.messageId ?? 0, !!pending.poll);
   } catch {
     /* ignore */
   }
@@ -617,7 +635,7 @@ adminOnly.callbackQuery("bc:board", async (ctx) => {
 adminOnly.callbackQuery("bc:back", async (ctx) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || !pending.chatId || !pending.messageId) return void (await ctx.answerCallbackQuery({ text: "Начни заново: /broadcast", show_alert: true }));
-  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: pending.chatId, messageId: pending.messageId, text: pending.text }, 15 * 60_000);
+  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: pending.chatId, messageId: pending.messageId, text: pending.text, poll: pending.poll }, 15 * 60_000);
   await ctx.answerCallbackQuery();
   await ctx.editMessageText("Кому отправить?", { reply_markup: targetKeyboard() });
 });

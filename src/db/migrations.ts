@@ -533,4 +533,29 @@ export const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   `,
+  // Опрос в рассылке админа (src/bot/handlers/bcPoll.ts). Каждый получает свой
+  // анонимный опрос, поэтому голоса считает бот: voter — «tg:<id опроса у
+  // человека>» (кто это, не знает и сам бот) или «u:<uid>» для МАКС, где опрос —
+  // кнопки и повторное нажатие надо узнать. Наружу — только итоги цифрами.
+  `
+  CREATE TABLE bc_polls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    options_json TEXT NOT NULL,
+    multiple INTEGER NOT NULL DEFAULT 0,
+    admin_id INTEGER,
+    sent INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE bc_poll_copies (
+    tg_poll_id TEXT PRIMARY KEY,
+    poll_id INTEGER NOT NULL
+  );
+  CREATE TABLE bc_poll_votes (
+    poll_id INTEGER NOT NULL,
+    voter TEXT NOT NULL,
+    options_json TEXT NOT NULL,
+    PRIMARY KEY (poll_id, voter)
+  );
+  `,
 ];

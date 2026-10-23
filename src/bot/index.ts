@@ -5,6 +5,7 @@ import { clearPending, takePending, TEXT_PENDING } from "./context.js";
 import { scheduleHandlers } from "./handlers/schedule.js";
 import { settingsHandlers } from "./handlers/settings.js";
 import { adminHandlers } from "./handlers/admin.js";
+import { bcPollHandlers } from "./handlers/bcPoll.js";
 import { freeTextSearch, miscHandlers } from "./handlers/misc.js";
 import { calFeedHandlers } from "./handlers/calFeeds.js";
 import { ppaHandlers } from "./handlers/ppa.js";
@@ -48,8 +49,9 @@ export function createBot(deps: Deps): Bot<BotContext> {
   bot.use(async (ctx, next) => {
     ctx.deps = deps;
     const from = ctx.from;
-    if (ctx.channelPost) {
-      // Channel posts carry no sender; only the news relay handles them.
+    if (ctx.channelPost || ctx.poll) {
+      // Channel posts and poll states carry no sender: the former go only to
+      // the news relay, the latter only to the broadcast poll tally (bcPoll.ts).
       ctx.isAdmin = false;
       await next();
       return;
@@ -134,6 +136,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
     await next();
   });
 
+  bot.use(bcPollHandlers);
   bot.use(adminHandlers);
   // Календари групп без привязки к человеку: /calfeeds (только админ).
   bot.use(calFeedHandlers);

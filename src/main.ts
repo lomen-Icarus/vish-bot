@@ -177,7 +177,7 @@ async function main(): Promise<void> {
     setInterval(() => void publicUrl.refresh(), PUBLIC_URL_CHECK_MS).unref();
   }
 
-  const runner = run(bot, { runner: { fetch: { allowed_updates: ["message", "callback_query", "inline_query", "my_chat_member", "channel_post"] } } });
+  const runner = run(bot, { runner: { fetch: { allowed_updates: ["message", "callback_query", "inline_query", "my_chat_member", "channel_post", "poll"] } } });
   logger.info("polling Telegram for updates");
   // МАКС не должен ронять Telegram: не пустил токен — бот работает дальше без моста.
   if (max) await max.start(bot).catch((err: unknown) => logger.error({ err: String(err).slice(0, 200) }, "MAX bridge not started"));

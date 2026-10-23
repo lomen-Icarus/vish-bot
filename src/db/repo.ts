@@ -1865,10 +1865,66 @@ export class Repo {
     this.db.prepare("DELETE FROM rec_requests WHERE id = ?").run(id);
   }
 
+  // ---------- опрос в рассылке ----------
+  createBcPoll(question: string, options: string[], multiple: boolean, adminId: number | null): number {
+    return this.db
+      .prepare("INSERT INTO bc_polls (question, options_json, multiple, admin_id, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(question, JSON.stringify(options), multiple ? 1 : 0, adminId, nowIso()).lastInsertRowid;
+  }
+
+  bcPoll(id: number): BcPoll | null {
+    const r = this.db.prepare("SELECT id, question, options_json, multiple, sent FROM bc_polls WHERE id = ?").get(id) as
+      | { id: number; question: string; options_json: string; multiple: number; sent: number }
+      | undefined;
+    return r ? { id: r.id, question: r.question, options: JSON.parse(r.options_json) as string[], multiple: r.multiple === 1, sent: r.sent } : null;
+  }
+
+  setBcPollSent(id: number, sent: number): void {
+    this.db.prepare("UPDATE bc_polls SET sent = ? WHERE id = ?").run(sent, id);
+  }
+
+  /** Опрос, отправленный человеку в Telegram (его poll.id), — какой это опрос рассылки. */
+  addBcPollCopy(tgPollId: string, pollId: number): void {
+    this.db.prepare("INSERT OR REPLACE INTO bc_poll_copies (tg_poll_id, poll_id) VALUES (?, ?)").run(tgPollId, pollId);
+  }
+
+  bcPollOfCopy(tgPollId: string): number | null {
+    const r = this.db.prepare("SELECT poll_id AS pollId FROM bc_poll_copies WHERE tg_poll_id = ?").get(tgPollId) as { pollId: number } | undefined;
+    return r?.pollId ?? null;
+  }
+
+  /** Выбор одного голосующего; пустой — голос отозван. */
+  setBcPollVote(pollId: number, voter: string, options: number[]): void {
+    if (!options.length) this.db.prepare("DELETE FROM bc_poll_votes WHERE poll_id = ? AND voter = ?").run(pollId, voter);
+    else this.db.prepare("INSERT OR REPLACE INTO bc_poll_votes (poll_id, voter, options_json) VALUES (?, ?, ?)").run(pollId, voter, JSON.stringify(options));
+  }
+
+  bcPollVote(pollId: number, voter: string): number[] {
+    const r = this.db.prepare("SELECT options_json FROM bc_poll_votes WHERE poll_id = ? AND voter = ?").get(pollId, voter) as { options_json: string } | undefined;
+    return r ? (JSON.parse(r.options_json) as number[]) : [];
+  }
+
+  /** Итоги: голоса по вариантам и сколько человек проголосовало. */
+  bcPollTally(pollId: number, optionCount: number): { counts: number[]; voters: number } {
+    const rows = this.db.prepare("SELECT options_json FROM bc_poll_votes WHERE poll_id = ?").all(pollId) as Array<{ options_json: string }>;
+    const counts = new Array<number>(optionCount).fill(0);
+    for (const r of rows) for (const i of JSON.parse(r.options_json) as number[]) if (i >= 0 && i < optionCount) counts[i]!++;
+    return { counts, voters: rows.length };
+  }
+
   /** Выполнить несколько записей одной транзакцией (для применения отчёта записывалки). */
   transaction(fn: () => void): void {
     this.db.transaction(fn)();
   }
+}
+
+export interface BcPoll {
+  id: number;
+  question: string;
+  options: string[];
+  multiple: boolean;
+  /** Скольким людям опрос ушёл. */
+  sent: number;
 }
 
 export interface RecRequestRow {
