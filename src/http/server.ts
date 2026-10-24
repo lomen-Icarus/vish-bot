@@ -9,11 +9,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import path from "node:path";
 import type { Repo } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
-import { groupCalendar } from "../schedule/calendar.js";
+import { FEED_PAST_DAYS, groupCalendar } from "../schedule/calendar.js";
 import { applyRecorderReport, GENERAL_SLOT_TITLE, recorderTasks, type RecReport, type RecReportEffect } from "../bot/recorder.js";
 import { tmaContext, tmaSubmit } from "../bot/tma.js";
 import { verifyInitData } from "./initData.js";
 import { TMA_PAGE } from "./tmaPage.js";
+import { homePage, privacyPage } from "./sitePages.js";
 import { quorumSnapshot } from "./quorum.js";
 import { logger } from "../logger.js";
 
@@ -50,6 +51,8 @@ export interface HttpDeps {
   botToken?: string;
   /** Вызывается после отчёта записывалки: бот уведомляет админа. */
   onRecorderReport?: (effect: RecReportEffect) => void;
+  /** Почта для связи на главной и в /privacy (CONTACT_EMAIL). */
+  contactEmail?: string;
 }
 
 const MAX_DECK_BYTES = 40 * 1024 * 1024;
@@ -100,11 +103,31 @@ export function calendarPath(token: string): string {
   return `/cal/${token}.ics`;
 }
 
+export type FeedClient = "google" | "yandex" | "apple" | "outlook" | "browser" | "other";
+
+/**
+ * Чем забирают ленту — по User-Agent (сам он нигде не хранится). Google —
+ * «Google-Calendar-Importer», iPhone — dataaccessd, Mac — CalendarAgent;
+ * подпись Яндекса официально не описана, поэтому ловим любое «Yandex».
+ * Браузер — человек открыл ссылку, а не подписался.
+ */
+export function feedClient(ua: string | undefined): FeedClient {
+  const s = ua ?? "";
+  if (/Google-Calendar-Importer/i.test(s)) return "google";
+  if (/Yandex/i.test(s)) return "yandex";
+  if (/dataaccessd|CalendarAgent|^iOS\/|^macOS\//i.test(s)) return "apple";
+  if (/Microsoft|Outlook/i.test(s)) return "outlook";
+  if (/^Mozilla\//.test(s)) return "browser";
+  return "other";
+}
+
 export function createHttpServer(deps: HttpDeps): Server {
   const cache = new Map<string, { at: number; body: Buffer }>();
+  const site = { "/": homePage(deps.contactEmail), "/privacy": privacyPage(deps.contactEmail) };
   let quorum: { at: number; body: string } | null = null;
 
-  type FeedResult = { status: number; body: Buffer; type: string };
+  /** owner — чья лента (u:<id> личная, f:<id> ссылка группы), для воронки в /stats. */
+  type FeedResult = { status: number; body: Buffer; type: string; owner?: string };
   const notFound = (why: string): FeedResult => ({ status: 404, body: Buffer.from(why), type: "text/plain; charset=utf-8" });
 
   /**
@@ -136,7 +159,8 @@ export function createHttpServer(deps: HttpDeps): Server {
     // Лента группы у всех получателей одна и та же: ключ без токена, собирается
     // один раз. «|» в токене не бывает, так что с личными ключами не пересечётся.
     const prefix = `feed|${group.key}|${f.ppa ? "ppa" : ""}|`;
-    return cached(prefix, `${prefix}${deps.repo.lastPollRun()?.finishedAt ?? ""}`, () => groupCalendar(deps.service, group, { subgroup: null, alarmMinutes: null, refreshInterval: "PT1H", stableSequence: true, allPpa: f.ppa, uidScope: group.key }).ics);
+    const r = cached(prefix, `${prefix}${deps.repo.lastPollRun()?.finishedAt ?? ""}`, () => groupCalendar(deps.service, group, { subgroup: null, alarmMinutes: null, refreshInterval: "PT1H", stableSequence: true, allPpa: f.ppa, uidScope: group.key, pastDays: FEED_PAST_DAYS }).ics);
+    return { ...r, owner: `f:${f.id}` };
   };
 
   const feed = (token: string): FeedResult => {
@@ -147,7 +171,8 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (!group) return notFound("group not chosen");
     // Cache key changes whenever the user's settings or the portal data change, so a fresh feed is never stale.
     const key = [token, group.key, user.subgroup ?? "", user.calAlarmMin ?? "", deps.repo.lastPollRun()?.finishedAt ?? ""].join("|");
-    return cached(`${token}|`, key, () => groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H", stableSequence: true, ppaDebts: deps.repo.ppaDebts(user.id, group.key) }).ics);
+    const r = cached(`${token}|`, key, () => groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H", stableSequence: true, ppaDebts: deps.repo.ppaDebts(user.id, group.key), pastDays: FEED_PAST_DAYS }).ics);
+    return { ...r, owner: `u:${user.id}` };
   };
 
   const slidesDir = (): string => deps.slidesDir ?? "./data/slides";
@@ -376,6 +401,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       void handleRec(req, res, "sync");
       return;
     }
+    // Главная и политика конфиденциальности сервиса календарей: их адреса — на экране входа Google.
+    if (url.pathname === "/" || url.pathname === "/privacy") {
+      send(200, site[url.pathname], "text/html; charset=utf-8", { "Cache-Control": "public, max-age=3600" });
+      return;
+    }
     if (url.pathname === "/tma" && deps.botToken) {
       send(200, TMA_PAGE, "text/html; charset=utf-8", { "Cache-Control": "no-store" });
       return;
@@ -385,6 +415,13 @@ export function createHttpServer(deps: HttpDeps): Server {
       try {
         const r = feed(m[1]!);
         send(r.status, r.body, r.type, r.status === 200 ? { "Content-Disposition": 'inline; filename="vish.ics"' } : {});
+        if (r.owner && r.status === 200 && method === "GET") {
+          try {
+            deps.repo.noteCalFetch(r.owner, feedClient(req.headers["user-agent"]));
+          } catch (err) {
+            logger.debug({ err: String(err) }, "calendar fetch not noted");
+          }
+        }
       } catch (err) {
         logger.warn({ err: String(err) }, "calendar feed failed");
         send(500, "feed error", "text/plain; charset=utf-8");

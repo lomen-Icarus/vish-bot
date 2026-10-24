@@ -28,6 +28,7 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
       try {
         const r = await opts.service.poll();
         lastPollAt = Date.now();
+        await opts.notifier.alertEmptyAccepted(r.emptyAccepted);
         const delivered = await opts.notifier.dispatchChangeEvents();
         if (r.events.length || delivered) logger.info({ reason, events: r.events.length, delivered }, "change notifications dispatched");
       } catch (err) {

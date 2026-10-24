@@ -1,7 +1,7 @@
 import type { Api, RawApi } from "grammy";
 import { GrammyError, InlineKeyboard, InputFile, InputMediaBuilder } from "grammy";
 import type { ChangeEventRow, Repo, User } from "../db/repo.js";
-import type { ScheduleService } from "../schedule/service.js";
+import { EMPTY_PAGE_CONFIRMATIONS, type ScheduleService } from "../schedule/service.js";
 import type { ChangeEvent } from "../schedule/diff.js";
 import { captionFits, esc as escapeHtml, formatDay, formatNotice, filterSubgroup, plural } from "../schedule/format.js";
 import { isSessionPeriod, occTypeLabel, type Occurrence } from "../schedule/model.js";
@@ -96,6 +96,25 @@ export class Notifier {
     /** Для ссылок «t.me/бот?start=…» в подписи к альбому (у альбома нет кнопок). */
     private readonly botUsername: string | null = null,
   ) {}
+
+  /**
+   * Портал несколько опросов подряд отдаёт группам пустое расписание, и бот
+   * его принял (EMPTY_PAGE_CONFIRMATIONS): админу — проверить портал.
+   */
+  async alertEmptyAccepted(groupKeys: string[]): Promise<void> {
+    if (!groupKeys.length) return;
+    const titles = groupKeys.map((k) => escapeHtml(this.service.group(k)?.title ?? k));
+    const text = [
+      "⚠️ <b>Портал отдаёт пустое расписание</b>",
+      "",
+      `${titles.slice(0, 15).join(", ")}${titles.length > 15 ? ` …и ещё ${titles.length - 15}` : ""}: ${EMPTY_PAGE_CONFIRMATIONS} ${plural(EMPTY_PAGE_CONFIRMATIONS, "опрос", "опроса", "опросов")} подряд без единой пары, поэтому я это принял — пары ушли из расписания и календарей.`,
+      "",
+      "Если это сбой портала, пары вернутся с первым исправным опросом. Если началось окно сессии, а её расписание ещё не выложено, — всё в порядке.",
+    ].join("\n");
+    for (const id of this.adminIds) {
+      await this.api.sendMessage(id, text, { parse_mode: "HTML" }).catch((err: unknown) => logger.warn({ err: String(err), adminId: id }, "empty schedule notice failed"));
+    }
+  }
 
   /**
    * Слайды записанного вебинара: PDF уходит тем, у кого эта пара в расписании

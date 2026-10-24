@@ -199,6 +199,15 @@ const schema = z.object({
    * подписки на календарь бот выдаёт через него (см. src/http/publicUrl.ts).
    */
   PUBLIC_URL_FALLBACK: publicUrl,
+  /**
+   * Почта для связи на сайте сервиса календарей (главная и /privacy): её
+   * требует экран входа Google. В .env, а не в коде — репозиторий публичный.
+   * Не похоже на адрес — не показываем вовсе.
+   */
+  CONTACT_EMAIL: z
+    .string()
+    .optional()
+    .transform((v) => (v && /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(v.trim()) ? v.trim() : undefined)),
 });
 
 export type Config = z.infer<typeof schema>;

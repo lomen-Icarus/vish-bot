@@ -533,4 +533,17 @@ export const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   `,
+  // Кто забирает ленты календаря (воронка подписки в /stats): owner — чья
+  // лента («u:<id>» личная, «f:<id>» ссылка группы от админа), client — чем
+  // забирают (google, yandex, apple, outlook, browser, other; по User-Agent,
+  // сам он не хранится). Одна лента на двух устройствах — две строки.
+  `
+  CREATE TABLE cal_fetches (
+    owner TEXT NOT NULL,
+    client TEXT NOT NULL,
+    first_at TEXT NOT NULL,
+    last_at TEXT NOT NULL,
+    PRIMARY KEY (owner, client)
+  );
+  `,
 ];

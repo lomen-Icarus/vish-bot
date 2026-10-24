@@ -15,6 +15,9 @@ import { calendarPath } from "../../http/server.js";
 import { fmtDDMM, todayMsk } from "../../time.js";
 import { publicBase } from "../../http/publicUrl.js";
 
+/** Счётчик «выдали ссылку-подписку» (ui_counters); в /stats — в разделе календаря, а не среди нажатий. */
+export const CAL_LINK_COUNTER = "cal:link";
+
 export const calendarHandlers = new Composer<BotContext>();
 
 function subscriptionsEnabled(ctx: BotContext): boolean {
@@ -153,6 +156,8 @@ async function sendSubscription(ctx: BotContext, alarm: number): Promise<void> {
   if (!group || !subscriptionsEnabled(ctx)) return void (await ctx.reply(group ? "Подписка пока не настроена." : groupRequiredText()));
   ctx.deps.repo.updateUser(ctx.user.id, { calAlarmMin: alarm > 0 ? alarm : null });
   const token = ctx.deps.repo.ensureCalToken(ctx.user.id);
+  // Воронка в /stats: ссылку выдали (не нажатие, а дошедший до ссылки человек).
+  ctx.deps.repo.bumpCounter(todayMsk(), CAL_LINK_COUNTER);
   const base = publicBase(ctx.deps)!;
   const http = `${base}${calendarPath(token)}`;
   const webcal = http.replace(/^https?:\/\//, "webcal://");
@@ -165,9 +170,11 @@ async function sendSubscription(ctx: BotContext, alarm: number): Promise<void> {
       "<b>iPhone:</b> Настройки → Приложения → Календарь → Учётные записи → Добавить → Другое → «Подписной календарь» → вставь ссылку. Или просто открой:",
       `<code>${esc(webcal)}</code>`,
       "",
-      "<b>Android / Google Календарь:</b> на сайте calendar.google.com слева «Другие календари» → «+» → «По URL» → вставь ссылку. Телефон подхватит календарь сам.",
+      "<b>Android / Google Календарь:</b> на сайте calendar.google.com (с компьютера или в версии для ПК) слева «Другие календари» → «+» → «По URL» → вставь ссылку. Потом в приложении на телефоне: ☰ → Настройки → календарь группы (бывает под «Показать ещё») → включи «Синхронизация», иначе на телефоне его не видно.",
       "",
-      "Ссылка личная и постоянная: сменишь группу или подгруппу в боте — подписка обновится сама. Телефон обычно проверяет подписки раз в несколько часов.",
+      "<b>Яндекс Календарь:</b> слева «Подписки» → «Добавить» → вставь ссылку. Именно подписка, не импорт: импорт не обновляется.",
+      "",
+      "Ссылка личная и постоянная: сменишь группу или подгруппу в боте — подписка обновится сама. iPhone проверяет подписку раз в несколько часов, Google и Яндекс — реже: пары и изменения могут дойти только через сутки-двое.",
     ].join("\n"),
     { parse_mode: "HTML", link_preview_options: { is_disabled: true } },
   );

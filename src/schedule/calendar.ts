@@ -18,14 +18,25 @@ import { addDays, todayMsk, type LocalDate } from "../time.js";
  * сегодня: после конца окна подписанный календарь иначе пустел и стирал
  * оставшиеся экзамены.
  */
-export function calendarWindow(service: ScheduleService, today: LocalDate = todayMsk()): { from: LocalDate; to: LocalDate } {
+export function calendarWindow(service: ScheduleService, today: LocalDate = todayMsk(), pastDays = 0): { from: LocalDate; to: LocalDate } {
   const anchor = service.weekOneMonday(service.semesterFor(today));
   const semesterEnd = anchor ? addDays(anchor, SEMESTER_WEEKS * 7 + 49) : addDays(today, 120);
   const floor = addDays(today, 45);
   const cap = addDays(today, 150);
   const end = semesterEnd > floor ? semesterEnd : floor;
-  return { from: today, to: end < cap ? end : cap };
+  return { from: addDays(today, -pastDays), to: end < cap ? end : cap };
 }
+
+/**
+ * Сколько дней прошлого держат ленты-подписки. Пара, пропавшая из ленты,
+ * удаляется из подписанного календаря, и раньше вчерашние пары исчезали
+ * каждый день. 180 дней — прошлый семестр с сессией; бесконечно не держим:
+ * лента росла бы год от года. Прошлое собирается из сохранённых страниц
+ * портала, а они и неделя 1 привязаны к учебному году: со сменой года
+ * весенние пары (кроме сессии) из ленты уходят раньше 180 дней. Файл .ics —
+ * разовый, ему прошлое не нужно.
+ */
+export const FEED_PAST_DAYS = 180;
 
 export interface GroupCalendar {
   ics: string;
@@ -35,8 +46,8 @@ export interface GroupCalendar {
 }
 
 /** Full calendar of a group from today to the end of the semester. */
-export function groupCalendar(service: ScheduleService, group: LogicalGroup, opts: { subgroup: number | null; alarmMinutes: number | null; now?: Date; refreshInterval?: string; stableSequence?: boolean; today?: LocalDate; ppaDebts?: string[]; allPpa?: boolean; uidScope?: string }): GroupCalendar {
-  const { from, to } = calendarWindow(service, opts.today);
+export function groupCalendar(service: ScheduleService, group: LogicalGroup, opts: { subgroup: number | null; alarmMinutes: number | null; now?: Date; refreshInterval?: string; stableSequence?: boolean; today?: LocalDate; ppaDebts?: string[]; allPpa?: boolean; uidScope?: string; pastDays?: number }): GroupCalendar {
+  const { from, to } = calendarWindow(service, opts.today, opts.pastDays);
   // Отмеченные пересдачи (ППА) человека — в его личный календарь; allPpa —
   // все пересдачи группы (календарь группы от админа, /calfeeds).
   const ppa = opts.allPpa ? service.ppaLessons(group, "all", from, to) : opts.ppaDebts?.length ? service.ppaLessons(group, opts.ppaDebts, from, to) : [];
