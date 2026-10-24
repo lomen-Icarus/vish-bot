@@ -34,6 +34,10 @@
 | `PUBLIC_URL` | `http://srv3.frienworld.space:40070` | кнопка «Подписка» в календаре: телефон сам обновляет расписание |
 | `PUBLIC_URL_FALLBACK` | второй HTTPS-адрес бота | запасной для ссылок подписки: бот раз в 5 минут проверяет основной и, если тот не отвечает, выдаёт ссылки через запасной |
 | `CONTACT_EMAIL` | почта для связи | показывается на главной и в `/privacy` (calendar.secretvish.ru) — их адреса указаны на экране входа Google; без неё вместо почты «через Telegram-бота» |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth-клиент «Web application» из Google Cloud (Google Auth Platform → Clients), адрес возврата `https://calendar.secretvish.ru/oauth/google`, право `calendar.app.created` | кнопка «⚡ Google Календарь» в 📆 Календарь: бот сам записывает пары в отдельный календарь человека, переносы — после каждого опроса портала. Статус — строка «Google Календарь» в `/health` |
+| `CAL_PUSH` | `admins` (по умолчанию) \| `all` \| `off` | кому видна кнопка: сначала только админам (проверка), потом всем |
+| `CAL_TOKEN_KEY` | 32 случайных байта (`openssl rand -hex 32`), необязательно | ключ шифрования токенов Google в базе; без него ключ выводится из `BOT_TOKEN` (сменили токен бота — людям нужно подключиться заново) |
+| `YANDEX_CLIENT_ID` / `YANDEX_CLIENT_SECRET` | приложение на oauth.yandex.ru | пока только хранятся: подключение Яндекса — следующим шагом |
 | `PORTAL_LOGIN` / `PORTAL_PASSWORD` | учётка портала | полный справочник преподавателей и их очные пары; без неё бот знает только преподавателей дистанционных пар |
 | `POSTER_THEME` | `midnight` \| `editorial` \| `brutalist` \| `timeline` | оформление постеров |
 

@@ -173,6 +173,49 @@ interface UserRow {
 }
 
 /** Подписка на календарь группы, выпущенная админом: ни к кому не привязана. */
+export type CalProvider = "google" | "yandex";
+export type CalLinkStatus = "ok" | "revoked" | "gone" | "off";
+
+/** Подключение календаря человека для прямой записи. */
+export interface CalLink {
+  userId: number;
+  provider: CalProvider;
+  tokenEnc: string | null;
+  calendarId: string | null;
+  groupKey: string | null;
+  status: CalLinkStatus;
+  createdAt: string;
+  syncedAt: string | null;
+  error: string | null;
+}
+
+interface CalLinkRow {
+  user_id: number;
+  provider: CalProvider;
+  token_enc: string | null;
+  calendar_id: string | null;
+  group_key: string | null;
+  status: CalLinkStatus;
+  created_at: string;
+  synced_at: string | null;
+  error: string | null;
+}
+
+function rowToCalLink(r: CalLinkRow): CalLink {
+  return { userId: r.user_id, provider: r.provider, tokenEnc: r.token_enc, calendarId: r.calendar_id, groupKey: r.group_key, status: r.status, createdAt: r.created_at, syncedAt: r.synced_at, error: r.error };
+}
+
+/** Событие, которое бот поставил в календарь: uid пары, id события, отпечаток, дата пары. */
+export interface CalEventRow {
+  uid: string;
+  eventId: string;
+  hash: string;
+  date: string;
+}
+
+/** Сколько живёт метка входа (state) от нажатия «Подключить» до возврата от Google. */
+export const OAUTH_STATE_TTL_MS = 30 * 60_000;
+
 export interface CalFeed {
   id: number;
   token: string;
@@ -1672,6 +1715,78 @@ export class Repo {
       feeds: one("SELECT COUNT(*) AS n FROM cal_feeds WHERE revoked_at IS NULL"),
       byKind,
     };
+  }
+
+  // ---- прямая запись в календари (Google, Яндекс) ----
+  calLink(userId: number, provider: CalProvider): CalLink | null {
+    const r = this.db.prepare("SELECT * FROM cal_links WHERE user_id = ? AND provider = ?").get(userId, provider) as CalLinkRow | undefined;
+    return r ? rowToCalLink(r) : null;
+  }
+
+  /** Подключения в этом состоянии (по умолчанию — живые). */
+  calLinks(provider: CalProvider, status: CalLinkStatus = "ok"): CalLink[] {
+    return (this.db.prepare("SELECT * FROM cal_links WHERE provider = ? AND status = ? ORDER BY user_id").all(provider, status) as CalLinkRow[]).map(rowToCalLink);
+  }
+
+  /** Сколько подключений в каждом состоянии — для /health. */
+  calLinkCounts(provider: CalProvider): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const r of this.db.prepare("SELECT status, COUNT(*) AS n FROM cal_links WHERE provider = ? GROUP BY status").all(provider) as Array<{ status: string; n: number }>) out[r.status] = r.n;
+    return out;
+  }
+
+  /** Новое или повторное подключение: токен, календарь и группа его названия; состояние — ok. */
+  saveCalLink(userId: number, provider: CalProvider, link: { tokenEnc: string; calendarId: string; groupKey: string | null }): void {
+    this.db
+      .prepare(
+        `INSERT INTO cal_links (user_id, provider, token_enc, calendar_id, group_key, status, created_at, error) VALUES (?, ?, ?, ?, ?, 'ok', ?, NULL)
+         ON CONFLICT(user_id, provider) DO UPDATE SET token_enc = excluded.token_enc, calendar_id = excluded.calendar_id, group_key = excluded.group_key, status = 'ok', error = NULL`,
+      )
+      .run(userId, provider, link.tokenEnc, link.calendarId, link.groupKey, nowIso());
+  }
+
+  updateCalLink(userId: number, provider: CalProvider, patch: Partial<{ status: CalLinkStatus; tokenEnc: string | null; groupKey: string | null; syncedAt: string; error: string | null }>): void {
+    const map: Record<string, unknown> = {};
+    if (patch.status !== undefined) map.status = patch.status;
+    if (patch.tokenEnc !== undefined) map.token_enc = patch.tokenEnc;
+    if (patch.groupKey !== undefined) map.group_key = patch.groupKey;
+    if (patch.syncedAt !== undefined) map.synced_at = patch.syncedAt;
+    if (patch.error !== undefined) map.error = patch.error;
+    const keys = Object.keys(map);
+    if (!keys.length) return;
+    this.db.prepare(`UPDATE cal_links SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE user_id = ? AND provider = ?`).run(...keys.map((k) => map[k]), userId, provider);
+  }
+
+  calEvents(userId: number, provider: CalProvider): CalEventRow[] {
+    return this.db.prepare("SELECT uid, event_id AS eventId, hash, date FROM cal_events WHERE user_id = ? AND provider = ?").all(userId, provider) as CalEventRow[];
+  }
+
+  putCalEvent(userId: number, provider: CalProvider, ev: CalEventRow): void {
+    this.db
+      .prepare("INSERT INTO cal_events (user_id, provider, uid, event_id, hash, date) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, provider, uid) DO UPDATE SET event_id = excluded.event_id, hash = excluded.hash, date = excluded.date")
+      .run(userId, provider, ev.uid, ev.eventId, ev.hash, ev.date);
+  }
+
+  dropCalEvent(userId: number, provider: CalProvider, uid: string): void {
+    this.db.prepare("DELETE FROM cal_events WHERE user_id = ? AND provider = ? AND uid = ?").run(userId, provider, uid);
+  }
+
+  /** Новый календарь — прежние соответствия «пара → событие» больше не про него. */
+  clearCalEvents(userId: number, provider: CalProvider): void {
+    this.db.prepare("DELETE FROM cal_events WHERE user_id = ? AND provider = ?").run(userId, provider);
+  }
+
+  addOauthState(state: string, userId: number, provider: CalProvider): void {
+    this.db.prepare("DELETE FROM oauth_states WHERE created_at < ?").run(new Date(Date.now() - OAUTH_STATE_TTL_MS).toISOString());
+    this.db.prepare("INSERT INTO oauth_states (state, user_id, provider, created_at) VALUES (?, ?, ?, ?)").run(state, userId, provider, nowIso());
+  }
+
+  /** Метку входа можно предъявить один раз и только в течение OAUTH_STATE_TTL_MS. */
+  takeOauthState(state: string, provider: CalProvider): number | null {
+    const r = this.db.prepare("SELECT user_id AS userId, created_at AS createdAt FROM oauth_states WHERE state = ? AND provider = ?").get(state, provider) as { userId: number; createdAt: string } | undefined;
+    if (!r) return null;
+    this.db.prepare("DELETE FROM oauth_states WHERE state = ?").run(state);
+    return Date.now() - Date.parse(r.createdAt) <= OAUTH_STATE_TTL_MS ? r.userId : null;
   }
 
   // ---- «Министерство Жалоб» ----

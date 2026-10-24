@@ -93,3 +93,39 @@ export function privacyPage(email?: string): string {
 </html>
 `;
 }
+
+/** Страница после входа в Google: получилось или почему нет. Ни токенов, ни кода в ней нет. */
+export function oauthResultPage(r: { ok: true; calendarName: string; reused: boolean } | { ok: false; reason: "expired" | "no_group" | "denied" | "scope" | "failed" }): string {
+  const [title, text] = r.ok
+    ? [
+        "Google Календарь подключён",
+        `${r.reused ? "Пары снова записываются в календарь" : "В твоём Google Календаре появился календарь"} «${escAttr(r.calendarName)}». Пары появятся в течение нескольких минут, переносы и отмены — сами. Можно вернуться в Telegram.`,
+      ]
+    : r.reason === "denied"
+      ? ["Подключение отменено", "Доступ не выдан — бот ничего не записывает. Передумаешь — нажми «⚡ Google Календарь» в боте ещё раз."]
+      : r.reason === "scope"
+        ? ["Нет доступа к календарю", "Ты вошёл, но не разрешил доступ к календарю — без него бот не может записывать пары. Нажми «⚡ Google Календарь» в боте ещё раз и оставь галочку у календаря."]
+        : r.reason === "no_group"
+          ? ["Сначала выбери группу", "Бот не знает твою группу. Выбери её в боте и подключи календарь снова."]
+          : r.reason === "expired"
+            ? ["Ссылка устарела", "Ссылка для входа действует 30 минут и один раз. Нажми «⚡ Google Календарь» в боте ещё раз."]
+            : ["Не получилось", "Google не ответил как надо. Попробуй ещё раз через пару минут — нажми «⚡ Google Календарь» в боте."];
+  return `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<style>
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:560px;margin:0 auto;padding:32px 16px;line-height:1.55;color:#1d1d1f;background:#fff}
+  h1{font-size:1.4em;margin:0 0 .5em}
+  a{color:#0b57d0}
+</style>
+</head>
+<body>
+<h1>${r.ok ? "✅" : "⚠️"} ${title}</h1>
+<p>${text}</p>
+<p><a href="/">Расписание от ВИШботика</a> · <a href="/privacy">Политика конфиденциальности</a></p>
+</body>
+</html>`;
+}

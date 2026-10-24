@@ -14,7 +14,9 @@ import { applyRecorderReport, GENERAL_SLOT_TITLE, recorderTasks, type RecReport,
 import { tmaContext, tmaSubmit } from "../bot/tma.js";
 import { verifyInitData } from "./initData.js";
 import { TMA_PAGE } from "./tmaPage.js";
-import { homePage, privacyPage } from "./sitePages.js";
+import { homePage, oauthResultPage, privacyPage } from "./sitePages.js";
+import type { CalendarPush } from "../calendar/push.js";
+import { buildIcs } from "../schedule/ics.js";
 import { quorumSnapshot } from "./quorum.js";
 import { logger } from "../logger.js";
 
@@ -53,6 +55,8 @@ export interface HttpDeps {
   onRecorderReport?: (effect: RecReportEffect) => void;
   /** Почта для связи на главной и в /privacy (CONTACT_EMAIL). */
   contactEmail?: string;
+  /** Прямая запись в Google Календарь: возврат после входа (/oauth/google). */
+  calendarPush?: CalendarPush | null;
 }
 
 const MAX_DECK_BYTES = 40 * 1024 * 1024;
@@ -163,16 +167,40 @@ export function createHttpServer(deps: HttpDeps): Server {
     return { ...r, owner: `f:${f.id}` };
   };
 
-  const feed = (token: string): FeedResult => {
+  const feed = (token: string, client: FeedClient): FeedResult => {
     // A user who blocked the bot in Telegram still keeps their calendar subscription.
     const user = deps.repo.userByCalToken(token);
     if (!user) return groupFeed(token) ?? notFound("not found");
     const group = user.groupKey ? deps.service.group(user.groupKey) : null;
     if (!group) return notFound("group not chosen");
+    // Пары уже пишутся в Google напрямую — старая подписка в том же Google
+    // пустеет сама, иначе каждая пара стояла бы дважды. iPhone и прочие по
+    // этой ссылке получают полный календарь, как раньше.
+    if (client === "google" && deps.repo.calLink(user.id, "google")?.status === "ok") {
+      const body = buildIcs({ name: `${group.title} — старая подписка, можно удалить`, lessons: [], alarmMinutes: null, refreshInterval: "PT1H", stableSequence: true });
+      return { status: 200, body: Buffer.from(body, "utf8"), type: "text/calendar; charset=utf-8", owner: `u:${user.id}` };
+    }
     // Cache key changes whenever the user's settings or the portal data change, so a fresh feed is never stale.
     const key = [token, group.key, user.subgroup ?? "", user.calAlarmMin ?? "", deps.repo.lastPollRun()?.finishedAt ?? ""].join("|");
     const r = cached(`${token}|`, key, () => groupCalendar(deps.service, group, { subgroup: user.subgroup, alarmMinutes: user.calAlarmMin, refreshInterval: "PT1H", stableSequence: true, ppaDebts: deps.repo.ppaDebts(user.id, group.key), pastDays: FEED_PAST_DAYS }).ics);
     return { ...r, owner: `u:${user.id}` };
+  };
+
+  const handleGoogleReturn = async (url: URL, res: ServerResponse): Promise<void> => {
+    const page = (status: number, html: string): void => {
+      const buf = Buffer.from(html, "utf8");
+      res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Length": String(buf.length), "Referrer-Policy": "no-referrer" });
+      res.end(buf);
+    };
+    const state = url.searchParams.get("state");
+    if (!deps.calendarPush?.google || !state) return page(404, oauthResultPage({ ok: false, reason: "expired" }));
+    try {
+      const r = await deps.calendarPush.finishConnect(state, url.searchParams.get("code"), url.searchParams.get("error"));
+      page(r.ok ? 200 : 400, oauthResultPage(r));
+    } catch (err) {
+      logger.warn({ err: String(err).slice(0, 120) }, "google return failed");
+      page(500, oauthResultPage({ ok: false, reason: "failed" }));
+    }
   };
 
   const slidesDir = (): string => deps.slidesDir ?? "./data/slides";
@@ -401,6 +429,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       void handleRec(req, res, "sync");
       return;
     }
+    // Возврат после входа в Google: код → токены → календарь. Ответ — страница для человека.
+    if (url.pathname === "/oauth/google" && method === "GET") {
+      void handleGoogleReturn(url, res);
+      return;
+    }
     // Главная и политика конфиденциальности сервиса календарей: их адреса — на экране входа Google.
     if (url.pathname === "/" || url.pathname === "/privacy") {
       send(200, site[url.pathname], "text/html; charset=utf-8", { "Cache-Control": "public, max-age=3600" });
@@ -413,7 +446,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     const m = /^\/cal\/([A-Za-z0-9_-]{8,64})\.ics$/.exec(url.pathname);
     if (m) {
       try {
-        const r = feed(m[1]!);
+        const r = feed(m[1]!, feedClient(req.headers["user-agent"]));
         send(r.status, r.body, r.type, r.status === 200 ? { "Content-Disposition": 'inline; filename="vish.ics"' } : {});
         if (r.owner && r.status === 200 && method === "GET") {
           try {
