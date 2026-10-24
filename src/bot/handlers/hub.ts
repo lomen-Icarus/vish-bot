@@ -39,7 +39,7 @@ function findPanel(ctx: BotContext): { text: string; kb: InlineKeyboard } {
   if (ctx.deps.config.POISK && ctx.deps.students) kb.text(FIND_BTN.poisk, "hub:poisk");
   if (ctx.deps.ask) kb.row().text(FIND_BTN.ask, "hub:ask");
   const text = [
-    "🔍 <b>Найти</b>",
+    "🔍 <b>Найти с ИИ</b>",
     "",
     "Просто напиши, что ищешь: группу (<code>14-24</code>), преподавателя (<code>Иванова</code>), предмет (<code>матан</code>) или дату (<code>15.10</code>).",
     "Или выбери:",
@@ -51,7 +51,7 @@ async function openFind(ctx: BotContext): Promise<void> {
   const { text, kb } = findPanel(ctx);
   await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
 }
-hubHandlers.hears(BTN.find, openFind);
+hubHandlers.hears(btnLabels("find"), openFind);
 
 hubHandlers.callbackQuery(/^hub:(groups|stream|teachers|ask|poisk)$/, async (ctx) => {
   await ctx.answerCallbackQuery();

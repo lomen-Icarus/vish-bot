@@ -16,6 +16,7 @@ import { logger } from "../logger.js";
 import { MaxApiError, type MaxApi, type MaxAttachment, type MaxButton, type MaxNewMessage } from "./api.js";
 import { entitiesToHtml, hasOwnMarkup, markupToButtons, MAX_TEXT_LIMIT, rewriteBotLinks, toMaxHtml } from "./format.js";
 import { isMaxChat, type MaxMessageStore, type StoredMaxMessage, type TgSnapshotStore } from "./store.js";
+import { MENU_BACK, screenTurn } from "./screen.js";
 import { MAX_CALLBACK_PREFIX } from "./updates.js";
 
 type Payload = Record<string, unknown>;
@@ -28,7 +29,7 @@ export interface OutgoingDeps {
   snapshots: TgSnapshotStore;
   /** id в МАКС по uid моста; null — человек неизвестен. */
   maxIdOf: (uid: number) => number | null;
-  /** Нижнее меню человека (как в Telegram): у МАКС его нет, кнопки ставятся под сообщением. */
+  /** Меню человека (как нижнее в Telegram: свои кнопки, режим преподавателя) — для экрана «◀️ Меню». */
   menuFor: (uid: number) => unknown;
   /** Ник бота в Telegram и в МАКС — для подмены ссылок t.me/бот?start=…. */
   tgUsername: () => string | null;
@@ -77,16 +78,29 @@ function keyboard(buttons: MaxButton[][] | null): MaxAttachment[] {
   return buttons ? [{ type: "inline_keyboard", payload: { buttons } }] : [];
 }
 
+/** Лимиты клавиатуры МАКС: больше — сообщение не примут целиком. */
+const MAX_ROWS = 30;
+const MAX_BUTTONS = 210;
+
+/** Это нижнее меню человека целиком (его Telegram шлёт, когда меню поменялось). */
+function isOwnMenu(d: OutgoingDeps, uid: number, markup: unknown): boolean {
+  return JSON.stringify(markupToButtons(markup)) === JSON.stringify(markupToButtons(d.menuFor(uid)));
+}
+
 /**
- * Кнопки сообщения. Свои — как есть. Своих нет — нижнее меню человека: в
- * Telegram оно всегда под полем ввода, а в МАКС его нет вовсе, и без кнопок
- * под ответом человеку некуда нажать. Тихие сообщения (первая половина
- * «текст + постер», ночные) — без меню: следом придёт сообщение со своими кнопками.
+ * Кнопки сообщения: свои и под ними «◀️ Меню» (screen.ts). Нижнее меню
+ * Telegram здесь лишнее — оно на экране «◀️ Меню»; другое нижнее меню (поток)
+ * становится кнопками и само ведёт в меню («◀️ В меню»). Тихое сообщение без
+ * своих кнопок (текст перед постером) — без кнопок: «◀️ Меню» будет под постером.
  */
-function buttonsFor(d: OutgoingDeps, uid: number, p: Payload): MaxButton[][] | null {
-  if (p.reply_markup !== undefined) return hasOwnMarkup(p.reply_markup) ? markupToButtons(p.reply_markup) : null;
-  if (p.disable_notification === true) return null;
-  return markupToButtons(d.menuFor(uid));
+function buttonsFor(d: OutgoingDeps, uid: number, markup: unknown, silent = false): MaxButton[][] | null {
+  const reply = !!markup && typeof markup === "object" && "keyboard" in markup;
+  if (reply && !isOwnMenu(d, uid, markup)) return markupToButtons(markup);
+  const own = hasOwnMarkup(markup) && !reply ? markupToButtons(markup) : null;
+  if (!own && silent) return null;
+  if (!own) return [[MENU_BACK]];
+  const rows = [...own, [MENU_BACK]];
+  return rows.length <= MAX_ROWS && rows.flat().length <= MAX_BUTTONS ? rows : own;
 }
 
 async function collect(raw: unknown): Promise<Buffer> {
@@ -133,13 +147,37 @@ function fakeMessage(uid: number, id: number, html: string | null, withMedia: bo
   return { message_id: id, date: Math.floor(Date.now() / 1000), chat: { id: uid, type: "private", first_name: "" }, ...(html ? (withMedia ? { caption: html } : { text: html }) : {}) } as Message;
 }
 
-async function send(d: OutgoingDeps, uid: number, p: Payload, html: string | null, media: MaxAttachment[]): Promise<Message> {
+/**
+ * Новое сообщение — или ответ на нажатие кнопки: тогда первый ответ встаёт на
+ * место экрана, под которым нажали (screen.ts). Файлы и копии всегда новыми:
+ * файл вместо экрана — это потерянный экран. Не вышло заменить (экрану больше
+ * суток — МАКС такое не правит) — новым сообщением.
+ */
+async function send(d: OutgoingDeps, uid: number, p: Payload, html: string | null, media: MaxAttachment[], replaceable = false): Promise<Message> {
   const maxId = d.maxIdOf(uid);
   if (maxId == null) throw new TgLikeError(400, "Bad Request: chat not found");
-  const body: MaxNewMessage = { text: html, format: "html", notify: p.disable_notification !== true, attachments: [...media, ...keyboard(buttonsFor(d, uid, p))] };
+  const turn = screenTurn.getStore();
+  const mine = turn?.uid === uid ? turn : undefined;
+  const silent = p.disable_notification === true;
+  const buttons = buttonsFor(d, uid, p.reply_markup, silent);
+  if (replaceable && mine && mine.replaceId != null && !mine.replaced) {
+    const target = d.messages.get(mine.replaceId);
+    mine.replaced = true;
+    if (target?.screen) {
+      try {
+        await d.api.editMessage(target.mid, { text: html, format: "html", attachments: [...media, ...keyboard(buttons)] });
+        d.messages.remember({ ...target, text: html, media });
+        return fakeMessage(uid, mine.replaceId, html, media.length > 0);
+      } catch (err) {
+        logger.debug({ err: err instanceof MaxApiError ? `${err.status} ${err.code}` : String(err).slice(0, 120) }, "MAX screen not replaced, sending new");
+      }
+    }
+  }
+  const body: MaxNewMessage = { text: html, format: "html", notify: !silent, attachments: [...media, ...keyboard(buttons)] };
   const preview = p.link_preview_options as { is_disabled?: boolean } | undefined;
   const sent = await d.api.sendMessage(maxId, body, { disableLinkPreview: preview?.is_disabled === true || p.disable_web_page_preview === true });
-  const id = d.messages.remember({ mid: sent.body.mid, uid, text: html, media });
+  // Экран — то, что бот прислал в ответ человеку; без хода (рассылки, напоминания) — уведомление.
+  const id = d.messages.remember({ mid: sent.body.mid, uid, text: html, media, screen: !!mine });
   return fakeMessage(uid, id, html, media.length > 0);
 }
 
@@ -151,7 +189,11 @@ function stored(d: OutgoingDeps, p: Payload): StoredMaxMessage & { id: number } 
 }
 
 async function edit(d: OutgoingDeps, msg: StoredMaxMessage & { id: number }, html: string | null, media: MaxAttachment[], markup: unknown): Promise<true> {
-  const buttons = hasOwnMarkup(markup) ? markupToButtons(markup) : null;
+  // Бот сам поправил экран, под которым нажали (стрелки, переключатели): заменять его ещё раз не нужно.
+  const turn = screenTurn.getStore();
+  if (turn?.replaceId === msg.id) turn.replaced = true;
+  // Правка заменяет кнопки целиком — «◀️ Меню» ставим снова.
+  const buttons = buttonsFor(d, msg.uid, markup);
   await d.api.editMessage(msg.mid, { text: html, format: "html", attachments: [...media, ...keyboard(buttons)] });
   d.messages.remember({ ...msg, text: html, media });
   return true;
@@ -200,9 +242,9 @@ async function toMax(d: OutgoingDeps, prev: Prev, method: string, p: Payload): P
   const uid = p.chat_id as number;
   switch (method) {
     case "sendMessage":
-      return send(d, uid, p, htmlOf(d, p.text, p.parse_mode, p.entities), []);
+      return send(d, uid, p, htmlOf(d, p.text, p.parse_mode, p.entities), [], true);
     case "sendPhoto":
-      return send(d, uid, p, htmlOf(d, p.caption, p.parse_mode, p.caption_entities), [await imageAttachment(d, prev, p.photo)]);
+      return send(d, uid, p, htmlOf(d, p.caption, p.parse_mode, p.caption_entities), [await imageAttachment(d, prev, p.photo)], true);
     case "sendDocument":
       return send(d, uid, p, htmlOf(d, p.caption, p.parse_mode, p.caption_entities), [await fileAttachment(d, prev, p.document)]);
     case "sendMediaGroup": {
@@ -211,7 +253,7 @@ async function toMax(d: OutgoingDeps, prev: Prev, method: string, p: Payload): P
       const media: MaxAttachment[] = [];
       for (const it of items) media.push(it.type === "photo" ? await imageAttachment(d, prev, it.media) : await fileAttachment(d, prev, it.media));
       const first = items.find((it) => typeof it.caption === "string" && it.caption);
-      const msg = await send(d, uid, { ...p, reply_markup: { remove_keyboard: true } }, first ? htmlOf(d, first.caption, first.parse_mode, first.caption_entities) : null, media);
+      const msg = await send(d, uid, p, first ? htmlOf(d, first.caption, first.parse_mode, first.caption_entities) : null, media, true);
       return items.map(() => msg);
     }
     case "editMessageText": {
@@ -297,3 +339,26 @@ export function maxTransformer(d: OutgoingDeps): Transformer {
   };
 }
 
+/**
+ * Экран «◀️ Меню»: меню человека (свои кнопки, режим преподавателя) на месте
+ * экрана, под которым нажали. Уведомление не трогаем — меню новым сообщением.
+ */
+export async function showMenu(d: OutgoingDeps, uid: number, fromId: number | null, hint: string): Promise<void> {
+  const maxId = d.maxIdOf(uid);
+  const buttons = markupToButtons(d.menuFor(uid));
+  if (maxId == null || !buttons) return;
+  const text = `🏠 <b>Меню</b>\n\n<i>${hint}</i>`;
+  const body: MaxNewMessage = { text, format: "html", attachments: keyboard(buttons) };
+  const from = fromId != null ? d.messages.get(fromId) : null;
+  if (from?.screen) {
+    try {
+      await d.api.editMessage(from.mid, body);
+      d.messages.remember({ ...from, text, media: [] });
+      return;
+    } catch (err) {
+      logger.debug({ err: err instanceof MaxApiError ? `${err.status} ${err.code}` : String(err).slice(0, 120) }, "MAX menu not in place, sending new");
+    }
+  }
+  const sent = await d.api.sendMessage(maxId, body);
+  d.messages.remember({ mid: sent.body.mid, uid, text, media: [], screen: true });
+}

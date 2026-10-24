@@ -6,6 +6,7 @@
 import type { MessageEntity } from "grammy/types";
 import { esc } from "../schedule/format.js";
 import type { MaxButton } from "./api.js";
+import { menuItem } from "./screen.js";
 
 /** Лимит текста сообщения МАКС (у Telegram — 4096). */
 export const MAX_TEXT_LIMIT = 4000;
@@ -73,9 +74,10 @@ function inlineButton(b: Record<string, unknown>): MaxButton | null {
 }
 
 /**
- * reply_markup Telegram → ряды кнопок МАКС. Нижнее меню (ReplyKeyboard) у МАКС
- * нет, но есть кнопка «message»: нажал — и её подпись приходит боту как
- * сообщение, как от кнопки нижнего меню в Telegram.
+ * reply_markup Telegram → ряды кнопок МАКС. Нижнего меню (ReplyKeyboard) у МАКС
+ * нет: его кнопки становятся кнопками под сообщением, и нажатие приходит боту
+ * подписью кнопки, как от нижнего меню в Telegram, — но без сообщения в чате
+ * (см. screen.ts).
  */
 export function markupToButtons(markup: unknown): MaxButton[][] | null {
   if (!markup || typeof markup !== "object") return null;
@@ -86,7 +88,7 @@ export function markupToButtons(markup: unknown): MaxButton[][] | null {
   }
   if (Array.isArray(m.keyboard)) {
     const rows = m.keyboard
-      .map((row) => row.map((b): MaxButton => ({ type: "message", text: typeof b === "string" ? b : String((b as { text?: string }).text ?? "") })).filter((b) => b.text))
+      .map((row) => row.map((b) => menuItem(typeof b === "string" ? b : String((b as { text?: string }).text ?? ""))).filter((b) => b.text))
       .filter((row) => row.length);
     return rows.length ? rows : null;
   }

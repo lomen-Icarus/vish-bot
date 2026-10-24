@@ -57,10 +57,15 @@ else
   rm -rf "$DIR/app"
   mv "$DIR/app.new" "$DIR/app"
   rm -f "$ARCHIVE"
-  # Страница «Кворум» (setup-quorum.sh): если она заведена — свежие index.html
-  # и totals.json с каждым деплоем. Не вышло — записывалку это не останавливает.
-  if [ -f /etc/nginx/conf.d/vish-quorum.conf ] && [ -d "$DIR/app/deploy/quorum" ]; then
-    install -m 644 "$DIR/app/deploy/quorum/index.html" "$DIR/app/deploy/quorum/totals.json" /var/www/vish-quorum/quorum/ \
+  # Страница «Кворум» (setup-quorum.sh): если она заведена — свежие index.html,
+  # totals.json и anthem.mp3 с каждым деплоем. Не вышло — записывалку это не останавливает.
+  QUORUM_CONF=/etc/nginx/conf.d/vish-quorum.conf
+  if [ -f "$QUORUM_CONF" ] && [ -d "$DIR/app/deploy/quorum" ]; then
+    if ! grep -q "quorum/anthem.mp3" "$QUORUM_CONF"; then
+      # Конфиг nginx ещё без гимна — один раз переписываем его тем же setup-quorum.sh.
+      bash "$DIR/app/deploy/setup-quorum.sh" || echo "⚠️ setup-quorum.sh не прошёл (см. выше) — запусти руками" >&2
+    fi
+    install -m 644 "$DIR/app/deploy/quorum/index.html" "$DIR/app/deploy/quorum/totals.json" "$DIR/app/deploy/quorum/anthem.mp3" /var/www/vish-quorum/quorum/ \
       && echo "Страница «Кворум» обновлена" || echo "⚠️ Страница «Кворум» не обновилась (см. выше)" >&2
   fi
 fi
