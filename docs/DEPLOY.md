@@ -1,6 +1,6 @@
 # Деплой на Pterodactyl (FrienWorld)
 
-Сервер: панель `panel.frienworld.space`, сервер `b7f95b74`, egg **Node.js generic**, порт `srv3.frienworld.space:40070`.
+Сервер: панель `panel.frienworld.space`, сервер `b7f95b74`, egg **Node.js generic**, порт `srv3.frienworld.space:48505` (до 24.10.2026 — `40070`; сменился порт — см. «Порт и подписка на календарь»).
 Бот работает через long polling; открытый порт нужен только подписке на календарь (маленький HTTP-сервер, HTTPS не требуется).
 
 ## Что лежит на сервере
@@ -31,7 +31,7 @@
 | Переменная | Значение | Что даёт |
 |---|---|---|
 | `POLL_CRON_BUSY` | `*/6 7-21 * * 1-6` | опрос портала раз в 6 минут (было 5) |
-| `PUBLIC_URL` | `http://srv3.frienworld.space:40070` | кнопка «Подписка» в календаре: телефон сам обновляет расписание |
+| `PUBLIC_URL` | `https://calendar.secretvish.ru` | кнопка «Подписка» в календаре: телефон сам обновляет расписание |
 | `PUBLIC_URL_FALLBACK` | второй HTTPS-адрес бота | запасной для ссылок подписки: бот раз в 5 минут проверяет основной и, если тот не отвечает, выдаёт ссылки через запасной |
 | `CONTACT_EMAIL` | почта для связи | показывается на главной и в `/privacy` (calendar.secretvish.ru) — их адреса указаны на экране входа Google; без неё вместо почты «через Telegram-бота» |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | OAuth-клиент «Web application» из Google Cloud (Google Auth Platform → Clients), адрес возврата `https://calendar.secretvish.ru/oauth/google`, право `calendar.app.created` | кнопка «⚡ Google Календарь» в 📆 Календарь: бот сам записывает пары в отдельный календарь человека, переносы — после каждого опроса портала. Статус — строка «Google Календарь» в `/health` |
@@ -283,8 +283,10 @@ Inline не работает, пока он не включён у самого 
 ## Порт и подписка на календарь
 
 Pterodactyl передаёт выделенный порт в переменной `SERVER_PORT`; бот поднимает на нём HTTP-сервер с личными лентами календаря (`/cal/<token>.ics`) и `/health`.
-Чтобы в боте появилась кнопка «Подписка», в `.env` нужно добавить адрес, по которому этот порт виден снаружи: `PUBLIC_URL=http://srv3.frienworld.space:40070`.
-Проверка: открыть `http://srv3.frienworld.space:40070/health` в браузере — должен вернуться JSON с `"ok":true`. Если порт снаружи закрыт, подписка не работает, файл .ics работает всегда.
+Чтобы в боте появилась кнопка «Подписка», в `.env` нужно добавить адрес, по которому этот порт виден снаружи: `PUBLIC_URL=https://calendar.secretvish.ru`.
+Проверка: открыть `http://srv3.frienworld.space:48505/health` (сам порт) и `https://calendar.secretvish.ru/health` (весь путь) — должен вернуться JSON с `"ok":true`. Если порт снаружи закрыт, подписка не работает, файл .ics работает всегда.
+
+**Сменился порт сервера** (Network в панели; так было 24.10.2026: 40070 → 48505). Бот сам слушает новый порт (`SERVER_PORT`), но снаружи к нему ведёт цепочка `calendar.secretvish.ru` (VPS, nginx) → `rezerve-adress.frienworld.com` (HTTPS хостинга, его nginx) → порт бота. Пока на хостинге `rezerve-adress.frienworld.com` смотрит на старый порт, `calendar.secretvish.ru` отвечает **502**, а в `/var/log/nginx/error.log` VPS ошибок нет (502 приходит с хостинга). Что сделать: перенаправить `rezerve-adress.frienworld.com` на новый порт (панель/поддержка FrienWorld); в `.env` бота проверить, что `PUBLIC_URL`/`PUBLIC_URL_FALLBACK` без старого порта; `HTTP_PORT=0` (иначе бот слушает его, а не выделенный). Ссылки вида `http://srv3.frienworld.space:<старый порт>/cal/…` после смены порта не работают — людям с такими ссылками нужно взять подписку в боте заново; ссылки через `calendar.secretvish.ru` (в том числе `:40070` — его слушает VPS) живут.
 
 ## Первый запуск вручную
 
