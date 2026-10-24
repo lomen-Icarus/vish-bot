@@ -121,6 +121,67 @@ export function planRecording(
   return { start: ready.slice(0, free), skipped: ready.slice(free), waiting: open.filter((r) => !ready.includes(r)) };
 }
 
+/** Что с парой сейчас — для /rec_now в боте. */
+export type LiveStatus = "recording" | "queued" | "waiting" | "done" | "no_slides" | "not_ours";
+
+export interface LivePair {
+  start: string | null;
+  end: string | null;
+  subject: string;
+  groups: string[];
+  status: LiveStatus;
+}
+
+/** Снимок «что идёт сейчас»: уходит боту в отчёте, бот показывает его по /rec_now. */
+export interface LiveSnapshot {
+  at: string;
+  maxParallel: number;
+  pairs: LivePair[];
+}
+
+const hhmm = (m: number | null): string | null => (m == null ? null : `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`);
+
+const STATUS_ORDER: LiveStatus[] = ["recording", "queued", "waiting", "done", "no_slides", "not_ours"];
+
+/**
+ * Какие пары по расписанию идут сейчас (или начнутся в пределах leadMinutes)
+ * и что с каждой: пишем, ждём места (MAX_PARALLEL), ждём комнату, уже
+ * записали, не пишем по настройке. Без фамилий преподавателей: снимок — это
+ * предмет, время и группы. Считать после того, как plan.start занесены в active.
+ */
+export function liveSnapshot(
+  rows: WebinarRow[],
+  now: { date: string; minutes: number },
+  cfg: Pick<RecorderConfig, "subjects" | "groups" | "leadMinutes" | "maxParallel"> & Partial<Pick<RecorderConfig, "skipSubjects">>,
+  state: RecordState,
+  plan: Pick<DuePlan, "skipped" | "waiting">,
+  at = new Date(),
+): LiveSnapshot {
+  const current = rows.filter((r) => r.scheduled && r.groups.length && r.startMinutes != null && now.minutes >= r.startMinutes - cfg.leadMinutes && (r.endMinutes == null || now.minutes < r.endMinutes));
+  const queued = new Set(plan.skipped.map((r) => keyOf(now.date, r)));
+  const waiting = new Set(plan.waiting.map((r) => keyOf(now.date, r)));
+  const pairs = mergeSamePair(current, now.date).map((r): LivePair => {
+    const key = keyOf(now.date, r);
+    const noSlides = cfg.skipSubjects?.some((s) => norm(s) && norm(r.subject).includes(norm(s))) ?? false;
+    const status: LiveStatus = state.active.has(key)
+      ? "recording"
+      : state.done.has(key)
+        ? "done"
+        : queued.has(key)
+          ? "queued"
+          : waiting.has(key)
+            ? "waiting"
+            : noSlides
+              ? "no_slides"
+              : wanted(r, cfg)
+                ? "waiting"
+                : "not_ours";
+    return { start: hhmm(r.startMinutes), end: hhmm(r.endMinutes), subject: r.subject, groups: r.groups, status };
+  });
+  pairs.sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || (a.start ?? "").localeCompare(b.start ?? ""));
+  return { at: at.toISOString(), maxParallel: cfg.maxParallel, pairs };
+}
+
 /**
  * Одна пара — один бот. Портал может показать одну лекцию несколькими
  * строками (поток — по комнате на группу): ключ у них один. Строки не

@@ -241,7 +241,7 @@ describe("экраны", () => {
     expect(text).not.toContain("Иванов");
     expect(text).toContain("Ждут решения: 1");
     const data = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
-    expect(data).toEqual([`rq:rc:${id}`, `rq:rv:${id}`, "rq:list", "rq:slots"]);
+    expect(data).toEqual([`rq:rc:${id}`, `rq:rv:${id}`, "rq:list", "rq:now", "rq:slots"]);
   });
 
   it("экран студента: стоит в слоте — «Отозвать учётку»; ждёт — «Снять заявку»; убирается — без кнопок", () => {
@@ -302,7 +302,7 @@ describe("общая учётка (.env) в /slots", () => {
     expect(text).toContain("0 из 2 групп");
     expect(text).toContain("🔑 Общая учётка (.env) — для групп без своей: ✅ пускало 17.10 12:00");
     const data = kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data);
-    expect(data).toEqual(["rq:slots"]);
+    expect(data).toEqual(["rq:now", "rq:slots"]);
   });
 
   it("не пускает — кнопка «Проверить снова», весть админу про WEBINAR_PASSWORD; отозвать нельзя", async () => {
@@ -315,7 +315,7 @@ describe("общая учётка (.env) в /slots", () => {
     expect(api.sent[0]!.text).toContain("WEBINAR_PASSWORD");
     expect(api.sent[0]!.buttons).toEqual(["rq:rcg:общая учётка (.env)"]);
     const { kb } = slotsScreen(r, GROUPS);
-    expect(kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data)).toEqual(["rq:rcg:общая учётка (.env)", "rq:slots"]);
+    expect(kb.inline_keyboard.flat().map((b) => (b as { callback_data?: string }).callback_data)).toEqual(["rq:rcg:общая учётка (.env)", "rq:now", "rq:slots"]);
     expect(revokeSlotWithoutRequest(r, "общая учётка (.env)", 99)).toBe(false);
     expect(requestRecheck(r, "общая учётка (.env)")).toBe(true);
     expect(recorderTasks(r)).toEqual([expect.objectContaining({ kind: "recheck", group: GEN })]);

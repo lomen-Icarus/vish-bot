@@ -15,7 +15,7 @@ import { loadConfig, loadDotEnv, type RecorderConfig } from "./config.js";
 import { joinWithProfiles, Portal, parseWebinarRows, type WebinarRow } from "./portal.js";
 import { captureWebinar } from "./capture.js";
 import { buildPdf, deckFileName, deliverDeck, earlierSlides, retryPending, type DeckMeta } from "./deliver.js";
-import { deckBaseName, keyOf, mskNow, planRecording, profileSummary, type RecordState } from "./plan.js";
+import { deckBaseName, keyOf, liveSnapshot, mskNow, planRecording, profileSummary, type LiveSnapshot, type RecordState } from "./plan.js";
 import { AccountStore, CHECK_EVERY_MS } from "./accounts.js";
 import { loadOrCreateKeys } from "./crypto.js";
 import { lkAlive, checkStudentLogin } from "./lk.js";
@@ -172,6 +172,8 @@ async function main(): Promise<void> {
   let syncAt = 0;
   let syncing = false;
   let checking = false;
+  // Что идёт сейчас и что с каждой парой: уходит боту с каждым обменом (/rec_now).
+  let live: LiveSnapshot | null = null;
   for (;;) {
     try {
       const now = mskNow();
@@ -189,7 +191,7 @@ async function main(): Promise<void> {
       if (Date.now() - syncAt > SYNC_EVERY_MS && !syncing) {
         syncAt = Date.now();
         syncing = true;
-        void syncOnce({ botUrls: botUrls(cfg), token: cfg.botToken, store, privatePem: keys.privatePem, publicSpki: keys.publicSpki, proxyUrl: process.env.HTTPS_PROXY, groupName: (id) => portal.groupName(id), general })
+        void syncOnce({ botUrls: botUrls(cfg), token: cfg.botToken, store, privatePem: keys.privatePem, publicSpki: keys.publicSpki, proxyUrl: process.env.HTTPS_PROXY, groupName: (id) => portal.groupName(id), general, live: () => live })
           .catch((err: unknown) => log.debug({ err: String(err).slice(0, 150) }, "обмен заявками споткнулся"))
           .finally(() => (syncing = false));
       }
@@ -200,7 +202,8 @@ async function main(): Promise<void> {
           .finally(() => (checking = false));
       }
       const html = await portal.webinarPage(now.date, cfg.facultyId);
-      const plan = planRecording(parseWebinarRows(html), now, { ...cfg, profiles: [...cfg.profiles, ...store.profiles()] }, state, Date.now());
+      const rows = parseWebinarRows(html);
+      const plan = planRecording(rows, now, { ...cfg, profiles: [...cfg.profiles, ...store.profiles()] }, state, Date.now());
       if (plan.waiting.length) log.debug({ waiting: plan.waiting.map((r) => r.subject) }, "пара скоро, но кнопки «Подключиться» ещё нет или ждём повтора");
       for (const r of plan.skipped) {
         const key = keyOf(now.date, r);
@@ -227,6 +230,7 @@ async function main(): Promise<void> {
             state.active.delete(key);
           });
       }
+      live = liveSnapshot(rows, now, cfg, state, plan);
     } catch (err) {
       log.warn({ err: errName(err) }, "цикл ожидания споткнулся");
     }

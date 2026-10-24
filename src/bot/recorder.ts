@@ -40,6 +40,47 @@ export interface RecReport {
   /** requestId — чья учётка в слоте записывалки (0 — из .env); старая записывалка его не шлёт. */
   slots?: { group: string; status: string; lastOkAt?: string | null; requestId?: number }[];
   portal?: string;
+  /** Что идёт сейчас (recorder/src/plan.ts → liveSnapshot); старая записывалка его не шлёт. */
+  live?: unknown;
+}
+
+/** Что с парой сейчас: пишем, ждём места, ждём комнату, записали, без слайдов, не в настройках. */
+export type RecLiveStatus = "recording" | "queued" | "waiting" | "done" | "no_slides" | "not_ours";
+const LIVE_STATUSES: readonly RecLiveStatus[] = ["recording", "queued", "waiting", "done", "no_slides", "not_ours"];
+
+export interface RecLive {
+  at: string;
+  maxParallel: number;
+  pairs: Array<{ start: string | null; end: string | null; subject: string; groups: string[]; status: RecLiveStatus }>;
+}
+
+/** Метка recorder_state с последним снимком «что идёт сейчас». */
+export const LIVE_MARK = "live";
+
+/** Снимок от записывалки — только ожидаемой формы и разумного размера; иначе null. */
+export function sanitizeLive(raw: unknown): RecLive | null {
+  const r = raw as Partial<RecLive> | null;
+  if (!r || typeof r !== "object" || typeof r.at !== "string" || !Number.isFinite(Date.parse(r.at)) || !Array.isArray(r.pairs)) return null;
+  const time = (v: unknown): string | null => (typeof v === "string" && /^\d{2}:\d{2}$/.test(v) ? v : null);
+  const pairs: RecLive["pairs"] = [];
+  for (const p of r.pairs.slice(0, 80)) {
+    if (!p || typeof p.subject !== "string" || !LIVE_STATUSES.includes(p.status) || !Array.isArray(p.groups)) continue;
+    const groups = p.groups.filter((g): g is string => typeof g === "string").slice(0, 20).map((g) => g.slice(0, 60));
+    pairs.push({ start: time(p.start), end: time(p.end), subject: p.subject.slice(0, 120), groups, status: p.status });
+  }
+  const maxParallel = Number.isInteger(r.maxParallel) && r.maxParallel! >= 1 && r.maxParallel! <= 50 ? r.maxParallel! : 1;
+  return { at: new Date(Date.parse(r.at)).toISOString(), maxParallel, pairs };
+}
+
+/** Последний снимок «что идёт сейчас» из базы. */
+export function readLive(repo: Repo): RecLive | null {
+  const raw = repo.recorderMarkValue(LIVE_MARK);
+  if (!raw) return null;
+  try {
+    return sanitizeLive(JSON.parse(raw));
+  } catch {
+    return null;
+  }
 }
 
 /** Код группы для сверки со строками вебинаров: «14-25», «11-23(эиэа)». */
@@ -263,6 +304,8 @@ export function applyRecorderReport(repo: Repo, report: RecReport, now = Date.no
     // Следы /soon держат месячный лимит — после 30 дней они больше не нужны.
     repo.purgeForgottenRecRequests(new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString());
     if (report.portal) repo.recorderMark("portal", report.portal);
+    const live = sanitizeLive(report.live);
+    if (live) repo.recorderMark(LIVE_MARK, JSON.stringify(live));
     repo.recorderMark("last_report_at", new Date().toISOString());
   });
   return effect;
