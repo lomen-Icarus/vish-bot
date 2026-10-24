@@ -14,6 +14,7 @@ import { applyRecorderReport, GENERAL_SLOT_TITLE, recorderTasks, type RecReport,
 import { tmaContext, tmaSubmit } from "../bot/tma.js";
 import { verifyInitData } from "./initData.js";
 import { TMA_PAGE } from "./tmaPage.js";
+import { homePage, privacyPage } from "./sitePages.js";
 import { quorumSnapshot } from "./quorum.js";
 import { logger } from "../logger.js";
 
@@ -50,6 +51,8 @@ export interface HttpDeps {
   botToken?: string;
   /** Вызывается после отчёта записывалки: бот уведомляет админа. */
   onRecorderReport?: (effect: RecReportEffect) => void;
+  /** Почта для связи на главной и в /privacy (CONTACT_EMAIL). */
+  contactEmail?: string;
 }
 
 const MAX_DECK_BYTES = 40 * 1024 * 1024;
@@ -120,6 +123,7 @@ export function feedClient(ua: string | undefined): FeedClient {
 
 export function createHttpServer(deps: HttpDeps): Server {
   const cache = new Map<string, { at: number; body: Buffer }>();
+  const site = { "/": homePage(deps.contactEmail), "/privacy": privacyPage(deps.contactEmail) };
   let quorum: { at: number; body: string } | null = null;
 
   /** owner — чья лента (u:<id> личная, f:<id> ссылка группы), для воронки в /stats. */
@@ -395,6 +399,11 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
     if (url.pathname === "/rec/sync") {
       void handleRec(req, res, "sync");
+      return;
+    }
+    // Главная и политика конфиденциальности сервиса календарей: их адреса — на экране входа Google.
+    if (url.pathname === "/" || url.pathname === "/privacy") {
+      send(200, site[url.pathname], "text/html; charset=utf-8", { "Cache-Control": "public, max-age=3600" });
       return;
     }
     if (url.pathname === "/tma" && deps.botToken) {

@@ -159,6 +159,7 @@ async function main(): Promise<void> {
           slidesToken: config.SLIDES_TOKEN,
           slidesDir: config.SLIDES_DIR,
           botToken: config.BOT_TOKEN,
+          contactEmail: config.CONTACT_EMAIL,
           // Слайды приходят с отдельного сервера записи; рассылку делает бот.
           onSlides: (deck) => void notifier.sendSlideDeck(deck).catch((err: unknown) => logger.warn({ err: String(err) }, "рассылка слайдов не удалась")),
           // Отчёт записывалки: карточки заявок админу, вести студентам, потеря доступа слота.

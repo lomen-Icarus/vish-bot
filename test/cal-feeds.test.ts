@@ -7,6 +7,8 @@ import { Repo } from "../src/db/repo.js";
 import { createHttpServer, feedClient } from "../src/http/server.js";
 import { calFeedHandlers, chunkBlocks, parseFeedRequest } from "../src/bot/handlers/calFeeds.js";
 import { calendarFunnel } from "../src/bot/handlers/admin.js";
+import { homePage, privacyPage } from "../src/http/sitePages.js";
+import { loadConfig } from "../src/config.js";
 import { FEED_PAST_DAYS, groupCalendar } from "../src/schedule/calendar.js";
 import type { ScheduleService } from "../src/schedule/service.js";
 import type { LogicalGroup } from "../src/schedule/groups.js";
@@ -213,6 +215,46 @@ describe("прошедшие пары в лентах", () => {
     const file = groupCalendar(service, GROUPS[1]!, { subgroup: null, alarmMinutes: 15 }).ics;
     expect(file).not.toContain("Недавняя");
     expect(file).toContain("Завтрашняя");
+  });
+});
+
+describe("сайт сервиса календарей", () => {
+  let server: Server | null = null;
+  afterAll(() => server?.close());
+
+  it("главная и /privacy открываются публично; лишнее — 404", async () => {
+    const repo = new Repo(openDatabase(":memory:"));
+    server = createHttpServer({ repo, service: makeService([]), port: 0, host: "127.0.0.1" });
+    await new Promise<void>((resolve) => server!.once("listening", resolve));
+    const port = (server.address() as { port: number }).port;
+    const get = (p: string, method = "GET") => fetch(`http://127.0.0.1:${port}${p}`, { method });
+    const home = await get("/");
+    expect(home.status).toBe(200);
+    expect(home.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    const homeHtml = await home.text();
+    expect(homeHtml).toContain("<title>Расписание от ВИШботика</title>");
+    expect(homeHtml).toContain('href="/privacy"');
+    const privacy = await get("/privacy");
+    expect(privacy.status).toBe(200);
+    const privacyHtml = await privacy.text();
+    expect(privacyHtml).toContain("<title>Политика конфиденциальности</title>");
+    expect(privacyHtml).toContain("calendar.app.created");
+    expect(privacyHtml).toContain("Limited Use");
+    expect((await get("/privacy", "HEAD")).status).toBe(200);
+    expect((await get("/privacy.html")).status).toBe(404);
+    expect((await get("/oauth/google")).status).toBe(404);
+    // Без CONTACT_EMAIL почты на страницах нет.
+    expect(homeHtml).not.toContain("mailto:");
+    expect(privacyHtml).toContain("через Telegram-бота");
+  });
+
+  it("почта для связи — из CONTACT_EMAIL; мусор в настройке не показывается", () => {
+    expect(homePage("owner@example.com")).toContain('Связь: <a href="mailto:owner@example.com">owner@example.com</a>');
+    expect(privacyPage("owner@example.com")).toContain('<a href="mailto:owner@example.com">owner@example.com</a>');
+    const env = { BOT_TOKEN: "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZ" };
+    expect(loadConfig({ ...env, CONTACT_EMAIL: " owner@example.com " }).CONTACT_EMAIL).toBe("owner@example.com");
+    expect(loadConfig({ ...env, CONTACT_EMAIL: '"><script>@x' }).CONTACT_EMAIL).toBeUndefined();
+    expect(loadConfig({ ...env, CONTACT_EMAIL: "" }).CONTACT_EMAIL).toBeUndefined();
   });
 });
 
