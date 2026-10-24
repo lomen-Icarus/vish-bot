@@ -192,5 +192,10 @@ describe("отчёт записывалки: чья учётка в слоте",
       ["ВИШ-14-25", 5],
     ]);
     expect(JSON.stringify(report)).not.toContain('"p"');
+    // Снимка «что идёт сейчас» ещё нет — поля нет; есть — уходит как есть.
+    expect(report).not.toHaveProperty("live");
+    const live = { at: "2026-10-24T07:00:00.000Z", maxParallel: 2, pairs: [{ start: "09:50", end: "11:10", subject: "Физика", groups: ["ВИШ-11-25"], status: "recording" as const }] };
+    await syncOnce({ botUrls: [`http://127.0.0.1:${(server.address() as { port: number }).port}/slides`], token: "t", store, privatePem: "", publicSpki: "", live: () => live });
+    expect((report as { live?: unknown }).live).toEqual(live);
   });
 });

@@ -16,7 +16,7 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
 import { esc } from "../../schedule/format.js";
-import { adoptSlot, approveRecRequest, GENERAL_SLOT_TITLE, OWNER_PREFIX, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, type RecActionResult } from "../recorder.js";
+import { adoptSlot, approveRecRequest, GENERAL_SLOT_TITLE, OWNER_PREFIX, readLive, rejectRecRequest, requestRecheck, revokeRecRequest, revokeSlotWithoutRequest, type RecActionResult, type RecLive, type RecLiveStatus } from "../recorder.js";
 import { mskStamp, requestCard, slotButtons, stateLabel } from "../recNotify.js";
 import { REQUEST_LIMIT, studentGroupList } from "../tma.js";
 import { FORM_PATH, STATUS_PATH } from "../keyboards.js";
@@ -99,7 +99,7 @@ export function slotsScreen(repo: Repo, groups: LogicalGroup[]): { text: string;
   if (waiting) tail.push(`Ждут решения: ${waiting}`);
   if (checking) tail.push(`Проверяю вход: ${checking}`);
   if (waiting) kb.text(`📨 Заявки (${waiting})`, "rq:list");
-  kb.text("🔄 Обновить", "rq:slots");
+  kb.text("⏺ Что пишу сейчас", "rq:now").text("🔄 Обновить", "rq:slots");
   return { text: [...head, "", ...lines, ...(tail.length ? ["", tail.join(" · ")] : []), "", "<i>✅ пускает · ⚠️ не пускает · ⏳ ставлю · ▫️ нет учётки</i>"].join("\n"), kb };
 }
 
@@ -119,6 +119,72 @@ adminOnly.callbackQuery("adm:slots", async (ctx) => {
 adminOnly.callbackQuery("rq:slots", async (ctx) => {
   await ctx.answerCallbackQuery();
   await showSlots(ctx, true);
+});
+
+// ---- «что пишу сейчас» (админ): /rec_now ----
+
+/** Снимок старше этого — записывалка давно не докладывала, данным верить нельзя. */
+const LIVE_STALE_MS = 5 * 60_000;
+
+const LIVE_SECTIONS: Array<[RecLiveStatus, string, string]> = [
+  ["recording", "⏺", "Пишу"],
+  ["queued", "⏳", "Не пишу: нет свободного места"],
+  ["waiting", "🚪", "Жду комнату"],
+  ["done", "✅", "Уже записал"],
+  ["no_slides", "➖", "Не пишу: пары без слайдов"],
+  ["not_ours", "▫️", "Не пишу: не в настройках записи"],
+];
+
+const LIVE_HINTS: Partial<Record<RecLiveStatus, (live: RecLive) => string>> = {
+  queued: (live) => `лимит одновременной записи — ${live.maxParallel} (MAX_PARALLEL); начну, как освободится место`,
+  waiting: () => "у пары ещё нет «Подключиться», или повторяю вход",
+  no_slides: () => "SKIP_SUBJECTS",
+  not_ours: () => "SUBJECTS / GROUPS записывалки",
+};
+
+/**
+ * Какие вебинары идут сейчас и что с каждым — по последнему снимку
+ * записывалки (она шлёт его с каждым обменом, раз в минуту). Внизу — можно
+ * ли сейчас мёржить: деплой перезапускает записывалку.
+ */
+export function liveScreen(repo: Repo, now = Date.now()): string {
+  const live = readLive(repo);
+  if (!live) return "🎥 <b>Вебинары сейчас</b>\n\nЗаписывалка ещё не присылала, что идёт сейчас: нужна её новая версия (приезжает с деплоем).";
+  const ageMin = Math.max(0, Math.round((now - Date.parse(live.at)) / 60_000));
+  const stale = now - Date.parse(live.at) > LIVE_STALE_MS;
+  const recording = live.pairs.filter((p) => p.status === "recording").length;
+  const lines = [`🎥 <b>Вебинары сейчас</b> · по данным записывалки на ${mskStamp(live.at)} (${ageMin ? `${ageMin} мин назад` : "только что"})`, `Мест для записи: ${live.maxParallel}, занято: ${recording}`];
+  if (stale) lines.push("", `⚠️ Записывалка не докладывала ${ageMin} мин — данные могли устареть. Проверь её на VPS: <code>docker logs vish-recorder --tail 20</code>`);
+  if (!live.pairs.length) lines.push("", "Сейчас вебинаров по расписанию нет.");
+  for (const [status, icon, title] of LIVE_SECTIONS) {
+    const pairs = live.pairs.filter((p) => p.status === status);
+    if (!pairs.length) continue;
+    const hint = LIVE_HINTS[status]?.(live);
+    lines.push("", `${icon} <b>${title} (${pairs.length})</b>${hint ? ` — <i>${esc(hint)}</i>` : ""}`);
+    for (const p of pairs.slice(0, 25)) {
+      const time = p.start ? `${p.start}${p.end ? `–${p.end}` : ""} ` : "";
+      const groups = p.groups.length > 6 ? `${p.groups.slice(0, 6).join(", ")} …ещё ${p.groups.length - 6}` : p.groups.join(", ");
+      lines.push(`• ${esc(time)}${esc(p.subject)} — ${esc(groups)}`);
+    }
+    if (pairs.length > 25) lines.push(`…и ещё ${pairs.length - 25}`);
+  }
+  const busy = live.pairs.some((p) => p.status === "recording" || p.status === "queued" || p.status === "waiting");
+  if (!stale) lines.push("", busy ? "⚠️ Идёт запись — мёрж и деплой сейчас перезапустят записывалку." : "Записи нет — мёржить можно.");
+  return lines.join("\n");
+}
+
+async function showLive(ctx: BotContext, edit: boolean): Promise<void> {
+  const text = liveScreen(ctx.deps.repo);
+  const kb = new InlineKeyboard().text("🔄 Обновить", "rq:now:edit").text("◀️ Слоты", "rq:slots");
+  if (edit) await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => undefined);
+  else await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
+}
+
+adminOnly.command("rec_now", (ctx) => showLive(ctx, false));
+
+adminOnly.callbackQuery(/^rq:now(:edit)?$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await showLive(ctx, Boolean(ctx.match[1]));
 });
 
 /** Ждущие решения заявки — карточками заново (если старые потерялись в чате). */

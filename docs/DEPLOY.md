@@ -86,7 +86,7 @@
    - `RECORDER_SSH_KEY` — всё содержимое файла `vish-deploy` (приватный ключ целиком, с `-----BEGIN…` и `-----END…`);
    - по желанию: `RECORDER_SSH_USER` (по умолчанию `root`), `RECORDER_SSH_PORT` (по умолчанию `22`), `RECORDER_SSH_KNOWN_HOSTS` (строка из `ssh-keyscan <IP>`; без неё отпечаток сервера берётся при каждом деплое).
 4. Запустить Actions → «CI & Deploy» → Run workflow (или дождаться следующего мёржа). Шаг «Deploy recorder to the VPS» покажет последние строки лога записывалки; упавший контейнер делает шаг красным.
-5. Руками на VPS: `docker logs -f vish-recorder` — лог, `docker restart vish-recorder` — перезапуск, слайды и кадры — в `/opt/vish-recorder/data`. **После правки `.env` restart не помогает**: Docker читает `--env-file` только при создании контейнера. Пересоздать (записи на диске не пропадут):
+5. Что записывалка пишет прямо сейчас и кто не влез в лимит `MAX_PARALLEL` — в боте: `/rec_now` (или «/slots → ⏺ Что пишу сейчас»); там же — можно ли сейчас мёржить. Руками на VPS: `docker logs -f vish-recorder` — лог, `docker restart vish-recorder` — перезапуск, слайды и кадры — в `/opt/vish-recorder/data`. **После правки `.env` restart не помогает**: Docker читает `--env-file` только при создании контейнера. Пересоздать (записи на диске не пропадут):
    ```
    docker rm -f vish-recorder && docker run -d --name vish-recorder --restart unless-stopped --init $(cat /opt/vish-recorder/docker.extra 2>/dev/null) --env-file /opt/vish-recorder/.env -v /opt/vish-recorder/data:/app/data --log-opt max-size=10m --log-opt max-file=3 vish-recorder:latest
    ```

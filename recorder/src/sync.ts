@@ -27,6 +27,7 @@ import { envelopeAad, openEnvelope, type Envelope } from "./crypto.js";
 import { checkStudentLogin, lkAlive } from "./lk.js";
 import { log } from "./log.js";
 import { GENERAL_SLOT, type GeneralWatch } from "./general.js";
+import type { LiveSnapshot } from "./plan.js";
 
 export interface Task {
   id: string;
@@ -67,6 +68,8 @@ export interface SyncDeps {
   groupName?: (groupId: number) => Promise<string | null>;
   /** Общая учётка из .env под присмотром (null — не «обучающийся», не проверяем). */
   general?: GeneralWatch | null;
+  /** Что идёт сейчас (снимок цикла записи) — бот показывает его по /rec_now. */
+  live?: () => LiveSnapshot | null;
 }
 
 export function syncBase(botUrl: string): string {
@@ -196,7 +199,7 @@ export async function syncOnce(deps: SyncDeps): Promise<{ done: number } | null>
     const res = await undiciFetch(`${base}/rec/report`, {
       method: "POST",
       headers: { Authorization: `Bearer ${deps.token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ publicKey: deps.publicSpki, results, slots: [...deps.store.list().map(slotSummary), ...(deps.general ? [deps.general.summary()] : [])], portal }),
+      body: JSON.stringify({ publicKey: deps.publicSpki, results, slots: [...deps.store.list().map(slotSummary), ...(deps.general ? [deps.general.summary()] : [])], portal, live: deps.live?.() ?? undefined }),
       signal: AbortSignal.timeout(30_000),
     });
     // Тело дочитываем (иначе соединение висит до сборки мусора); отказ бота — в лог.
