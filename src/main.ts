@@ -29,6 +29,7 @@ import { importLegacyCanned, seedDefaultQa } from "./chat/importCanned.js";
 import { notifyRecorderEffect } from "./bot/recNotify.js";
 import { MaxBridge } from "./max/bridge.js";
 import { menuFor } from "./bot/keyboards.js";
+import { CalendarPush } from "./calendar/push.js";
 
 async function main(): Promise<void> {
   loadDotEnv();
@@ -146,7 +147,11 @@ async function main(): Promise<void> {
   await registerCommands(bot, deps);
 
   const notifier = new Notifier(bot.api, repo, service, renderer, config.ADMIN_IDS, webinars, teachers, bot.botInfo.username ?? null);
-  const scheduler = startScheduler({ service, notifier, repo, busyCron: config.POLL_CRON_BUSY, idleCron: config.POLL_CRON_IDLE, newsCron: config.NEWS_SCAN_CRON, news: deps.news, teachers, webinars });
+  // Прямая запись в Google Календарь: без GOOGLE_CLIENT_ID/SECRET — выключена (кнопки нет).
+  const calendarPush = new CalendarPush({ repo, service, config, notify: async (userId, text) => void (await bot.api.sendMessage(userId, text)) });
+  deps.calendarPush = calendarPush;
+  logger.info({ google: Boolean(calendarPush.google), mode: config.CAL_PUSH, links: repo.calLinkCounts("google").ok ?? 0 }, calendarPush.google ? "google calendar push enabled" : "google calendar push disabled: GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set");
+  const scheduler = startScheduler({ service, notifier, repo, busyCron: config.POLL_CRON_BUSY, idleCron: config.POLL_CRON_IDLE, newsCron: config.NEWS_SCAN_CRON, news: deps.news, teachers, webinars, calendarPush });
 
   // Calendar subscriptions + /health. Pterodactyl hands the allocated port in SERVER_PORT.
   const httpPort = config.HTTP_PORT || config.SERVER_PORT || 0;
@@ -160,6 +165,7 @@ async function main(): Promise<void> {
           slidesDir: config.SLIDES_DIR,
           botToken: config.BOT_TOKEN,
           contactEmail: config.CONTACT_EMAIL,
+          calendarPush,
           // Слайды приходят с отдельного сервера записи; рассылку делает бот.
           onSlides: (deck) => void notifier.sendSlideDeck(deck).catch((err: unknown) => logger.warn({ err: String(err) }, "рассылка слайдов не удалась")),
           // Отчёт записывалки: карточки заявок админу, вести студентам, потеря доступа слота.

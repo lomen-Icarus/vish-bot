@@ -100,3 +100,42 @@ describe("календарь: «✏️ Своё» — напоминание з�
     expect((await run(deps, text("45"))).some((c) => c.method === "sendDocument")).toBe(false);
   });
 });
+
+describe("календарь: ⚡ Google Календарь (прямая запись)", () => {
+  const withPush = (allowed: boolean) => {
+    const deps = makeDeps();
+    (deps as { calendarPush?: unknown }).calendarPush = {
+      allowed: () => allowed,
+      connectUrl: () => "https://accounts.google.com/o/oauth2/v2/auth?state=s",
+      kick: () => undefined,
+      disconnect: async (id: number) => deps.repo.updateCalLink(id, "google", { status: "off", tokenEnc: null }),
+    };
+    return deps;
+  };
+
+  it("кнопка первой — только кому можно; не подключён — экран со ссылкой на вход и честным «доступ только к этому календарю»", async () => {
+    const deps = withPush(true);
+    const kb = JSON.stringify(calendarKeyboard({ deps, user: deps.repo.getUser(USER)! } as unknown as BotContext));
+    expect(kb.indexOf("gcal")).toBeGreaterThan(-1);
+    expect(kb.indexOf("gcal")).toBeLessThan(kb.indexOf("ics:0"));
+    expect(JSON.stringify(calendarKeyboard({ deps: withPush(false), user: deps.repo.getUser(USER)! } as unknown as BotContext))).not.toContain("gcal");
+    const calls = await run(deps, press("gcal"));
+    const msg = calls.find((c) => c.method === "sendMessage")!;
+    expect(String(msg.payload.text)).toContain("отдельный календарь «ВИШ-14-24»");
+    expect(String(msg.payload.text)).toContain("другие твои календари и события бот не видит");
+    expect(JSON.stringify(msg.payload.reply_markup)).toContain("https://accounts.google.com/o/oauth2/v2/auth?state=s");
+  });
+
+  it("подключён — статус, «Сверить сейчас» и «Отключить» с подтверждением", async () => {
+    const deps = withPush(true);
+    deps.repo.saveCalLink(USER, "google", { tokenEnc: "x", calendarId: "c", groupKey: group.key });
+    expect(JSON.stringify(calendarKeyboard({ deps, user: deps.repo.getUser(USER)! } as unknown as BotContext))).toContain("Google Календарь: подключён");
+    const screen = await run(deps, press("gcal"));
+    expect(String(screen.find((c) => c.method === "sendMessage")!.payload.text)).toContain("Google Календарь подключён");
+    const ask = await run(deps, press("gcal:off"));
+    expect(JSON.stringify(ask.find((c) => c.method === "editMessageText")!.payload.reply_markup)).toContain("gcal:offy");
+    expect(deps.repo.calLink(USER, "google")!.status).toBe("ok");
+    await run(deps, press("gcal:offy"));
+    expect(deps.repo.calLink(USER, "google")!.status).toBe("off");
+  });
+});

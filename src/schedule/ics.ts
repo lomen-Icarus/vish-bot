@@ -83,12 +83,9 @@ export function icsUid(o: Pick<Occurrence, "date" | "slot" | "start" | "subject"
   return `${Buffer.from(scope ? `${scope}|${positionKey(o)}` : positionKey(o)).toString("base64url")}@vish-bot`;
 }
 
-function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: number, cancelled: boolean, nowMs: number): string[] | null {
-  if (o.start == null || o.end == null) return null;
-  const startMs = localToMs(o.date, o.start);
-  const endMs = localToMs(o.date, o.end);
-  const summary = `${o.subject} (${occTypeLabel(o)})`;
-  const desc: string[] = [opts.name];
+/** Подробности пары для описания события: календарь, номер пары, преподаватель, подгруппа, перенос. */
+export function lessonDetails(o: Occurrence, name: string, cancelled = false): string[] {
+  const desc: string[] = [name];
   if (o.slot != null) desc.push(`${o.slot} пара`);
   if (o.teacher) desc.push(o.teacher);
   // В календаре преподавателя пара идёт у групп — их и пишем.
@@ -97,6 +94,15 @@ function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: nu
   if (o.movedFrom) desc.push(`перенос с ${o.movedFrom.date}`);
   if (o.isDistance) desc.push("дистанционно");
   if (cancelled) desc.push(o.movedTo ? `перенесена на ${o.movedTo.date}${o.movedTo.slot ? ` (${o.movedTo.slot} пара)` : ""}` : "убрана из расписания");
+  return desc;
+}
+
+function eventLines(o: Occurrence, opts: IcsOptions, stamp: string, sequence: number, cancelled: boolean, nowMs: number): string[] | null {
+  if (o.start == null || o.end == null) return null;
+  const startMs = localToMs(o.date, o.start);
+  const endMs = localToMs(o.date, o.end);
+  const summary = `${o.subject} (${occTypeLabel(o)})`;
+  const desc = lessonDetails(o, opts.name, cancelled);
   const lines = ["BEGIN:VEVENT", `UID:${icsUid(o, opts.uidScope)}`, `DTSTAMP:${stamp}`, `LAST-MODIFIED:${stamp}`, `SEQUENCE:${sequence}`, `DTSTART:${utcStamp(startMs)}`, `DTEND:${utcStamp(endMs)}`];
   lines.push(`SUMMARY:${escapeText(cancelled ? `Отменено: ${summary}` : summary)}`);
   if (o.room && !o.isDistance) lines.push(`LOCATION:${escapeText(`ауд. ${o.room}, ЧувГУ`)}`);

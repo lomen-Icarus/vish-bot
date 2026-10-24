@@ -14,6 +14,7 @@ import type { ChatService } from "../chat/service.js";
 import type { PersonalReplies } from "../chat/personal.js";
 import type { PublicUrl } from "../http/publicUrl.js";
 import type { MaxBridge } from "../max/bridge.js";
+import type { CalendarPush } from "../calendar/push.js";
 
 /** Short-lived per-user conversational state (single process, in memory). */
 export interface PendingState {
@@ -69,6 +70,8 @@ export interface Deps {
   chat?: ChatService | null;
   /** Личные ответы болталки «ник;частота;сообщение» (CHAT_PERSONAL_DB); есть, только когда есть болталка. */
   personal?: PersonalReplies | null;
+  /** Прямая запись пар в Google Календарь; null/нет — кнопки подключения нет. */
+  calendarPush?: CalendarPush | null;
   /** Calendar-feed server; subscription links are offered only while it listens. */
   http: Server | null;
   /** Публичный адрес с резервом (основной/запасной); без него — PUBLIC_URL из конфига. */

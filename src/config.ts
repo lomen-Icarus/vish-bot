@@ -204,6 +204,31 @@ const schema = z.object({
    * требует экран входа Google. В .env, а не в коде — репозиторий публичный.
    * Не похоже на адрес — не показываем вовсе.
    */
+  /**
+   * Прямая запись пар в Google Календарь (OAuth-клиент «Web application» в
+   * Google Cloud). Нет обоих — кнопки подключения нет.
+   */
+  GOOGLE_CLIENT_ID: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  GOOGLE_CLIENT_SECRET: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  /** То же для Яндекса (oauth.yandex.ru); пока только хранится — подключение Яндекса следующим шагом. */
+  YANDEX_CLIENT_ID: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  YANDEX_CLIENT_SECRET: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  /**
+   * Адрес, куда Google возвращает человека после входа: ровно он указан в
+   * «Authorized redirect URIs» (…/oauth/google). Не PUBLIC_URL: тот бывает
+   * запасным, а адрес возврата у Google один.
+   */
+  OAUTH_BASE_URL: z.preprocess(blankToUndefined, z.string().default("https://calendar.secretvish.ru")).transform((v) => v.replace(/\/+$/, "")),
+  /**
+   * Кому видна кнопка прямой записи: admins — только админам (прототип),
+   * all — всем, off — никому. Мусор — как admins.
+   */
+  CAL_PUSH: z.preprocess(blankToUndefined, z.string().default("admins")).transform((v) => (v === "all" || v === "off" ? v : "admins")),
+  /**
+   * Ключ шифрования токенов календарей (32 байта, base64 или hex). Не задан —
+   * выводится из BOT_TOKEN; сменили BOT_TOKEN — людям придётся подключиться заново.
+   */
+  CAL_TOKEN_KEY: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   CONTACT_EMAIL: z
     .string()
     .optional()

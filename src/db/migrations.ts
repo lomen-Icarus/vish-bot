@@ -546,4 +546,40 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (owner, client)
   );
   `,
+  // Прямая запись пар в календарь человека (Google; потом Яндекс).
+  // cal_links — подключение: зашифрованный refresh token (NULL — отключили),
+  // календарь, созданный ботом, для какой группы он назван, состояние
+  // (ok — пишем; revoked — доступ отозван; gone — календарь удалён; off —
+  // отключил сам). cal_events — какие события бот поставил: uid пары →
+  // id события и отпечаток содержимого; по ним сверка не плодит дублей и
+  // после перезапуска. oauth_states — одноразовые метки входа (state), 30 минут.
+  `
+  CREATE TABLE cal_links (
+    user_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    token_enc TEXT,
+    calendar_id TEXT,
+    group_key TEXT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    synced_at TEXT,
+    error TEXT,
+    PRIMARY KEY (user_id, provider)
+  );
+  CREATE TABLE cal_events (
+    user_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    uid TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    date TEXT NOT NULL,
+    PRIMARY KEY (user_id, provider, uid)
+  );
+  CREATE TABLE oauth_states (
+    state TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];

@@ -45,14 +45,22 @@ export interface GroupCalendar {
   to: LocalDate;
 }
 
-/** Full calendar of a group from today to the end of the semester. */
-export function groupCalendar(service: ScheduleService, group: LogicalGroup, opts: { subgroup: number | null; alarmMinutes: number | null; now?: Date; refreshInterval?: string; stableSequence?: boolean; today?: LocalDate; ppaDebts?: string[]; allPpa?: boolean; uidScope?: string; pastDays?: number }): GroupCalendar {
+/**
+ * Пары группы для календаря человека: своя подгруппа и отмеченные пересдачи
+ * (ППА); allPpa — все пересдачи группы (календарь группы от админа, /calfeeds).
+ * Общее у ленты-подписки, файла .ics и прямой записи в Google.
+ */
+export function calendarLessons(service: ScheduleService, group: LogicalGroup, opts: { subgroup: number | null; today?: LocalDate; ppaDebts?: string[]; allPpa?: boolean; pastDays?: number }): { lessons: Occurrence[]; from: LocalDate; to: LocalDate } {
   const { from, to } = calendarWindow(service, opts.today, opts.pastDays);
-  // Отмеченные пересдачи (ППА) человека — в его личный календарь; allPpa —
-  // все пересдачи группы (календарь группы от админа, /calfeeds).
   const ppa = opts.allPpa ? service.ppaLessons(group, "all", from, to) : opts.ppaDebts?.length ? service.ppaLessons(group, opts.ppaDebts, from, to) : [];
   const own = filterSubgroup(service.materialize(group, from, to), opts.subgroup);
   const lessons = ppa.length ? [...own, ...ppa].sort((a, b) => a.date.localeCompare(b.date) || (a.start ?? 0) - (b.start ?? 0)) : own;
+  return { lessons, from, to };
+}
+
+/** Full calendar of a group from today to the end of the semester. */
+export function groupCalendar(service: ScheduleService, group: LogicalGroup, opts: { subgroup: number | null; alarmMinutes: number | null; now?: Date; refreshInterval?: string; stableSequence?: boolean; today?: LocalDate; ppaDebts?: string[]; allPpa?: boolean; uidScope?: string; pastDays?: number }): GroupCalendar {
+  const { lessons, from, to } = calendarLessons(service, group, opts);
   const ics = buildIcs({ name: group.title, lessons, alarmMinutes: opts.alarmMinutes, now: opts.now, refreshInterval: opts.refreshInterval, stableSequence: opts.stableSequence, uidScope: opts.uidScope });
   return { ics, count: lessons.filter((o) => o.status === "scheduled").length, from, to };
 }

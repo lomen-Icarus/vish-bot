@@ -8,6 +8,7 @@ import type { TeacherService } from "../portal/teachers.js";
 import type { WebinarService } from "../portal/webinars.js";
 import { logger } from "../logger.js";
 import { dispatchPpaEvents, tickPpaAsk } from "../notify/ppa.js";
+import type { CalendarPush } from "../calendar/push.js";
 
 const TZ = "Europe/Moscow";
 const MIN_POLL_GAP_MS = 90_000;
@@ -17,7 +18,7 @@ export interface SchedulerHandles {
   pollNow(): Promise<void>;
 }
 
-export function startScheduler(opts: { service: ScheduleService; notifier: Notifier; repo: Repo; busyCron: string; idleCron: string; newsCron?: string; news?: NewsScanner | null; teachers?: TeacherService | null; webinars?: WebinarService | null }): SchedulerHandles {
+export function startScheduler(opts: { service: ScheduleService; notifier: Notifier; repo: Repo; busyCron: string; idleCron: string; newsCron?: string; news?: NewsScanner | null; teachers?: TeacherService | null; webinars?: WebinarService | null; calendarPush?: CalendarPush | null }): SchedulerHandles {
   let lastPollAt = 0;
   let pollInFlight: Promise<void> | null = null;
 
@@ -29,6 +30,8 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
         const r = await opts.service.poll();
         lastPollAt = Date.now();
         await opts.notifier.alertEmptyAccepted(r.emptyAccepted);
+        // Изменения — сразу в календари тех, кто подключил Google (сверка, без лишних запросов, если менять нечего).
+        opts.calendarPush?.kick();
         const delivered = await opts.notifier.dispatchChangeEvents();
         if (r.events.length || delivered) logger.info({ reason, events: r.events.length, delivered }, "change notifications dispatched");
       } catch (err) {
@@ -41,6 +44,8 @@ export function startScheduler(opts: { service: ScheduleService; notifier: Notif
   };
 
   const jobs: Cron[] = [
+    // Сверка календарей и без опроса: смена подгруппы, напоминания, ППА, повтор после сбоя Google.
+    new Cron("*/10 * * * *", { timezone: TZ, protect: true, name: "calendar-push" }, () => opts.calendarPush?.kick()),
     new Cron(opts.busyCron, { timezone: TZ, protect: true, name: "poll-busy" }, () => runPoll("busy")),
     new Cron(opts.idleCron, { timezone: TZ, protect: true, name: "poll-idle" }, () => runPoll("idle")),
     new Cron("* * * * *", { timezone: TZ, protect: true, name: "reminders" }, async () => {
