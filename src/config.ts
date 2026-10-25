@@ -210,7 +210,7 @@ const schema = z.object({
    */
   GOOGLE_CLIENT_ID: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   GOOGLE_CLIENT_SECRET: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
-  /** То же для Яндекса (oauth.yandex.ru); пока только хранится — подключение Яндекса следующим шагом. */
+  /** То же для Яндекса (oauth.yandex.ru, право «Календарь: чтение и запись»): запись по CalDAV. */
   YANDEX_CLIENT_ID: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   YANDEX_CLIENT_SECRET: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   /**

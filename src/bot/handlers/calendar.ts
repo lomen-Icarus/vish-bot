@@ -15,6 +15,8 @@ import { calendarPath } from "../../http/server.js";
 import { fmtDDMM, todayMsk } from "../../time.js";
 import { publicBase } from "../../http/publicUrl.js";
 import { mskStamp } from "../recNotify.js";
+import { PROVIDER_TITLE } from "../../calendar/push.js";
+import type { CalProvider } from "../../db/repo.js";
 
 /** Счётчик «выдали ссылку-подписку» (ui_counters); в /stats — в разделе календаря, а не среди нажатий. */
 export const CAL_LINK_COUNTER = "cal:link";
@@ -41,14 +43,27 @@ async function teacherCalendar(ctx: BotContext, alarm: number | null): Promise<{
   return { ics, count: loaded.lessons.filter((o) => o.status === "scheduled").length, to, name };
 }
 
-/** Видна ли кнопка прямой записи в Google: ключи заданы, человеку можно (CAL_PUSH), не режим преподавателя. */
-function pushEnabled(ctx: BotContext): boolean {
-  return Boolean(ctx.deps.calendarPush?.allowed(ctx.user.id)) && !ctx.user.teacherMode;
+/** Сервисы прямой записи, чья кнопка видна человеку: ключи заданы, ему можно (CAL_PUSH), не режим преподавателя. */
+function pushProviders(ctx: BotContext): CalProvider[] {
+  const push = ctx.deps.calendarPush;
+  if (!push || ctx.user.teacherMode) return [];
+  return (["google", "yandex"] as const).filter((p) => push.allowed(ctx.user.id, p));
+}
+
+/** Одна кнопка на прямую запись (в панели не больше 6 кнопок): подключён — куда; один сервис — сразу он; два — выбор. */
+function pushButton(ctx: BotContext): [string, string] | null {
+  const providers = pushProviders(ctx);
+  if (!providers.length) return null;
+  const on = providers.find((p) => ctx.deps.repo.calLink(ctx.user.id, p)?.status === "ok");
+  if (on) return [`⚡ ${PROVIDER_TITLE[on]}: подключён`, `pcal:${on}`];
+  if (providers.length === 1) return [`⚡ ${PROVIDER_TITLE[providers[0]!]} — переносы сразу`, `pcal:${providers[0]}`];
+  return ["⚡ Google / Яндекс — переносы сразу", "pcal"];
 }
 
 export function calendarKeyboard(ctx: BotContext): InlineKeyboard {
   const kb = new InlineKeyboard();
-  if (pushEnabled(ctx)) kb.text(ctx.deps.repo.calLink(ctx.user.id, "google")?.status === "ok" ? "⚡ Google Календарь: подключён" : "⚡ Google Календарь — переносы сразу", "gcal").row();
+  const push = pushButton(ctx);
+  if (push) kb.text(push[0], push[1]).row();
   if (subscriptionsEnabled(ctx)) kb.text("🔗 Подписка: обновляется сама", "ics:sub").row();
   return kb.text("📎 Файл без напоминаний", "ics:0").row().text("📎 ⏰ за 15 мин", "ics:15").text("📎 ⏰ за 30 мин", "ics:30").text("📎 ✏️ Своё", "ics:own");
 }
@@ -72,7 +87,8 @@ export async function offerCalendar(ctx: BotContext): Promise<void> {
   const group = needGroup(ctx);
   if (!group && !ctx.user.teacherMode) return void (await ctx.reply(groupRequiredText()));
   const lines = ["<b>📆 Пары в календарь телефона</b>", ""];
-  if (pushEnabled(ctx)) lines.push("<b>⚡ Google Календарь</b> — бот сам записывает пары в твой Google Календарь: переносы и отмены — через несколько минут, а не через сутки.", "");
+  const providers = pushProviders(ctx);
+  if (providers.length) lines.push(`<b>⚡ ${providers.map((p) => PROVIDER_TITLE[p]).join(" или ")}</b> — бот сам записывает пары в твой календарь: переносы и отмены — через несколько минут, а не через сутки.`, "");
   if (subscriptionsEnabled(ctx)) {
     lines.push("<b>Подписка</b> — лучший вариант: телефон сам подтягивает расписание, переносы и отмены появляются в календаре без твоего участия, ничего не дублируется.", "");
   }
@@ -88,72 +104,87 @@ calendarHandlers.callbackQuery("ics:menu", async (ctx) => {
   await offerCalendar(ctx);
 });
 
-// ---- прямая запись в Google Календарь ----
-async function showGoogle(ctx: BotContext, edit = false): Promise<void> {
+// ---- прямая запись в Google / Яндекс Календарь ----
+const IN: Record<CalProvider, string> = { google: "Google", yandex: "Яндекс" };
+
+async function showPush(ctx: BotContext, provider: CalProvider, edit = false): Promise<void> {
   const push = ctx.deps.calendarPush;
   const group = needGroup(ctx);
-  if (!push || !pushEnabled(ctx) || !group) return void (await ctx.reply(group ? "Подключение Google Календаря пока недоступно." : groupRequiredText()));
-  const link = ctx.deps.repo.calLink(ctx.user.id, "google");
+  const title = PROVIDER_TITLE[provider];
+  if (!push || !pushProviders(ctx).includes(provider) || !group) return void (await ctx.reply(group ? `Подключение: ${title} — пока недоступно.` : groupRequiredText()));
+  const link = ctx.deps.repo.calLink(ctx.user.id, provider);
+  const cb = `pcal:${provider}`;
   const kb = new InlineKeyboard();
   let text: string;
   if (link?.status === "ok") {
-    const title = ctx.deps.service.group(link.groupKey ?? "")?.title ?? group.title;
+    const name = ctx.deps.service.group(link.groupKey ?? "")?.title ?? group.title;
     text = [
-      "<b>⚡ Google Календарь подключён</b>",
-      `Календарь «${esc(title)}» · сверено: ${link.syncedAt ? mskStamp(link.syncedAt) : "ещё нет — пары появятся через несколько минут"}${link.error ? ` · ⚠️ Google ответил ошибкой (${esc(link.error)}), повторю сам` : ""}`,
+      `<b>⚡ ${title} подключён</b>`,
+      `Календарь «${esc(name)}» · сверено: ${link.syncedAt ? mskStamp(link.syncedAt) : "ещё нет — пары появятся через несколько минут"}${link.error ? ` · ⚠️ ${IN[provider]} ответил ошибкой (${esc(link.error)}), повторю сам` : ""}`,
       "",
       "Переносы и отмены приходят сами через несколько минут после изменения на портале. Прошедшие пары остаются. Сменишь группу, подгруппу или напоминание — календарь обновится сам.",
       "",
-      "<i>Была подписка по ссылке в Google — она опустеет сама, её можно удалить.</i>",
+      `<i>Была подписка по ссылке в ${IN[provider]} — она опустеет сама, её можно удалить.</i>`,
     ].join("\n");
-    kb.text("🔄 Сверить сейчас", "gcal:sync").text("🔌 Отключить", "gcal:off").row();
+    kb.text("🔄 Сверить сейчас", `${cb}:sync`).text("🔌 Отключить", `${cb}:off`).row();
   } else {
-    const url = push.connectUrl(ctx.user.id);
-    if (!url) return void (await ctx.reply("Подключение Google Календаря пока недоступно."));
-    const lost = link?.status === "revoked" ? "⚠️ Запись остановлена: доступ к Google отозван.\n\n" : link?.status === "gone" ? "⚠️ Запись остановлена: календарь удалён из Google.\n\n" : "";
+    const url = push.connectUrl(ctx.user.id, provider);
+    if (!url) return void (await ctx.reply(`Подключение: ${title} — пока недоступно.`));
+    const lost = link?.status === "revoked" ? `⚠️ Запись остановлена: доступ к ${IN[provider]} отозван.\n\n` : link?.status === "gone" ? `⚠️ Запись остановлена: календарь удалён из ${IN[provider]}.\n\n` : "";
     text = [
-      `${lost}<b>⚡ Google Календарь</b>`,
+      `${lost}<b>⚡ ${title}</b>`,
       "",
-      `Бот создаст в твоём Google Календаре отдельный календарь «${esc(group.title)}» и сам будет записывать туда пары: переносы и отмены — через несколько минут после изменения на портале.`,
-      "Доступ — только к этому календарю: другие твои календари и события бот не видит.",
+      `Бот создаст в твоём ${provider === "google" ? "Google Календаре" : "Яндекс Календаре"} отдельный календарь «${esc(group.title)}» и сам будет записывать туда пары: переносы и отмены — через несколько минут после изменения на портале.`,
+      provider === "google"
+        ? "Доступ — только к этому календарю: другие твои календари и события бот не видит."
+        : "Яндекс выдаёт доступ ко всему календарю аккаунта, но бот пишет только в свой календарь и твои события не трогает. Если Яндекс не даст боту создать календарь сам — бот попросит создать его вручную, один раз.",
       "",
-      "Нажми «Войти в Google» → выбери аккаунт → «Разрешить». Ссылка действует 30 минут.",
-      "",
-      "<i>Google пишет «disallowed_useragent»? Нажми ⋮ вверху → «Открыть в браузере».</i>",
+      `Нажми «Войти в ${IN[provider]}» → выбери аккаунт → «Разрешить». Ссылка действует 30 минут.`,
+      ...(provider === "google" ? ["", "<i>Google пишет «disallowed_useragent»? Нажми ⋮ вверху → «Открыть в браузере».</i>"] : []),
     ].join("\n");
-    kb.url("🔐 Войти в Google", url).row();
+    kb.url(`🔐 Войти в ${IN[provider]}`, url).row();
   }
   kb.text("◀️ Назад", "ics:menu");
   if (edit) await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb, link_preview_options: { is_disabled: true } }).catch(() => undefined);
   else await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb, link_preview_options: { is_disabled: true } });
 }
 
-calendarHandlers.callbackQuery("gcal", async (ctx) => {
+/** Оба сервиса доступны и ни один не подключён — сначала выбор. */
+calendarHandlers.callbackQuery("pcal", async (ctx) => {
   await ctx.answerCallbackQuery();
-  await showGoogle(ctx);
+  const providers = pushProviders(ctx);
+  if (providers.length === 1) return showPush(ctx, providers[0]!);
+  const kb = new InlineKeyboard();
+  for (const p of providers) kb.text(PROVIDER_TITLE[p], `pcal:${p}`);
+  await ctx.reply("Куда записывать пары?", { reply_markup: kb.row().text("◀️ Назад", "ics:menu") });
 });
 
-calendarHandlers.callbackQuery("gcal:sync", async (ctx) => {
-  if (!pushEnabled(ctx)) return void (await ctx.answerCallbackQuery());
-  await ctx.answerCallbackQuery({ text: "Сверяю — через минуту-другую всё будет в календаре" });
-  ctx.deps.calendarPush?.kick();
-});
-
-calendarHandlers.callbackQuery("gcal:off", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  const kb = new InlineKeyboard().text("🔌 Да, отключить", "gcal:offy").text("Нет", "gcal:back");
-  await ctx.editMessageText("Отключить Google Календарь? Пары перестанут обновляться. Сам календарь останется в Google — удалить его можно вручную. Подключить снова можно в любой момент.", { reply_markup: kb }).catch(() => undefined);
-});
-
-calendarHandlers.callbackQuery("gcal:back", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await showGoogle(ctx, true);
-});
-
-calendarHandlers.callbackQuery("gcal:offy", async (ctx) => {
+// «gcal…» — кнопки сообщений, отправленных до появления Яндекса.
+calendarHandlers.callbackQuery(/^(?:gcal|pcal:(google|yandex))(?::(sync|off|offy|back))?$/, async (ctx) => {
+  const provider = (ctx.match[1] ?? "google") as CalProvider;
+  const action = ctx.match[2];
+  const title = PROVIDER_TITLE[provider];
+  if (!action) {
+    await ctx.answerCallbackQuery();
+    return showPush(ctx, provider);
+  }
+  if (action === "sync") {
+    if (!pushProviders(ctx).includes(provider)) return void (await ctx.answerCallbackQuery());
+    await ctx.answerCallbackQuery({ text: "Сверяю — через минуту-другую всё будет в календаре" });
+    return void ctx.deps.calendarPush?.kick();
+  }
+  if (action === "off") {
+    await ctx.answerCallbackQuery();
+    const kb = new InlineKeyboard().text("🔌 Да, отключить", `pcal:${provider}:offy`).text("Нет", `pcal:${provider}:back`);
+    return void (await ctx.editMessageText(`Отключить ${title}? Пары перестанут обновляться. Сам календарь останется в ${IN[provider]} — удалить его можно вручную. Подключить снова можно в любой момент.`, { reply_markup: kb }).catch(() => undefined));
+  }
+  if (action === "back") {
+    await ctx.answerCallbackQuery();
+    return showPush(ctx, provider, true);
+  }
   await ctx.answerCallbackQuery({ text: "Отключаю…" });
-  await ctx.deps.calendarPush?.disconnect(ctx.user.id);
-  await ctx.editMessageText("Google Календарь отключён: пары больше не обновляются. Подключить снова: 📆 Календарь → ⚡ Google Календарь.").catch(() => undefined);
+  await ctx.deps.calendarPush?.disconnect(ctx.user.id, provider);
+  await ctx.editMessageText(`${title} отключён: пары больше не обновляются. Подключить снова: 📆 Календарь → ⚡ ${title}.`).catch(() => undefined);
 });
 
 // ---- one-off file ----
