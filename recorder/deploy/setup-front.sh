@@ -30,6 +30,13 @@ VPS_IP="${VPS_IP:-77.91.92.142}"                          # этот VPS — д�
 BOT_IP="${BOT_IP:-135.125.188.210}"                       # хостинг бота (OVH)
 BOT_PORT="${BOT_PORT:-443}"                               # его HTTPS-порт
 BOT_NAME="${BOT_NAME:-rezerve-adress.frienworld.com}"     # имя, под которым бот отвечает на хостинге
+# Обход HTTPS хостинга: «IP:порт» самого бота (Pterodactyl → Network), например
+# BOT_HTTP=135.125.188.210:48505. Нужен, когда HTTPS хостинга ведёт не туда
+# (так было 24.10.2026: порт сервера сменился с 40070 на 48505, а HTTPS хостинга
+# остался на старом). Участок VPS → бот тогда идёт по HTTP без шифрования —
+# держать так, только пока хостинг не перенаправит свой HTTPS. Задавать при
+# каждом запуске скрипта: без переменной конфиг вернётся к HTTPS хостинга.
+BOT_HTTP="${BOT_HTTP:-}"
 CF_NAMES="${CF_NAMES:-rezerve-adress.frienworld.com}"
 SEL_NAMES="${SEL_NAMES:-calendar.secretvish.ru}"
 # Старые ссылки на календарь — http, местами с портом хостинга (:40070).
@@ -188,7 +195,7 @@ write_nginx() {
 cat <<EOF
 # Создано setup-front.sh — правки руками перезапишутся при следующем запуске.
 upstream vish_bot {
-    server $BOT_IP:$BOT_PORT;
+    server ${BOT_HTTP:-$BOT_IP:$BOT_PORT};
     keepalive 8;
 }
 EOF
@@ -238,6 +245,24 @@ EOF
 done
 } > "$CONF.new"
 
+if [ -n "$BOT_HTTP" ]; then
+cat > "$PROXY_INC.new" <<EOF
+# Создано setup-front.sh (BOT_HTTP=$BOT_HTTP). Запрос — боту прямо на его порт, по HTTP:
+# обход HTTPS хостинга, пока тот ведёт не туда. Без шифрования — временно.
+proxy_pass http://vish_bot;
+proxy_http_version 1.1;
+proxy_set_header Connection "";
+proxy_set_header Host \$host;
+proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto \$scheme;
+proxy_connect_timeout 15s;
+proxy_send_timeout 120s;
+proxy_read_timeout 120s;
+# PDF от записывалки — до 38 МБ одним запросом.
+client_max_body_size 50m;
+proxy_request_buffering off;
+EOF
+else
 cat > "$PROXY_INC.new" <<EOF
 # Создано setup-front.sh. Запрос — боту на хостинг, по HTTPS с проверкой сертификата.
 proxy_pass https://vish_bot;
@@ -259,6 +284,7 @@ proxy_read_timeout 120s;
 client_max_body_size 50m;
 proxy_request_buffering off;
 EOF
+fi
 
 # Старый конфиг — в сторону: битый новый не должен уронить работающий nginx.
 cp -a "$CONF" "$CONF.bak" 2>/dev/null || true
