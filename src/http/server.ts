@@ -15,7 +15,8 @@ import { tmaContext, tmaSubmit } from "../bot/tma.js";
 import { verifyInitData } from "./initData.js";
 import { TMA_PAGE } from "./tmaPage.js";
 import { homePage, oauthResultPage, privacyPage } from "./sitePages.js";
-import type { CalendarPush } from "../calendar/push.js";
+import { PROVIDER_TITLE, type CalendarPush } from "../calendar/push.js";
+import type { CalProvider } from "../db/repo.js";
 import { buildIcs } from "../schedule/ics.js";
 import { quorumSnapshot } from "./quorum.js";
 import { logger } from "../logger.js";
@@ -173,10 +174,10 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (!user) return groupFeed(token) ?? notFound("not found");
     const group = user.groupKey ? deps.service.group(user.groupKey) : null;
     if (!group) return notFound("group not chosen");
-    // Пары уже пишутся в Google напрямую — старая подписка в том же Google
-    // пустеет сама, иначе каждая пара стояла бы дважды. iPhone и прочие по
-    // этой ссылке получают полный календарь, как раньше.
-    if (client === "google" && deps.repo.calLink(user.id, "google")?.status === "ok") {
+    // Пары уже пишутся в Google (Яндекс) напрямую — старая подписка в том же
+    // сервисе пустеет сама, иначе каждая пара стояла бы дважды. iPhone и
+    // прочие по этой ссылке получают полный календарь, как раньше.
+    if ((client === "google" || client === "yandex") && deps.repo.calLink(user.id, client)?.status === "ok") {
       const body = buildIcs({ name: `${group.title} — старая подписка, можно удалить`, lessons: [], alarmMinutes: null, refreshInterval: "PT1H", stableSequence: true });
       return { status: 200, body: Buffer.from(body, "utf8"), type: "text/calendar; charset=utf-8", owner: `u:${user.id}` };
     }
@@ -186,20 +187,22 @@ export function createHttpServer(deps: HttpDeps): Server {
     return { ...r, owner: `u:${user.id}` };
   };
 
-  const handleGoogleReturn = async (url: URL, res: ServerResponse): Promise<void> => {
+  const handleOauthReturn = async (url: URL, res: ServerResponse, provider: CalProvider): Promise<void> => {
     const page = (status: number, html: string): void => {
       const buf = Buffer.from(html, "utf8");
       res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Content-Length": String(buf.length), "Referrer-Policy": "no-referrer" });
       res.end(buf);
     };
     const state = url.searchParams.get("state");
-    if (!deps.calendarPush?.google || !state) return page(404, oauthResultPage({ ok: false, reason: "expired" }));
+    const service = PROVIDER_TITLE[provider];
+    const enabled = provider === "yandex" ? deps.calendarPush?.yandex : deps.calendarPush?.google;
+    if (!deps.calendarPush || !enabled || !state) return page(404, oauthResultPage({ ok: false, reason: "expired" }, service));
     try {
-      const r = await deps.calendarPush.finishConnect(state, url.searchParams.get("code"), url.searchParams.get("error"));
-      page(r.ok ? 200 : 400, oauthResultPage(r));
+      const r = await deps.calendarPush.finishConnect(state, url.searchParams.get("code"), url.searchParams.get("error"), provider);
+      page(r.ok ? 200 : 400, oauthResultPage(r, service));
     } catch (err) {
-      logger.warn({ err: String(err).slice(0, 120) }, "google return failed");
-      page(500, oauthResultPage({ ok: false, reason: "failed" }));
+      logger.warn({ err: String(err).slice(0, 120), provider }, "oauth return failed");
+      page(500, oauthResultPage({ ok: false, reason: "failed" }, service));
     }
   };
 
@@ -430,8 +433,8 @@ export function createHttpServer(deps: HttpDeps): Server {
       return;
     }
     // Возврат после входа в Google: код → токены → календарь. Ответ — страница для человека.
-    if (url.pathname === "/oauth/google" && method === "GET") {
-      void handleGoogleReturn(url, res);
+    if ((url.pathname === "/oauth/google" || url.pathname === "/oauth/yandex") && method === "GET") {
+      void handleOauthReturn(url, res, url.pathname === "/oauth/yandex" ? "yandex" : "google");
       return;
     }
     // Главная и политика конфиденциальности сервиса календарей: их адреса — на экране входа Google.

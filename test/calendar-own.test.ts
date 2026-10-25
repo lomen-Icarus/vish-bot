@@ -105,10 +105,10 @@ describe("календарь: ⚡ Google Календарь (прямая зап
   const withPush = (allowed: boolean) => {
     const deps = makeDeps();
     (deps as { calendarPush?: unknown }).calendarPush = {
-      allowed: () => allowed,
+      allowed: (_id: number, p = "google") => allowed && p === "google",
       connectUrl: () => "https://accounts.google.com/o/oauth2/v2/auth?state=s",
       kick: () => undefined,
-      disconnect: async (id: number) => deps.repo.updateCalLink(id, "google", { status: "off", tokenEnc: null }),
+      disconnect: async (id: number, p: "google" | "yandex" = "google") => deps.repo.updateCalLink(id, p, { status: "off", tokenEnc: null }),
     };
     return deps;
   };
@@ -116,9 +116,9 @@ describe("календарь: ⚡ Google Календарь (прямая зап
   it("кнопка первой — только кому можно; не подключён — экран со ссылкой на вход и честным «доступ только к этому календарю»", async () => {
     const deps = withPush(true);
     const kb = JSON.stringify(calendarKeyboard({ deps, user: deps.repo.getUser(USER)! } as unknown as BotContext));
-    expect(kb.indexOf("gcal")).toBeGreaterThan(-1);
-    expect(kb.indexOf("gcal")).toBeLessThan(kb.indexOf("ics:0"));
-    expect(JSON.stringify(calendarKeyboard({ deps: withPush(false), user: deps.repo.getUser(USER)! } as unknown as BotContext))).not.toContain("gcal");
+    expect(kb.indexOf("pcal:google")).toBeGreaterThan(-1);
+    expect(kb.indexOf("pcal:google")).toBeLessThan(kb.indexOf("ics:0"));
+    expect(JSON.stringify(calendarKeyboard({ deps: withPush(false), user: deps.repo.getUser(USER)! } as unknown as BotContext))).not.toContain("pcal");
     const calls = await run(deps, press("gcal"));
     const msg = calls.find((c) => c.method === "sendMessage")!;
     expect(String(msg.payload.text)).toContain("отдельный календарь «ВИШ-14-24»");
@@ -133,7 +133,7 @@ describe("календарь: ⚡ Google Календарь (прямая зап
     const screen = await run(deps, press("gcal"));
     expect(String(screen.find((c) => c.method === "sendMessage")!.payload.text)).toContain("Google Календарь подключён");
     const ask = await run(deps, press("gcal:off"));
-    expect(JSON.stringify(ask.find((c) => c.method === "editMessageText")!.payload.reply_markup)).toContain("gcal:offy");
+    expect(JSON.stringify(ask.find((c) => c.method === "editMessageText")!.payload.reply_markup)).toContain("pcal:google:offy");
     expect(deps.repo.calLink(USER, "google")!.status).toBe("ok");
     await run(deps, press("gcal:offy"));
     expect(deps.repo.calLink(USER, "google")!.status).toBe("off");

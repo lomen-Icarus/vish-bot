@@ -140,11 +140,12 @@ function knownState(ctx: BotContext): string {
   return `${s.count} чел. из ${esc(s.file)} · анонимность включили ${ctx.deps.repo.anonCount()} чел.`;
 }
 
-/** Прямая запись в Google для /health: ключи, кому видна кнопка, сколько подключений в каком состоянии. */
-function googlePushState(ctx: BotContext): string {
+/** Прямая запись в календарь для /health: ключи, кому видна кнопка, сколько подключений в каком состоянии. */
+function pushState(ctx: BotContext, provider: "google" | "yandex"): string {
   const push = ctx.deps.calendarPush;
-  if (!push?.google) return "выключена (нет GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)";
-  const n = ctx.deps.repo.calLinkCounts("google");
+  const on = provider === "google" ? push?.google : push?.yandex;
+  if (!on) return `выключена (нет ${provider === "google" ? "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET" : "YANDEX_CLIENT_ID / YANDEX_CLIENT_SECRET"})`;
+  const n = ctx.deps.repo.calLinkCounts(provider);
   const mode = ctx.deps.config.CAL_PUSH === "all" ? "всем" : ctx.deps.config.CAL_PUSH === "off" ? "никому (CAL_PUSH=off)" : "только админам (CAL_PUSH=admins)";
   return `ключи заданы, кнопка — ${mode} · подключено ${n.ok ?? 0}${n.revoked || n.gone ? ` · сломалось ${(n.revoked ?? 0) + (n.gone ?? 0)}` : ""}${n.off ? ` · отключили ${n.off}` : ""}`;
 }
@@ -170,7 +171,8 @@ function healthText(ctx: BotContext): string {
     `Преподаватели: ${teacherState(ctx, teacherCount, teacherErr)}${teacherErr ? ` · <code>${esc(teacherErr).slice(0, 200)}</code>` : ""}`,
     `Вебинары (преподаватели дистанта): ${webinarStats(ctx)}`,
     `Доска объявлений: ${deps.repo.activeAnnouncements().length} активных`,
-    `Google Календарь (прямая запись): ${googlePushState(ctx)}`,
+    `Google Календарь (прямая запись): ${pushState(ctx, "google")}`,
+    `Яндекс Календарь (прямая запись): ${pushState(ctx, "yandex")}`,
     `Лимиты ИИ: ${aiLimits(deps.repo, deps.config, todayMsk()).perUser}/чел, ${aiLimits(deps.repo, deps.config, todayMsk()).global} общих · потрачено сегодня ${deps.repo.aiUsageGlobal(todayMsk())}`,
     `Inline-режим: ${deps.inline ? "включён" : "ВЫКЛЮЧЕН — включи в @BotFather: /setinline, затем /setinlinefeedback"}`,
     `Болталка в группах: ${deps.chat ? `${esc(deps.chat.model)} · чатов включено ${deps.repo.chatGroups().filter((g) => g.enabled).length + deps.config.CHAT_GROUP_IDS.length} · сценарий ${deps.chat.qa.stats().count} · сегодня ответов ${deps.repo.chatUsage({}, todayMsk())} · privacy mode ${ctx.me.can_read_all_group_messages ? "выключен" : "ВКЛЮЧЁН — «@бот …» может не доходить, ответы на сообщения бота работают (/chats)"}` : deps.config.CHAT_AI ? "нет ключа Anthropic" : "выключена (CHAT_AI=FALSE)"}`,

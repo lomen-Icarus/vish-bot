@@ -1,9 +1,10 @@
 /**
- * Прямая запись пар в Google Календарь человека (этап 4 реформы календаря).
+ * Прямая запись пар в календарь человека — Google или Яндекс (этап 4 реформы
+ * календаря).
  *
- * Подписка по ссылке обновляется, когда захочет Google (до суток). Здесь бот
- * сам ставит события в отдельный календарь, созданный им в аккаунте человека,
- * — сразу после проверки портала.
+ * Подписку по ссылке сервис перечитывает, когда захочет (Google — до суток,
+ * Яндекс — до двух). Здесь бот сам ставит события в отдельный календарь в
+ * аккаунте человека — сразу после проверки портала.
  *
  * Устроено как сверка, а не очередь: на каждом проходе бот считает, какие
  * пары должны стоять (с сегодня до конца семестра), сравнивает с тем, что уже
@@ -12,21 +13,24 @@
  * что повтор после сбоя или перезапуска не плодит дублей. Прошедшие пары не
  * трогаются — история остаётся. За проход на человека — не больше
  * OPS_PER_USER действий: первая загрузка (~300 пар) растягивается на
- * несколько проходов и не упирается в лимиты Google.
+ * несколько проходов и не упирается в лимиты сервиса.
  *
- * В логах — только id и числа.
+ * Сервисы различаются только адаптером (Provider): вход, календарь, вид
+ * события. В логах — только id и числа.
  */
 import { createHash, randomBytes } from "node:crypto";
 import type { Config } from "../config.js";
-import type { CalLink, Repo, User } from "../db/repo.js";
+import type { CalLink, CalProvider, Repo, User } from "../db/repo.js";
 import type { ScheduleService } from "../schedule/service.js";
 import type { LogicalGroup } from "../schedule/groups.js";
 import { occTypeLabel, type Occurrence } from "../schedule/model.js";
 import { calendarLessons } from "../schedule/calendar.js";
-import { icsUid, lessonDetails } from "../schedule/ics.js";
+import { buildIcs, icsUid, lessonDetails } from "../schedule/ics.js";
 import { todayMsk } from "../time.js";
 import { logger } from "../logger.js";
-import { GoogleCalendarClient, GoogleError, type GoogleEvent } from "./google.js";
+import { CalError } from "./errors.js";
+import { GoogleCalendarClient, type GoogleEvent } from "./google.js";
+import { YandexCalendarClient } from "./yandex.js";
 import { seal, tokenKey, unseal } from "./secret.js";
 
 /** Действий с календарём одного человека за проход. */
@@ -38,6 +42,10 @@ export const OPS_PER_TICK = 400;
 export const FOLLOW_UP_MS = 15_000;
 
 export type Notify = (userId: number, text: string) => Promise<void>;
+
+/** Как сервис называть человеку: «Google Календарь», «в Google». */
+export const PROVIDER_TITLE: Record<CalProvider, string> = { google: "Google Календарь", yandex: "Яндекс Календарь" };
+const PROVIDER_IN: Record<CalProvider, string> = { google: "в Google", yandex: "в Яндекс" };
 
 const hhmm = (m: number): string => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 
@@ -53,82 +61,168 @@ export function googleEvent(o: Occurrence, calendarName: string, alarmMinutes: n
   };
 }
 
-/** id события Google из uid пары: только 0-9 и a-f (они входят в разрешённые a-v, 0-9), всегда один и тот же. */
+/** id события из uid пары: только 0-9 и a-f (у Google разрешены a-v, 0-9), всегда один и тот же. */
 export function googleEventId(uid: string): string {
   return createHash("sha1").update(uid).digest("hex");
 }
 
-const hashOf = (ev: GoogleEvent): string => createHash("sha1").update(JSON.stringify(ev)).digest("hex").slice(0, 16);
+/**
+ * Пара → файл события для CalDAV (Яндекс). UID — со своей добавкой «push»:
+ * у человека в том же Яндексе может стоять подписка на ленту бота с UID пар
+ * без добавки, а Яндекс, похоже, склеивает события с одним UID.
+ */
+export function yandexEventIcs(o: Occurrence, calendarName: string, alarmMinutes: number | null, now = new Date()): string {
+  return buildIcs({ name: calendarName, lessons: [o], alarmMinutes, stableSequence: true, uidScope: "push", now });
+}
 
-export type ConnectResult = { ok: true; calendarName: string; reused: boolean } | { ok: false; reason: "expired" | "no_group" | "denied" | "scope" | "failed" };
+const sha = (s: string): string => createHash("sha1").update(s).digest("hex").slice(0, 16);
+
+/** Что сервис должен уметь для прямой записи. body — событие в виде сервиса (объект Google или текст .ics). */
+export interface Provider {
+  readonly id: CalProvider;
+  authUrl(state: string): string;
+  exchange(code: string): Promise<{ accessToken: string; refreshToken: string; expiresAt: number }>;
+  refresh(refreshToken: string): Promise<{ accessToken: string; expiresAt: number }>;
+  revoke(refreshToken: string): Promise<void>;
+  /** Прежний календарь, если жив, иначе новый (или найденный по названию). */
+  ensureCalendar(access: string, prevId: string | null, name: string): Promise<{ id: string; reused: boolean }>;
+  renameCalendar(access: string, id: string, name: string): Promise<void>;
+  render(o: Occurrence, name: string, alarm: number | null): { body: unknown; hash: string };
+  putEvent(access: string, calendarId: string, eventId: string, body: unknown): Promise<void>;
+  deleteEvent(access: string, calendarId: string, eventId: string): Promise<void>;
+}
+
+export function googleProvider(client: GoogleCalendarClient): Provider {
+  return {
+    id: "google",
+    authUrl: (state) => client.authUrl(state),
+    exchange: async (code) => ({ ...(await client.exchange(code)), expiresAt: Date.now() + 50 * 60_000 }),
+    refresh: (rt) => client.refresh(rt),
+    revoke: (rt) => client.revoke(rt),
+    ensureCalendar: async (access, prevId, name) => {
+      if (prevId && (await client.calendarExists(access, prevId))) return { id: prevId, reused: true };
+      return { id: await client.createCalendar(access, name), reused: false };
+    },
+    renameCalendar: (access, id, name) => client.renameCalendar(access, id, name),
+    render: (o, name, alarm) => {
+      const body = googleEvent(o, name, alarm);
+      return { body, hash: sha(JSON.stringify(body)) };
+    },
+    putEvent: (access, cal, id, body) => client.putEvent(access, cal, id, body as GoogleEvent),
+    deleteEvent: (access, cal, id) => client.deleteEvent(access, cal, id),
+  };
+}
+
+export function yandexProvider(client: YandexCalendarClient): Provider {
+  return {
+    id: "yandex",
+    authUrl: (state) => client.authUrl(state),
+    exchange: (code) => client.exchange(code),
+    refresh: (rt) => client.refresh(rt),
+    revoke: (rt) => client.revoke(rt),
+    ensureCalendar: async (access, prevId, name) => {
+      if (prevId && (await client.calendarExists(access, prevId))) return { id: prevId, reused: true };
+      const home = await client.home(access);
+      try {
+        return { id: await client.createCalendar(access, home, name), reused: false };
+      } catch (err) {
+        if (!(err instanceof CalError) || err.reason !== "mkcalendar_unsupported") throw err;
+        // Яндекс не дал создать — берём календарь с этим названием, созданный человеком.
+        const own = (await client.calendars(access, home)).find((c) => c.name.trim().toLowerCase() === name.toLowerCase());
+        if (own) return { id: own.href, reused: false };
+        throw new CalError("fatal", err.status, "need_calendar");
+      }
+    },
+    renameCalendar: (access, id, name) => client.renameCalendar(access, id, name),
+    // Отпечаток — по файлу с постоянной «датой выпуска»: иначе он менялся бы на каждом проходе.
+    render: (o, name, alarm) => ({ body: { o, name, alarm }, hash: sha(yandexEventIcs(o, name, alarm, new Date(0))) }),
+    // Файл собирается в момент отправки — со свежей датой выпуска (DTSTAMP).
+    putEvent: (access, cal, id, body) => {
+      const b = body as { o: Occurrence; name: string; alarm: number | null };
+      return client.putEvent(access, cal, id, yandexEventIcs(b.o, b.name, b.alarm));
+    },
+    deleteEvent: (access, cal, id) => client.deleteEvent(access, cal, id),
+  };
+}
+
+export type ConnectResult = { ok: true; calendarName: string; reused: boolean } | { ok: false; reason: "expired" | "no_group" | "denied" | "scope" | "failed" | "need_calendar"; calendarName?: string };
 
 export class CalendarPush {
   readonly google: GoogleCalendarClient | null;
+  readonly yandex: YandexCalendarClient | null;
+  private readonly providers = new Map<CalProvider, Provider>();
   private readonly key: Buffer;
-  private readonly access = new Map<number, { token: string; expiresAt: number }>();
+  private readonly access = new Map<string, { token: string; expiresAt: number }>();
   private running: Promise<void> | null = null;
   private again = false;
 
   constructor(
     private readonly deps: { repo: Repo; service: ScheduleService; config: Config; notify: Notify },
     google?: GoogleCalendarClient | null,
+    yandex?: YandexCalendarClient | null,
   ) {
     const c = deps.config;
     this.google = google !== undefined ? google : c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET ? new GoogleCalendarClient({ clientId: c.GOOGLE_CLIENT_ID, clientSecret: c.GOOGLE_CLIENT_SECRET, redirectUri: googleRedirectUri(c) }) : null;
+    this.yandex = yandex !== undefined ? yandex : c.YANDEX_CLIENT_ID && c.YANDEX_CLIENT_SECRET ? new YandexCalendarClient({ clientId: c.YANDEX_CLIENT_ID, clientSecret: c.YANDEX_CLIENT_SECRET, redirectUri: yandexRedirectUri(c) }) : null;
+    if (this.google) this.providers.set("google", googleProvider(this.google));
+    if (this.yandex) this.providers.set("yandex", yandexProvider(this.yandex));
     this.key = tokenKey(c);
   }
 
-  /** Видна ли человеку кнопка «Google Календарь»: ключи заданы, режим и (для admins) он админ. */
-  allowed(userId: number): boolean {
+  /** Видна ли человеку кнопка сервиса: ключи заданы, режим и (для admins) он админ. */
+  allowed(userId: number, provider: CalProvider = "google"): boolean {
     const mode = this.deps.config.CAL_PUSH;
-    if (!this.google || mode === "off") return false;
+    if (!this.providers.has(provider) || mode === "off") return false;
     return mode === "all" || this.deps.config.ADMIN_IDS.includes(userId);
   }
 
-  /** Ссылка на вход в Google с одноразовой меткой (живёт 30 минут). */
-  connectUrl(userId: number): string | null {
-    if (!this.google) return null;
+  /** Ссылка на вход в сервис с одноразовой меткой (живёт 30 минут). */
+  connectUrl(userId: number, provider: CalProvider = "google"): string | null {
+    const p = this.providers.get(provider);
+    if (!p) return null;
     const state = randomBytes(24).toString("base64url");
-    this.deps.repo.addOauthState(state, userId, "google");
-    return this.google.authUrl(state);
+    this.deps.repo.addOauthState(state, userId, provider);
+    return p.authUrl(state);
   }
 
-  /** Возврат от Google: метка → человек, код → токены, календарь (прежний, если жив), сохранить, сверить. */
-  async finishConnect(state: string, code: string | null, error: string | null): Promise<ConnectResult> {
+  /** Возврат после входа: метка → человек, код → токены, календарь (прежний, если жив), сохранить, сверить. */
+  async finishConnect(state: string, code: string | null, error: string | null, provider: CalProvider = "google"): Promise<ConnectResult> {
     const { repo, service } = this.deps;
-    const userId = repo.takeOauthState(state, "google");
-    if (userId === null || !this.google) return { ok: false, reason: "expired" };
+    const p = this.providers.get(provider);
+    const userId = p ? repo.takeOauthState(state, provider) : null;
+    if (userId === null || !p) return { ok: false, reason: "expired" };
     if (error || !code) return { ok: false, reason: "denied" };
     const user = repo.getUser(userId);
     const group = user?.groupKey ? service.group(user.groupKey) : null;
     if (!user || !group) return { ok: false, reason: "no_group" };
     try {
-      const t = await this.google.exchange(code);
-      const prev = repo.calLink(userId, "google");
-      const reused = Boolean(prev?.calendarId && (await this.google.calendarExists(t.accessToken, prev.calendarId)));
-      const calendarId = reused ? prev!.calendarId! : await this.google.createCalendar(t.accessToken, group.title);
-      if (!reused) repo.clearCalEvents(userId, "google");
-      repo.saveCalLink(userId, "google", { tokenEnc: seal(this.key, t.refreshToken), calendarId, groupKey: group.key });
-      this.access.set(userId, { token: t.accessToken, expiresAt: Date.now() + 50 * 60_000 });
-      logger.info({ userId, reused }, "google calendar connected");
+      const t = await p.exchange(code);
+      const prev = repo.calLink(userId, provider);
+      const cal = await p.ensureCalendar(t.accessToken, prev?.calendarId ?? null, group.title);
+      if (!cal.reused) repo.clearCalEvents(userId, provider);
+      repo.saveCalLink(userId, provider, { tokenEnc: seal(this.key, t.refreshToken), calendarId: cal.id, groupKey: group.key });
+      this.access.set(`${provider}:${userId}`, { token: t.accessToken, expiresAt: t.expiresAt });
+      logger.info({ userId, provider, reused: cal.reused }, "calendar connected");
       this.kick();
-      return { ok: true, calendarName: group.title, reused };
+      return { ok: true, calendarName: group.title, reused: cal.reused };
     } catch (err) {
-      const reason = err instanceof GoogleError ? err.reason : "error";
-      logger.warn({ userId, reason }, "google calendar connect failed");
+      const reason = err instanceof CalError ? err.reason : "error";
+      logger.warn({ userId, provider, reason }, "calendar connect failed");
+      if (reason === "need_calendar") return { ok: false, reason: "need_calendar", calendarName: group.title };
       return { ok: false, reason: reason === "scope_not_granted" ? "scope" : "failed" };
     }
   }
 
-  /** «Отключить»: отозвать доступ у Google, забыть токен. Календарь и соответствия событий остаются — повторное подключение возьмёт тот же календарь без дублей. */
-  async disconnect(userId: number): Promise<void> {
-    const link = this.deps.repo.calLink(userId, "google");
+  /** «Отключить»: отозвать доступ, забыть токен. Календарь и соответствия событий остаются — повторное подключение возьмёт тот же календарь без дублей. */
+  async disconnect(userId: number, provider: CalProvider = "google"): Promise<void> {
+    const link = this.deps.repo.calLink(userId, provider);
     if (!link) return;
     const token = this.refreshTokenOf(link);
-    this.deps.repo.updateCalLink(userId, "google", { status: "off", tokenEnc: null, error: null });
-    this.access.delete(userId);
-    if (token && this.google) await this.google.revoke(token);
-    logger.info({ userId }, "google calendar disconnected");
+    this.deps.repo.updateCalLink(userId, provider, { status: "off", tokenEnc: null, error: null });
+    this.access.delete(`${provider}:${userId}`);
+    const p = this.providers.get(provider);
+    if (token && p) await p.revoke(token);
+    logger.info({ userId, provider }, "calendar disconnected");
   }
 
   /** Сверить всех поскорее (после опроса портала, после подключения). Идущий проход не прерываем — повторим после него. */
@@ -150,8 +244,8 @@ export class CalendarPush {
 
   /** Один проход по всем подключённым. Параллельно не идёт: второй вызов только просит повтор. */
   tick(): Promise<void> {
-    // Ключи Google убрали из .env — писать нечем; подключения ждут, пока ключи вернут.
-    if (!this.google) return Promise.resolve();
+    // Ключей нет ни у одного сервиса — писать нечем; подключения ждут, пока ключи вернут.
+    if (!this.providers.size) return Promise.resolve();
     if (this.running) {
       this.again = true;
       return this.running;
@@ -160,12 +254,14 @@ export class CalendarPush {
       do {
         this.again = false;
         let budget = OPS_PER_TICK;
-        for (const link of this.deps.repo.calLinks("google", "ok")) {
-          if (budget <= 0) break;
-          budget -= await this.syncUser(link, Math.min(OPS_PER_USER, budget)).catch((err: unknown) => {
-            logger.warn({ userId: link.userId, err: err instanceof GoogleError ? err.reason : String(err).slice(0, 120) }, "google calendar sync failed");
-            return 0;
-          });
+        for (const provider of this.providers.keys()) {
+          for (const link of this.deps.repo.calLinks(provider, "ok")) {
+            if (budget <= 0) break;
+            budget -= await this.syncUser(link, Math.min(OPS_PER_USER, budget)).catch((err: unknown) => {
+              logger.warn({ userId: link.userId, provider, err: err instanceof CalError ? err.reason : String(err).slice(0, 120) }, "calendar sync failed");
+              return 0;
+            });
+          }
         }
       } while (this.again);
     })().finally(() => {
@@ -183,25 +279,25 @@ export class CalendarPush {
     }
   }
 
-  private async accessToken(link: CalLink): Promise<string> {
-    const cached = this.access.get(link.userId);
+  private async accessToken(p: Provider, link: CalLink): Promise<string> {
+    const key = `${p.id}:${link.userId}`;
+    const cached = this.access.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.token;
     const refresh = this.refreshTokenOf(link);
     // Не расшифровался (сменили BOT_TOKEN / CAL_TOKEN_KEY) — как отозванный: только подключиться заново.
-    if (!refresh) throw new GoogleError("revoked", 0, "token_unreadable");
-    const t = await this.google!.refresh(refresh);
-    this.access.set(link.userId, { token: t.accessToken, expiresAt: t.expiresAt });
+    if (!refresh) throw new CalError("revoked", 0, "token_unreadable");
+    const t = await p.refresh(refresh);
+    this.access.set(key, { token: t.accessToken, expiresAt: t.expiresAt });
     return t.accessToken;
   }
 
-  /** Что должно стоять в календаре человека: uid → событие и отпечаток. */
-  desired(user: User, group: LogicalGroup): Map<string, { date: string; event: GoogleEvent; hash: string }> {
+  /** Что должно стоять в календаре человека: uid → пара, событие в виде сервиса и отпечаток. */
+  desired(p: Provider, user: User, group: LogicalGroup): Map<string, { o: Occurrence; body: unknown; hash: string }> {
     const { lessons } = calendarLessons(this.deps.service, group, { subgroup: user.subgroup, ppaDebts: this.deps.repo.ppaDebts(user.id, group.key) });
-    const out = new Map<string, { date: string; event: GoogleEvent; hash: string }>();
+    const out = new Map<string, { o: Occurrence; body: unknown; hash: string }>();
     for (const o of lessons) {
       if (o.status !== "scheduled" || o.start == null || o.end == null) continue;
-      const event = googleEvent(o, group.title, user.calAlarmMin);
-      out.set(icsUid(o), { date: o.date, event, hash: hashOf(event) });
+      out.set(icsUid(o), { o, ...p.render(o, group.title, user.calAlarmMin) });
     }
     return out;
   }
@@ -209,12 +305,14 @@ export class CalendarPush {
   /** Сверка одного человека; возвращает, сколько действий потратила. */
   async syncUser(link: CalLink, budget: number): Promise<number> {
     const { repo, service } = this.deps;
+    const p = this.providers.get(link.provider);
     const user = repo.getUser(link.userId);
     const group = user?.groupKey && !user.teacherMode ? service.group(user.groupKey) : null;
-    if (!user || !group || !link.calendarId) return 0;
+    if (!p || !user || !group || !link.calendarId) return 0;
+    const pv = link.provider;
     const today = todayMsk();
-    const want = this.desired(user, group);
-    const have = new Map(repo.calEvents(link.userId, "google").map((e) => [e.uid, e]));
+    const want = this.desired(p, user, group);
+    const have = new Map(repo.calEvents(link.userId, pv).map((e) => [e.uid, e]));
     const puts = [...want].filter(([uid, w]) => {
       const h = have.get(uid)?.hash;
       return h !== w.hash && h !== `fatal:${w.hash}`;
@@ -223,61 +321,66 @@ export class CalendarPush {
     const drops = [...have.values()].filter((e) => e.date >= today && !want.has(e.uid));
     const renamed = link.groupKey !== group.key;
     if (!puts.length && !drops.length && !renamed) {
-      repo.updateCalLink(link.userId, "google", { syncedAt: new Date().toISOString(), error: null });
+      repo.updateCalLink(link.userId, pv, { syncedAt: new Date().toISOString(), error: null });
       return 0;
     }
     let ops = 0;
     try {
-      const access = await this.accessToken(link);
+      const access = await this.accessToken(p, link);
       if (renamed) {
-        await this.google!.renameCalendar(access, link.calendarId, group.title);
-        repo.updateCalLink(link.userId, "google", { groupKey: group.key });
+        await p.renameCalendar(access, link.calendarId, group.title);
+        repo.updateCalLink(link.userId, pv, { groupKey: group.key });
         ops++;
       }
       for (const e of drops) {
         if (ops >= budget) break;
-        await this.google!.deleteEvent(access, link.calendarId, e.eventId);
-        repo.dropCalEvent(link.userId, "google", e.uid);
+        await p.deleteEvent(access, link.calendarId, e.eventId);
+        repo.dropCalEvent(link.userId, pv, e.uid);
         ops++;
       }
       for (const [uid, w] of puts) {
         if (ops >= budget) break;
         const eventId = have.get(uid)?.eventId ?? googleEventId(uid);
         try {
-          await this.google!.putEvent(access, link.calendarId, eventId, w.event);
-          repo.putCalEvent(link.userId, "google", { uid, eventId, hash: w.hash, date: w.date });
+          await p.putEvent(access, link.calendarId, eventId, w.body);
+          repo.putCalEvent(link.userId, pv, { uid, eventId, hash: w.hash, date: w.o.date });
         } catch (err) {
           // Одна неудобная пара не должна вечно съедать проход: помечаем до изменения её содержимого.
-          if (!(err instanceof GoogleError) || err.kind !== "fatal") throw err;
-          repo.putCalEvent(link.userId, "google", { uid, eventId, hash: `fatal:${w.hash}`, date: w.date });
-          logger.warn({ userId: link.userId, reason: err.reason }, "google rejected one event");
+          if (!(err instanceof CalError) || err.kind !== "fatal") throw err;
+          repo.putCalEvent(link.userId, pv, { uid, eventId, hash: `fatal:${w.hash}`, date: w.o.date });
+          logger.warn({ userId: link.userId, provider: pv, reason: err.reason }, "calendar rejected one event");
         }
         ops++;
       }
       const left = puts.length + drops.length + (renamed ? 1 : 0) - ops;
-      repo.updateCalLink(link.userId, "google", { syncedAt: new Date().toISOString(), error: null });
-      logger.info({ userId: link.userId, ops, left }, "google calendar synced");
-      // Не успели всё (первая загрузка) — продолжим чуть позже, а не тут же: лимиты Google — в минуту.
+      repo.updateCalLink(link.userId, pv, { syncedAt: new Date().toISOString(), error: null });
+      logger.info({ userId: link.userId, provider: pv, ops, left }, "calendar synced");
+      // Не успели всё (первая загрузка) — продолжим чуть позже, а не тут же: лимиты сервисов — в минуту.
       if (left > 0) this.later();
       return ops;
     } catch (err) {
-      if (err instanceof GoogleError && (err.kind === "revoked" || err.kind === "gone")) await this.lost(link, err.kind, group.title);
-      else repo.updateCalLink(link.userId, "google", { error: err instanceof GoogleError ? err.reason : "error" });
+      if (err instanceof CalError && (err.kind === "revoked" || err.kind === "gone")) await this.lost(link, err.kind, group.title);
+      else repo.updateCalLink(link.userId, pv, { error: err instanceof CalError ? err.reason : "error" });
       throw err;
     }
   }
 
   /** Доступ отозван или календарь удалён: больше не пишем и один раз говорим человеку. */
   private async lost(link: CalLink, kind: "revoked" | "gone", title: string): Promise<void> {
+    const pv = link.provider;
     // Токен больше не нужен ни в том, ни в другом случае: подключение заново выдаст новый.
-    this.deps.repo.updateCalLink(link.userId, "google", { status: kind, tokenEnc: null, error: kind });
-    this.access.delete(link.userId);
-    logger.warn({ userId: link.userId, kind }, "google calendar link lost");
-    const why = kind === "revoked" ? "доступ к Google Календарю отозван" : `календарь «${title}» удалён из Google`;
-    await this.deps.notify(link.userId, `⚠️ Пары больше не записываются в Google: ${why}.\n\nПодключить заново: 📆 Календарь → ⚡ Google Календарь.`).catch(() => undefined);
+    this.deps.repo.updateCalLink(link.userId, pv, { status: kind, tokenEnc: null, error: kind });
+    this.access.delete(`${pv}:${link.userId}`);
+    logger.warn({ userId: link.userId, provider: pv, kind }, "calendar link lost");
+    const why = kind === "revoked" ? `доступ к ${pv === "google" ? "Google Календарю" : "Яндекс Календарю"} отозван` : `календарь «${title}» удалён ${pv === "google" ? "из Google" : "из Яндекса"}`;
+    await this.deps.notify(link.userId, `⚠️ Пары больше не записываются ${PROVIDER_IN[pv]}: ${why}.\n\nПодключить заново: 📆 Календарь → ⚡ ${PROVIDER_TITLE[pv]}.`).catch(() => undefined);
   }
 }
 
 export function googleRedirectUri(cfg: Pick<Config, "OAUTH_BASE_URL">): string {
   return `${cfg.OAUTH_BASE_URL}/oauth/google`;
+}
+
+export function yandexRedirectUri(cfg: Pick<Config, "OAUTH_BASE_URL">): string {
+  return `${cfg.OAUTH_BASE_URL}/oauth/yandex`;
 }

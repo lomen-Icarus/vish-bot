@@ -4,29 +4,19 @@
  * свой календарь и менять события только в нём; чужие календари человека бот
  * не видит. fetch подставляется (тесты гоняют поддельный Google).
  *
- * Ошибки сводятся к четырём видам, по которым решает сверка (push.ts):
- *   revoked — доступ отозван (invalid_grant): нужно подключиться заново;
- *   gone    — календаря больше нет (удалили): тоже заново;
- *   retry   — лимиты Google, 5xx, сеть: повторить на следующем проходе;
- *   fatal   — остальное (неверный запрос): записать ошибку, не долбить.
+ * Ошибки сводятся к видам из errors.ts (revoked, gone, retry, fatal).
  */
+import { CalError, type CalErrorKind } from "./errors.js";
+
 export const GOOGLE_SCOPE = "https://www.googleapis.com/auth/calendar.app.created";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
 const API = "https://www.googleapis.com/calendar/v3";
 
-export type GoogleErrorKind = "revoked" | "gone" | "retry" | "fatal";
-
-export class GoogleError extends Error {
-  constructor(
-    readonly kind: GoogleErrorKind,
-    readonly status: number,
-    readonly reason: string,
-  ) {
-    super(`google ${kind}: ${status} ${reason}`);
-  }
-}
+/** Ошибки Google — общий вид ошибок календарей (errors.ts); старое имя оставлено для читаемости. */
+export { CalError as GoogleError };
+export type GoogleErrorKind = CalErrorKind;
 
 export type Fetch = typeof fetch;
 
@@ -49,7 +39,7 @@ async function reasonOf(res: Response): Promise<string> {
   return body.error.errors?.[0]?.reason ?? body.error.status ?? `http_${res.status}`;
 }
 
-function kindOf(status: number, reason: string): GoogleErrorKind {
+function kindOf(status: number, reason: string): CalErrorKind {
   if (reason === "invalid_grant" || reason === "unauthorized_client") return "revoked";
   if (status === 404 || status === 410) return "gone";
   if (status === 429 || status >= 500 || /rateLimit|backendError/i.test(reason)) return "retry";
@@ -62,7 +52,7 @@ function kindOf(status: number, reason: string): GoogleErrorKind {
 
 async function fail(res: Response): Promise<never> {
   const reason = (await reasonOf(res)).slice(0, 80);
-  throw new GoogleError(kindOf(res.status, reason), res.status, reason);
+  throw new CalError(kindOf(res.status, reason), res.status, reason);
 }
 
 export class GoogleCalendarClient {
@@ -86,8 +76,8 @@ export class GoogleCalendarClient {
   /** Код из возврата → токены. Без refresh token или без нужного права — fatal: записывать будет нечем. */
   async exchange(code: string): Promise<{ accessToken: string; refreshToken: string }> {
     const t = await this.token({ code, grant_type: "authorization_code", redirect_uri: this.cfg.redirectUri });
-    if (!t.refresh_token) throw new GoogleError("fatal", 200, "no_refresh_token");
-    if (t.scope && !t.scope.split(" ").includes(GOOGLE_SCOPE)) throw new GoogleError("fatal", 200, "scope_not_granted");
+    if (!t.refresh_token) throw new CalError("fatal", 200, "no_refresh_token");
+    if (t.scope && !t.scope.split(" ").includes(GOOGLE_SCOPE)) throw new CalError("fatal", 200, "scope_not_granted");
     return { accessToken: t.access_token, refreshToken: t.refresh_token };
   }
 
@@ -112,7 +102,7 @@ export class GoogleCalendarClient {
     try {
       return await this.http(url, { ...init, signal: AbortSignal.timeout(20_000) });
     } catch {
-      throw new GoogleError("retry", 0, "network");
+      throw new CalError("retry", 0, "network");
     }
   }
 
@@ -129,7 +119,7 @@ export class GoogleCalendarClient {
       await res.body?.cancel();
       return true;
     }
-    const err = await fail(res).catch((e: GoogleError) => e);
+    const err = await fail(res).catch((e: CalError) => e);
     if (err.kind === "gone" || err.kind === "revoked") return false;
     throw err;
   }
