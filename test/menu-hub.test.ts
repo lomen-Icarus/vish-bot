@@ -53,6 +53,11 @@ async function run(deps: Deps, update: Update, from = USER): Promise<Call[]> {
 
 let mid = 100;
 const text = (t: string, from = USER): Update => ({ update_id: mid, message: { message_id: mid++, date: 0, chat: { id: from, type: "private", first_name: "U" }, from: { id: from, is_bot: false, first_name: "U", username: from === USER ? "student_u" : "lomen" }, text: t } });
+const cmd = (t: string, from = USER): Update => {
+  const u = text(t, from);
+  u.message!.entities = [{ type: "bot_command", offset: 0, length: t.split(" ")[0].length }];
+  return u;
+};
 const photo = (from = USER): Update => ({ update_id: mid, message: { message_id: mid++, date: 0, chat: { id: from, type: "private", first_name: "U" }, from: { id: from, is_bot: false, first_name: "U", username: "student_u" }, photo: [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }], caption: "скрин" } });
 const press = (data: string, from = USER): Update => ({ update_id: mid++, callback_query: { id: "1", from: { id: from, is_bot: false, first_name: "U" }, chat_instance: "1", data, message: { message_id: 3, date: 0, chat: { id: from, type: "private", first_name: "U" }, text: "x" } as never } });
 const markup = (c: Call | undefined): string => JSON.stringify(c?.payload.reply_markup ?? null);
@@ -179,6 +184,56 @@ describe("🏛 Министерство Жалоб", () => {
     const blocked = await run(deps, press("sup:send"));
     expect(blocked.some((c) => c.payload.chat_id === ADMIN)).toBe(false);
     expect(String(blocked.find((c) => c.method === "editMessageText")!.payload.text)).toMatch(/не принимает/);
+  });
+
+  it("заблокированному — «приёма нет вообще», без «от тебя»; «🔓 Разблокировать» снимает блок и возвращает кнопки", async () => {
+    const deps = makeDeps();
+    await run(deps, text("🏛 Жалоба"));
+    await run(deps, text("жалоба"));
+    await run(deps, press("sup:send"));
+    const block = await run(deps, press("supa:b:1", ADMIN), ADMIN);
+    expect(markup(block.find((c) => c.method === "editMessageReplyMarkup"))).toContain("supa:u:1");
+    expect(markup(block.find((c) => c.method === "editMessageReplyMarkup"))).toContain("supa:r:1");
+
+    await run(deps, text("🏛 Жалоба"));
+    await run(deps, text("ещё"));
+    const refused = String((await run(deps, press("sup:send"))).find((c) => c.method === "editMessageText")!.payload.text);
+    expect(refused).toBe("Министерство Жалоб сейчас не принимает обращения.");
+
+    // Не админ снять блок не может.
+    await run(deps, press("supa:u:1"));
+    expect(deps.repo.supportBlocked(USER)).toBe(true);
+
+    const unblock = await run(deps, press("supa:u:1", ADMIN), ADMIN);
+    expect(deps.repo.supportBlocked(USER)).toBe(false);
+    expect(markup(unblock.find((c) => c.method === "editMessageReplyMarkup"))).toContain("supa:b:1");
+    await run(deps, text("🏛 Жалоба"));
+    await run(deps, text("снова"));
+    expect((await run(deps, press("sup:send"))).some((c) => c.payload.chat_id === ADMIN)).toBe(true);
+  });
+
+  it("/unblock: список блоков — номерами без ников; по номеру снимает, и после /soon тоже", async () => {
+    const deps = makeDeps();
+    await run(deps, text("🏛 Жалоба"));
+    await run(deps, press("sup:anon"));
+    await run(deps, text("аноним"));
+    await run(deps, press("sup:send"));
+    await run(deps, press("supa:b:1", ADMIN), ADMIN);
+
+    const list = (await run(deps, cmd("/unblock", ADMIN), ADMIN)).find((c) => c.method === "sendMessage")!;
+    expect(markup(list)).toContain("supa:ul:1");
+    expect(markup(list)).toContain("#1 🕶");
+    expect(String(list.payload.text) + markup(list)).not.toMatch(/student_u|\b7\b/);
+    // Не админу команда ничего не показывает.
+    expect((await run(deps, cmd("/unblock"))).some((c) => String(c.payload.text ?? "").includes("Не принимаю"))).toBe(false);
+
+    // Человек стёр данные — обращения нет, но блок по номеру снимается.
+    deps.repo.forgetUser(USER);
+    expect(deps.repo.supportBlocked(USER)).toBe(true);
+    const done = (await run(deps, cmd("/unblock #1", ADMIN), ADMIN)).find((c) => c.method === "sendMessage")!;
+    expect(String(done.payload.text)).toContain("разблокирован");
+    expect(deps.repo.supportBlocked(USER)).toBe(false);
+    expect(String((await run(deps, cmd("/unblock 1", ADMIN), ADMIN)).find((c) => c.method === "sendMessage")!.payload.text)).toContain("не заблокирован");
   });
 
   it("анонимно — не больше 5 за сутки", async () => {

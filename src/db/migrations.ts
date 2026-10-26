@@ -582,4 +582,11 @@ export const MIGRATIONS: string[] = [
     created_at TEXT NOT NULL
   );
   `,
+  // Министерство Жалоб: блок снимается по номеру обращения. ticket_id — под
+  // каким обращением блокировали: по нему блок находится и после /soon (тогда
+  // support_tickets человека уже стёрты). Старым блокам — последнее обращение.
+  `
+  ALTER TABLE support_blocks ADD COLUMN ticket_id INTEGER;
+  UPDATE support_blocks SET ticket_id = (SELECT MAX(id) FROM support_tickets t WHERE t.user_id = support_blocks.user_id);
+  `,
 ];

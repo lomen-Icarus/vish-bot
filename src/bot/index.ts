@@ -233,6 +233,7 @@ export async function registerCommands(bot: Bot<BotContext>, deps: Deps): Promis
     { command: "poll", description: "Опросить портал сейчас" },
     { command: "health", description: "Состояние бота" },
     { command: "ailimit", description: "Лимиты вопросов к ИИ" },
+    { command: "unblock", description: "Министерство Жалоб: снять блок (/unblock 9)" },
     { command: "slides", description: "Слайды записанных вебинаров" },
     { command: "whois", description: "Кто из списка ФИО уже пользуется ботом" },
     { command: "cleanchanges", description: "Убрать ложные изменения из раздела" },
