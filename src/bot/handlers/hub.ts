@@ -8,7 +8,8 @@
  * анонимно. Обращение уходит админам (ADMIN_IDS) копией сообщения, а не
  * пересылкой: у пересланного Telegram показывает автора, и аноним бы
  * раскрылся. Номер обращения и кому отвечать бот помнит в support_tickets —
- * без текста; в логе только номера.
+ * без текста; в логе только номера. «🚫 Не принимать» блокирует отправителя,
+ * «🔓 Разблокировать» там же (или /unblock) — снимает блок.
  */
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
@@ -226,7 +227,8 @@ hubHandlers.callbackQuery("sup:send", async (ctx) => {
 
 async function sendTicket(ctx: BotContext, chatId: number, messageIds: number[], anon: boolean): Promise<string> {
   const repo = ctx.deps.repo;
-  if (repo.supportBlocked(ctx.user.id)) return "Министерство сейчас не принимает от тебя обращения.";
+  // Заблокированному — как всем, когда приёма нет: что блок именно его, не говорим.
+  if (repo.supportBlocked(ctx.user.id)) return "Министерство Жалоб сейчас не принимает обращения.";
   const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
   if (repo.supportTicketsSince(ctx.user.id, since) >= DAILY_LIMIT[anon ? "anon" : "named"]) {
     return `На сегодня обращений хватит — напиши завтра или напрямую: ${ctx.deps.config.SUPPORT_CONTACT}`;
@@ -237,7 +239,7 @@ async function sendTicket(ctx: BotContext, chatId: number, messageIds: number[],
   const name = ctx.from?.first_name ?? ctx.user.firstName;
   const group = needGroup(ctx);
   const who = anon ? "🕶 анонимно" : `от ${username ? `@${esc(username)}` : esc(name ?? "без имени")}${group ? ` (${esc(group.title)})` : ""} · id <code>${ctx.user.id}</code>`;
-  const kb = new InlineKeyboard().text("↩️ Ответить", `supa:r:${ticket}`).text("🚫 Не принимать", `supa:b:${ticket}`);
+  const kb = ticketKeyboard(ticket);
   let delivered = 0;
   let empty = 0;
   for (const adminId of ctx.deps.config.ADMIN_IDS) {
@@ -266,14 +268,61 @@ async function sendTicket(ctx: BotContext, chatId: number, messageIds: number[],
 }
 
 // ---- ответ админа ----
-hubHandlers.callbackQuery(/^supa:(r|b):(\d+)$/, async (ctx) => {
+/** Кнопки под обращением у админа. Заблокирован — на месте «Не принимать» стоит «Разблокировать». */
+function ticketKeyboard(ticket: number, blocked = false): InlineKeyboard {
+  return new InlineKeyboard().text("↩️ Ответить", `supa:r:${ticket}`).text(blocked ? "🔓 Разблокировать" : "🚫 Не принимать", `supa:${blocked ? "u" : "b"}:${ticket}`);
+}
+
+/** Список заблокированных — номерами обращений; кнопка снимает блок. */
+function blocksView(ctx: BotContext): { text: string; kb: InlineKeyboard } {
+  const blocks = ctx.deps.repo.supportBlocks();
+  const kb = new InlineKeyboard();
+  const numbered = blocks.filter((b) => b.ticketId !== null);
+  numbered.forEach((b, i) => {
+    kb.text(`🔓 #${b.ticketId}${b.anon ? " 🕶" : ""}`, `supa:ul:${b.ticketId}`);
+    if (i % 3 === 2) kb.row();
+  });
+  const lost = blocks.length - numbered.length;
+  const text = blocks.length
+    ? [`🏛 <b>Не принимаю обращения</b> — ${blocks.length}. Кнопка с номером обращения снимает блок.`, lost ? `Ещё ${lost} — без номера обращения, снять нельзя.` : ""].filter(Boolean).join("\n")
+    : "🏛 Заблокированных отправителей нет.";
+  return { text, kb };
+}
+
+hubHandlers.filter((ctx) => ctx.isAdmin).command("unblock", async (ctx) => {
+  const id = Number(ctx.match.trim().replace(/^#/, ""));
+  if (Number.isInteger(id) && id > 0) {
+    const was = ctx.deps.repo.unblockSupport(id);
+    if (was) logger.info({ ticket: id }, "support unblock");
+    await ctx.reply(was ? `Отправитель обращения #${id} разблокирован — его обращения снова принимаются.` : `Отправитель обращения #${id} не заблокирован.`);
+    return;
+  }
+  const { text, kb } = blocksView(ctx);
+  await ctx.reply(text, { parse_mode: "HTML", reply_markup: kb });
+});
+
+hubHandlers.callbackQuery(/^supa:(r|b|u|ul):(\d+)$/, async (ctx) => {
   if (!ctx.isAdmin) return void (await ctx.answerCallbackQuery());
-  const ticket = ctx.deps.repo.supportTicket(Number(ctx.match[2]));
+  const id = Number(ctx.match[2]);
+  // Снять блок можно и когда обращения уже нет (/soon): блок помнит свой номер.
+  if (ctx.match[1] === "u" || ctx.match[1] === "ul") {
+    const was = ctx.deps.repo.unblockSupport(id);
+    if (was) logger.info({ ticket: id }, "support unblock");
+    await ctx.answerCallbackQuery({ text: was ? "Снова принимаю обращения от этого отправителя" : "Этот отправитель и так не заблокирован" });
+    if (ctx.match[1] === "ul") {
+      const { text, kb } = blocksView(ctx);
+      await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb }).catch(() => undefined);
+    } else {
+      await ctx.editMessageReplyMarkup({ reply_markup: ctx.deps.repo.supportTicket(id) ? ticketKeyboard(id) : new InlineKeyboard().text("🔓 Разблокирован", "noop") }).catch(() => undefined);
+    }
+    return;
+  }
+  const ticket = ctx.deps.repo.supportTicket(id);
   if (!ticket) return void (await ctx.answerCallbackQuery({ text: "Обращение не найдено — человек мог стереть свои данные (/soon)", show_alert: true }));
   if (ctx.match[1] === "b") {
-    ctx.deps.repo.blockSupport(ticket.userId);
-    await ctx.answerCallbackQuery({ text: "Больше не принимаю обращения от этого отправителя" });
-    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard().text("🚫 Отправитель заблокирован", "noop") }).catch(() => undefined);
+    ctx.deps.repo.blockSupport(ticket.userId, ticket.id);
+    await ctx.answerCallbackQuery({ text: "Больше не принимаю обращения от этого отправителя. Вернуть — «🔓 Разблокировать»" });
+    await ctx.editMessageReplyMarkup({ reply_markup: ticketKeyboard(ticket.id, true) }).catch(() => undefined);
     return;
   }
   setPending(ctx.deps, ctx.user.id, { kind: "support-reply", ticket: ticket.id }, SUPPORT_TTL_MS);

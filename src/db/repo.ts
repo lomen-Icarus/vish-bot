@@ -1108,7 +1108,7 @@ export class Repo {
         "DELETE FROM chat_log WHERE user_id = ?",
         "DELETE FROM news_complaints WHERE user_id = ?",
         // Обращения — чтобы ответ на старое не нашёл человека; блок от спама
-        // (support_blocks) остаётся, как ai_usage.
+        // (support_blocks) остаётся, как ai_usage, и снимается по номеру обращения.
         "DELETE FROM support_tickets WHERE user_id = ?",
         // Долги по ППА — личное: кто что пересдаёт, не должно пережить /soon.
         "DELETE FROM ppa_debts WHERE user_id = ?",
@@ -1805,8 +1805,25 @@ export class Repo {
     return (this.db.prepare("SELECT COUNT(*) AS n FROM support_tickets WHERE user_id = ? AND created_at >= ?").get(userId, sinceIso) as { n: number }).n;
   }
 
-  blockSupport(userId: number): void {
-    this.db.prepare("INSERT OR IGNORE INTO support_blocks (user_id, created_at) VALUES (?, ?)").run(userId, nowIso());
+  blockSupport(userId: number, ticketId: number): void {
+    this.db.prepare("INSERT OR IGNORE INTO support_blocks (user_id, ticket_id, created_at) VALUES (?, ?, ?)").run(userId, ticketId, nowIso());
+  }
+
+  /**
+   * Снять блок по номеру обращения: подходит любое обращение этого человека,
+   * а если он стёр данные (/soon) — то, под которым блокировали. false — блока не было.
+   */
+  unblockSupport(ticketId: number): boolean {
+    const ticket = this.supportTicket(ticketId);
+    const r = ticket ? this.db.prepare("DELETE FROM support_blocks WHERE user_id = ?").run(ticket.userId) : this.db.prepare("DELETE FROM support_blocks WHERE ticket_id = ?").run(ticketId);
+    return r.changes > 0;
+  }
+
+  /** Заблокированные — номерами обращений, без людей: аноним так и остаётся анонимом. */
+  supportBlocks(): { ticketId: number | null; anon: boolean }[] {
+    const rows = this.db.prepare("SELECT b.ticket_id, t.anon FROM support_blocks b LEFT JOIN support_tickets t ON t.id = b.ticket_id ORDER BY b.created_at").all() as { ticket_id: number | null; anon: number | null }[];
+    // Обращение стёрто (/soon) — анонимно ли оно, уже не узнать: считаем анонимным.
+    return rows.map((r) => ({ ticketId: r.ticket_id, anon: r.anon !== 0 }));
   }
 
   supportBlocked(userId: number): boolean {
