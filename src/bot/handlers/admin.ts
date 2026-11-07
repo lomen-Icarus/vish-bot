@@ -3,7 +3,7 @@ import type { BotContext } from "../context.js";
 import { clearPending, setPending, takePending } from "../context.js";
 import { esc, plural } from "../../schedule/format.js";
 import { pruneFalseChangeEvents } from "../../db/cleanup.js";
-import { BTN, FIND_BTN, isMenuText, menuFor, menuStampFor, MORE_BTN, TOPIC_LABELS, TOPICS } from "../keyboards.js";
+import { BTN, FIND_BTN, isMenuText, menuFor, menuStampFor, MORE_BTN, SETTINGS_CLICK_LABELS, TOPIC_LABELS, TOPICS } from "../keyboards.js";
 import { lastPoll } from "../views.js";
 import { addAiBonus, aiLimits, BONUS_GLOBAL_STEP, BONUS_USER_STEP, clearAiBonus, GLOBAL_STEPS, setAiLimit, stepValue, USER_STEPS } from "../../ai/limits.js";
 import { addDays, todayMsk } from "../../time.js";
@@ -97,8 +97,11 @@ function statsText(ctx: BotContext): string {
   ];
   // Что жмут: кнопки меню, кнопки под сообщениями и команды за неделю (без id людей).
   const allClicks = repo.countersSince(addDays(todayMsk(), -6));
-  const clicks = allClicks.filter((c) => !c.key.startsWith("cal:"));
+  // Настройки — своим блоком: в общем топ-20 редкие пункты не видны, а решать надо по всем.
+  const settingsClicks = allClicks.filter((c) => c.key.startsWith("cb:s:"));
+  const clicks = allClicks.filter((c) => !c.key.startsWith("cal:") && !c.key.startsWith("cb:s:"));
   lines.push("", ...calendarFunnel(repo, allClicks.find((c) => c.key === CAL_LINK_COUNTER)?.n ?? 0));
+  if (settingsClicks.length) lines.push("", "<b>⚙️ Настройки за 7 дней</b>", ...settingsClicks.map((c) => `${esc(SETTINGS_CLICK_LABELS[c.key.slice(5)] ?? c.key.slice(5))} — ${c.n}`));
   if (clicks.length) lines.push("", "<b>Нажатия за 7 дней</b>", ...clicks.slice(0, 20).map((c) => `${esc((panelClick(c.key) ?? c.key).replace(/^btn:/, "").replace(/^cb:/, "под сообщением: ").replace(/^cmd:/, "").replace(/^text:found$/, "текст → нашёл").replace(/^text:miss$/, "текст → не нашёл"))} — ${c.n}`));
   return lines.join("\n");
 }

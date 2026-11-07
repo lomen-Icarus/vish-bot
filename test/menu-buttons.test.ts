@@ -3,7 +3,7 @@ import { Api, Composer, Context } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { openDatabase } from "../src/db/index.js";
 import { Repo } from "../src/db/repo.js";
-import { BTN, DEFAULT_MENU, isMenuText, mainKeyboard, MENU_CHOICES, menuButtonLabel, menuFor, menuRows, menuStamp, menuStampFor, normalizeMenu, settingsKeyboard } from "../src/bot/keyboards.js";
+import { BTN, DEFAULT_MENU, isMenuText, mainKeyboard, MENU_CHOICES, menuButtonLabel, menuFor, menuRows, menuStamp, menuSettingsKeyboard, menuStampFor, normalizeMenu, settingsKeyboard } from "../src/bot/keyboards.js";
 import { settingsHandlers } from "../src/bot/handlers/settings.js";
 import { ppaHandlers } from "../src/bot/handlers/ppa.js";
 import { miscHandlers } from "../src/bot/handlers/misc.js";
@@ -63,12 +63,15 @@ describe("свои кнопки нижнего меню: сборка", () => {
     expect(repo.countUsers().customMenu).toBe(0);
   });
 
-  it("в настройках — строка «🧩 Кнопки внизу»: «как у всех» или «свои (N)»", () => {
+  it("в разделе «⌨️ Нижнее меню» — строка «🧩 Кнопки внизу»: «как у всех» или «свои (N)»; на главном — «свои кнопки (N)»", () => {
     const repo = new Repo(openDatabase(":memory:"));
     const user = repo.touchUser(1, "u", "U");
     const opts = { topics: [], hasImages: false, watchCount: 0, defaultTheme: "midnight" };
-    expect(JSON.stringify(settingsKeyboard(user, null, opts))).toContain("🧩 Кнопки внизу: как у всех");
-    expect(JSON.stringify(settingsKeyboard({ ...user, menuButtons: ["today", "changes", "more"] }, null, opts))).toContain("🧩 Кнопки внизу: свои (3)");
+    const own = { ...user, menuButtons: ["today", "changes", "more"] };
+    expect(JSON.stringify(menuSettingsKeyboard(user))).toContain("🧩 Кнопки внизу: как у всех");
+    expect(JSON.stringify(menuSettingsKeyboard(own))).toContain("🧩 Кнопки внизу: свои (3)");
+    expect(JSON.stringify(settingsKeyboard(user, null, opts))).toContain("⌨️ Нижнее меню: сворачивается\"");
+    expect(JSON.stringify(settingsKeyboard(own, null, opts))).toContain("⌨️ Нижнее меню: сворачивается · свои кнопки (3)");
   });
 });
 

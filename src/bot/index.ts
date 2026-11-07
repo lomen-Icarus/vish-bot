@@ -32,6 +32,19 @@ import { easterHandlers } from "./easter.js";
 /** Колбэки панелей, которые считаются по кнопкам, а не одной строкой на панель. */
 const PANEL_PREFIXES = new Set(["hub", "more"]);
 
+/**
+ * Ключ счётчика для нажатия под сообщением. Панели — по кнопке (hub:groups);
+ * настройки — по пункту без значения (s:first, s:topic) и по разделу
+ * (s:open:remind): по ним решаем, что держать на виду.
+ */
+export function callbackCounterKey(data: string): string {
+  const parts = data.split(":");
+  const head = parts[0]!;
+  if (PANEL_PREFIXES.has(head)) return `cb:${parts.slice(0, 2).join(":")}`;
+  if (head === "s") return `cb:${parts.slice(0, parts[1] === "open" ? 3 : 2).join(":")}`;
+  return `cb:${head}`;
+}
+
 export function createBot(deps: Deps): Bot<BotContext> {
   const bot = new Bot<BotContext>(deps.config.BOT_TOKEN);
   // Вызовы к людям из МАКС уходят в МАКС (src/max/). Первым, то есть ближе всех
@@ -103,7 +116,7 @@ export function createBot(deps: Deps): Bot<BotContext> {
       // подпись кнопки меню считается вместе с нынешней.
       const data = ctx.callbackQuery?.data;
       const key = data
-        ? `cb:${PANEL_PREFIXES.has(data.split(":")[0]!) ? data.split(":").slice(0, 2).join(":") : data.split(":")[0]}`
+        ? callbackCounterKey(data)
         : ctx.msg?.text?.startsWith("/")
           ? `cmd:${ctx.msg.text.split(/[\s@]/)[0]}`
           : isMenuText(ctx.msg?.text)

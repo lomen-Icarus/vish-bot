@@ -415,40 +415,146 @@ export function formatPicker(): InlineKeyboard {
   return new InlineKeyboard().text("📝 Текстом", "fmt:text").text("🖼 Картинкой", "fmt:image").row().text("📝🖼 И так, и так", "fmt:both");
 }
 
-export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: { topics: string[]; hasImages: boolean; watchCount: number; defaultTheme: string; teacherCount?: number; slides?: boolean; known?: boolean }): InlineKeyboard {
+/**
+ * Настройки — главный экран из разделов (не больше 6 кнопок) и экраны
+ * разделов. Раньше все ~22 переключателя лежали одним списком. Подпись
+ * раздела сразу говорит, что в нём включено (information scent), поэтому
+ * заходить внутрь нужно только чтобы поменять. Раздел «⌨️ Нижнее меню» —
+ * свой экран (`menuSettingsKeyboard`), он открывается старым колбэком `s:menu`.
+ */
+export type SettingsSection = "main" | "group" | "notify" | "remind" | "look";
+export const SETTINGS_SECTIONS: readonly SettingsSection[] = ["group", "notify", "remind", "look"];
+
+/** В каком разделе живёт пункт — туда же возвращается экран после нажатия (и со старых сообщений). */
+export const SETTINGS_SECTION_OF: Record<string, SettingsSection> = {
+  group: "group",
+  subgroup: "group",
+  watch: "group",
+  teachers: "group",
+  changes: "notify",
+  session: "notify",
+  slides: "notify",
+  topic: "notify",
+  notices: "notify",
+  first: "remind",
+  each: "remind",
+  distance: "remind",
+  evening: "remind",
+  quiet: "remind",
+  format: "look",
+  theme: "look",
+  teacher: "look",
+};
+
+export type SettingsOpts = { topics: string[]; hasImages: boolean; watchCount: number; defaultTheme: string; teacherCount?: number; slides?: boolean; known?: boolean };
+
+const FORMAT_LABELS: Record<User["format"], string> = { text: "текст", image: "картинка", both: "оба" };
+const REMINDER_FIELDS = ["remindFirstMin", "remindEachMin", "remindDistanceMin", "eveningAt"] as const;
+
+function themeOf(user: User, defaultTheme: string): string {
+  return isTheme(user.posterTheme) ? user.posterTheme : isTheme(defaultTheme) ? defaultTheme : "midnight";
+}
+
+/** «изменения, сессия, 2 темы» — что из рассылок включено. */
+function notifySummary(user: User, opts: SettingsOpts): string {
+  const parts: string[] = [];
+  if (user.notifyChanges) parts.push("изменения");
+  if (user.notifySession) parts.push("сессия");
+  if (opts.slides && user.wantSlides) parts.push("слайды");
+  const topics = opts.topics.filter((t) => user.topics.includes(t)).length;
+  if (topics) parts.push(topics === opts.topics.length ? "все темы" : `${topics} ${topics === 1 ? "тема" : topics < 5 ? "темы" : "тем"}`);
+  return parts.length ? parts.join(", ") : "ничего";
+}
+
+export function settingsKeyboard(user: User, group: LogicalGroup | null, opts: SettingsOpts, section: SettingsSection = "main"): InlineKeyboard {
   const kb = new InlineKeyboard();
-  // В режиме преподавателя «своя группа» — это он сам.
-  if (user.teacherMode) kb.text(`👨‍🏫 Режим преподавателя: ${user.teacherName ?? "включён"}`.slice(0, 60), "s:group").row();
-  else kb.text(`👥 Группа: ${group?.title ?? "не выбрана"}`, "s:group").row();
-  kb.text(`🔢 Подгруппа: ${user.subgroup ? `${user.subgroup}` : "все"}`, "s:subgroup");
-  if (opts.hasImages) kb.text(`🖼 Формат: ${{ text: "текст", image: "картинка", both: "оба" }[user.format]}`, "s:format");
-  kb.row();
-  if (opts.hasImages) {
-    // Even a "text" user gets posters from the «🖼 Картинкой» button and reminders.
-    const theme = isTheme(user.posterTheme) ? user.posterTheme : isTheme(opts.defaultTheme) ? opts.defaultTheme : "midnight";
-    kb.text(`🎨 Оформление картинок: ${THEME_LABELS[theme] ?? THEME_LABELS.midnight}`, "s:theme").row();
+  const back = (): InlineKeyboard => kb.text("◀️ Назад", "s:home");
+  switch (section) {
+    case "group":
+      // В режиме преподавателя «своя группа» — это он сам.
+      if (user.teacherMode) kb.text(`👨‍🏫 Режим преподавателя: ${user.teacherName ?? "включён"}`.slice(0, 60), "s:group").row();
+      else kb.text(`👥 Группа: ${group?.title ?? "не выбрана"}`, "s:group").row();
+      kb.text(`🔢 Подгруппа: ${user.subgroup ? `${user.subgroup}` : "все"}`, "s:subgroup").row();
+      kb.text(`👀 Следить за другими группами${opts.watchCount ? ` (${opts.watchCount})` : ""}`, "s:watch").row();
+      if (opts.teacherCount) kb.text(`👨‍🏫 Слежу за преподавателями (${opts.teacherCount})`, "s:teachers").row();
+      return back();
+    case "notify":
+      kb.text(`🔔 Изменения: ${onoff(user.notifyChanges)}`, "s:changes").text(`🎓 Сессия: ${onoff(user.notifySession)}`, "s:session").row();
+      if (opts.slides) kb.text(`📎 Слайды записанных пар: ${onoff(user.wantSlides)}`, "s:slides").row();
+      for (const t of opts.topics) kb.text(`${user.topics.includes(t) ? "✅" : "▫️"} ${TOPIC_LABELS[t] ?? t}`, `s:topic:${t}`);
+      if (opts.topics.length) kb.row();
+      return back();
+    case "remind":
+      kb.text(`⏰ До первой пары: ${minutesLabel(user.remindFirstMin)}`, "s:first").row();
+      kb.text(`⏱ Перед каждой парой: ${minutesLabel(user.remindEachMin)}`, "s:each").row();
+      kb.text(`💻 Дистант, ссылка на вебинар: ${minutesLabel(user.remindDistanceMin)}`, "s:distance").row();
+      kb.text(`🌙 Вечером на завтра: ${user.eveningAt ?? "выкл"}`, "s:evening").row();
+      kb.text(`🤫 Тихие часы: ${user.quietFrom ? `${user.quietFrom}–${user.quietTo}` : "выкл"}`, "s:quiet").row();
+      return back();
+    case "look":
+      if (opts.hasImages) {
+        // Even a "text" user gets posters from the «🖼 Картинкой» button and reminders.
+        kb.text(`🖼 Формат: ${FORMAT_LABELS[user.format]}`, "s:format").row();
+        kb.text(`🎨 Оформление картинок: ${THEME_LABELS[themeOf(user, opts.defaultTheme)] ?? THEME_LABELS.midnight}`, "s:theme").row();
+      }
+      kb.text(`👨‍🏫 Преподаватели: ${TEACHER_VIEW_LABELS[user.teacherView]}`, "s:teacher").row();
+      return back();
+    case "main":
+      break;
   }
-  kb.text(`👨‍🏫 Преподаватели: ${TEACHER_VIEW_LABELS[user.teacherView]}`, "s:teacher").row();
-  kb.text(`🔔 Изменения: ${onoff(user.notifyChanges)}`, "s:changes").text(`🎓 Сессия: ${onoff(user.notifySession)}`, "s:session").row();
-  if (opts.slides) kb.text(`📎 Слайды записанных пар: ${onoff(user.wantSlides)}`, "s:slides").row();
-  kb.text(`⏰ До первой пары: ${minutesLabel(user.remindFirstMin)}`, "s:first").row();
-  kb.text(`⏱ Перед каждой парой: ${minutesLabel(user.remindEachMin)}`, "s:each").row();
-  kb.text(`💻 Дистант, ссылка на вебинар: ${minutesLabel(user.remindDistanceMin)}`, "s:distance").row();
-  kb.text(`🌙 Вечером на завтра: ${user.eveningAt ?? "выкл"}`, "s:evening").row();
-  kb.text(`🤫 Тихие часы: ${user.quietFrom ? `${user.quietFrom}–${user.quietTo}` : "выкл"}`, "s:quiet").row();
-  for (const t of opts.topics) kb.text(`${user.topics.includes(t) ? "✅" : "▫️"} ${TOPIC_LABELS[t] ?? t}`, `s:topic:${t}`);
-  if (opts.topics.length) kb.row();
-  kb.text(`👀 Следить за другими группами${opts.watchCount ? ` (${opts.watchCount})` : ""}`, "s:watch").row();
+  const groupLabel = user.teacherMode ? "👨‍🏫 Режим преподавателя" : `👥 Группа: ${group?.title ?? "не выбрана"}${user.subgroup ? ` · подгруппа ${user.subgroup}` : ""}`;
+  kb.text(groupLabel.slice(0, 60), "s:open:group").row();
+  kb.text(`🔔 Что присылать: ${notifySummary(user, opts)}`, "s:open:notify").row();
+  const reminders = REMINDER_FIELDS.filter((f) => user[f] != null).length;
+  kb.text(`⏰ Напоминания: ${reminders ? `${reminders} из ${REMINDER_FIELDS.length}` : "выкл"}${user.quietFrom ? ", тихие часы" : ""}`, "s:open:remind").row();
+  const theme = (THEME_LABELS[themeOf(user, opts.defaultTheme)] ?? THEME_LABELS.midnight!).toLowerCase();
+  kb.text(opts.hasImages ? `🖼 Вид расписания: ${FORMAT_LABELS[user.format]}, ${theme}` : "🖼 Вид расписания", "s:open:look").row();
+  const own = normalizeMenu(user.menuButtons);
+  kb.text(`⌨️ Нижнее меню: ${MENU_MODE_LABELS[user.menuMode]}${own ? ` · свои кнопки (${own.length})` : ""}`, "s:menu").row();
   // Пункт показываем только там, где узнавание вообще возможно: иначе это
   // тумблер от несуществующей лампочки.
   if (opts.known) kb.text(`🕶 Усиленная анонимность: ${onoff(user.anon)}`, "s:anon").row();
-  if (opts.teacherCount) kb.text(`👨‍🏫 Слежу за преподавателями (${opts.teacherCount})`, "s:teachers").row();
-  kb.text(`⌨️ Нижнее меню: ${MENU_MODE_LABELS[user.menuMode]}`, "s:menu").row();
-  const own = normalizeMenu(user.menuButtons);
-  kb.text(`🧩 Кнопки внизу: ${own ? `свои (${own.length})` : "как у всех"}`, "s:buttons").row();
   kb.text("✖️ Закрыть", "s:close");
   return kb;
 }
+
+/** Раздел «⌨️ Нижнее меню»: режим (одно нажатие — сразу новое меню) и свои кнопки. */
+export function menuSettingsKeyboard(user: User): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  for (const m of MENU_MODES) kb.text(`${m === user.menuMode ? "✅ " : ""}${MENU_MODE_LABELS[m].charAt(0).toUpperCase()}${MENU_MODE_LABELS[m].slice(1)}`, `menu:${m}`).row();
+  const own = normalizeMenu(user.menuButtons);
+  kb.text(`🧩 Кнопки внизу: ${own ? `свои (${own.length})` : "как у всех"}`, "s:buttons").row();
+  return kb.text("◀️ Назад", "menu:back");
+}
+
+/** Подписи для /stats: что жмут в настройках (ключ — `s:<пункт>` без значения). */
+export const SETTINGS_CLICK_LABELS: Record<string, string> = {
+  "open:group": "раздел «👥 Группа»",
+  "open:notify": "раздел «🔔 Что присылать»",
+  "open:remind": "раздел «⏰ Напоминания»",
+  "open:look": "раздел «🖼 Вид расписания»",
+  menu: "раздел «⌨️ Нижнее меню»",
+  home: "◀️ Назад",
+  close: "✖️ Закрыть",
+  group: "Группа",
+  subgroup: "Подгруппа",
+  watch: "Следить за другими группами",
+  teachers: "Слежу за преподавателями",
+  changes: "Изменения",
+  session: "Сессия",
+  slides: "Слайды",
+  topic: "Темы рассылок",
+  first: "До первой пары",
+  each: "Перед каждой парой",
+  distance: "Дистант",
+  evening: "Вечером на завтра",
+  quiet: "Тихие часы",
+  format: "Формат",
+  theme: "Оформление картинок",
+  teacher: "Преподаватели в расписании",
+  anon: "Усиленная анонимность",
+  buttons: "🧩 Кнопки внизу",
+};
 
 export const TOPICS = ["contests", "announcements", "events"] as const;
 export type Topic = (typeof TOPICS)[number];
