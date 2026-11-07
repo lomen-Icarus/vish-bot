@@ -232,3 +232,42 @@ export const ButtonFlash: React.FC<{ rect: Rect; at: number }> = ({
     />
   );
 };
+
+/**
+ * Розовая рамка вокруг кнопки: появляется, когда палец подлетает (за 16 кадров
+ * до нажатия), обводит кнопку целиком и держится до ответа бота.
+ */
+export const ButtonHighlight: React.FC<{ rect: Rect; at: number }> = ({
+  rect,
+  at,
+}) => {
+  const frame = useCurrentFrame();
+  const GAP = 5; // отступ рамки от кнопки
+  const STROKE = 6;
+  const o = interpolate(frame, [at - 16, at - 8], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const s = interpolate(frame, [at - 16, at - 6], [1.04, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+    easing: Easing.bezier(0.16, 1, 0.3, 1),
+  });
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: rect.x - GAP - STROKE,
+        top: rect.y - GAP - STROKE,
+        width: rect.w + 2 * (GAP + STROKE),
+        height: rect.h + 2 * (GAP + STROKE),
+        borderRadius: 18 + GAP + STROKE,
+        border: `${STROKE}px solid rgb(255, 59, 107)`,
+        boxSizing: 'border-box',
+        boxShadow: '0 0 16px rgba(255, 59, 107, 0.35)',
+        opacity: o,
+        scale: String(s),
+      }}
+    />
+  );
+};

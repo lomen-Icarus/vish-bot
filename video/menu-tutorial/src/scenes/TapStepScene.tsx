@@ -1,7 +1,13 @@
 import React from 'react';
 import { Easing, interpolate, useCurrentFrame } from 'remotion';
 import { TapStepProps } from '../data';
-import { ButtonFlash, FrameCrop, PhoneScreen, TapFinger } from '../Screen';
+import {
+  ButtonFlash,
+  ButtonHighlight,
+  FrameCrop,
+  PhoneScreen,
+  TapFinger,
+} from '../Screen';
 
 /**
  * Через сколько кадров после нажатия сцена начинает уходить в следующую.
@@ -12,8 +18,8 @@ export const RESPONSE_DELAY = 4;
 export const TRANSITION_FRAMES = 10;
 
 /**
- * Один шаг без зума: экран стоит, палец подлетает к кнопке, нажимает,
- * кнопка вспыхивает — и сразу приходит ответ бота (следующая сцена).
+ * Один шаг без зума: экран стоит, палец подлетает к кнопке — вокруг неё
+ * появляется рамка, нажатие, вспышка — и сразу ответ бота (следующая сцена).
  */
 export const TapStepScene: React.FC<TapStepProps> = ({
   frame: image,
@@ -55,6 +61,7 @@ export const TapStepScene: React.FC<TapStepProps> = ({
           }}
         />
       ) : null}
+      <ButtonHighlight rect={button} at={tapAt} />
       <ButtonFlash rect={button} at={tapAt} />
       <TapFinger point={tap} at={tapAt} />
     </PhoneScreen>

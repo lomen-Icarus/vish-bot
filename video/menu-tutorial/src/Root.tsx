@@ -35,8 +35,8 @@ export const RemotionRoot: React.FC = () => {
           height={1920}
           defaultProps={{
             frame: '01_start_tap_more.png',
-            tap: { x: 682, y: 1878 },
-            button: { x: 370, y: 1800, w: 340, h: 96 },
+            tap: { x: 640, y: 1866 },
+            button: { x: 372, y: 1800, w: 336, h: 95 },
             captionBottom: 440,
             duration: 96,
             pop: null,
@@ -51,11 +51,11 @@ export const RemotionRoot: React.FC = () => {
           height={1920}
           defaultProps={{
             frame: '06_buttons_1.png',
-            tap: { x: 506, y: 1138 },
-            button: { x: 26, y: 1090, w: 509, h: 66 },
+            tap: { x: 475, y: 1127 },
+            button: { x: 28, y: 1090, w: 502, h: 67 },
             captionBottom: 560,
             duration: 76,
-            pop: { x: 546, y: 1012, w: 509, h: 66 },
+            pop: { x: 550, y: 1012, w: 500, h: 68 },
           }}
         />
         <Composition

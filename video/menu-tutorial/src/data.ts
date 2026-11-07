@@ -1,5 +1,5 @@
-// Координаты сняты с кадров 1080×1920 (public/frames/*.png):
-// розовая рамка/круг — место нажатия, тёмная плашка — подпись шага.
+// Координаты сняты с кадров 1080×1920 (public/frames/*.png, готовит
+// tools/prepare_frames.py): кнопка, на которую жмут, и тёмная плашка шага.
 
 export type Rect = { x: number; y: number; w: number; h: number };
 export type Point = { x: number; y: number };
@@ -7,9 +7,9 @@ export type Point = { x: number; y: number };
 export type TapStepProps = {
   /** Файл кадра в public/frames */
   frame: string;
-  /** Центр запечённого розового круга — сюда «нажимает» палец */
+  /** Куда «нажимает» палец — правая часть кнопки, чтобы не закрыть подпись */
   tap: Point;
-  /** Кнопка, которая вспыхивает при нажатии */
+  /** Кнопка: рамка появляется при подлёте пальца, вспышка — при нажатии */
   button: Rect;
   /** Нижняя граница тёмной плашки шага (верх у всех — 300) */
   captionBottom: number;
@@ -24,12 +24,18 @@ export const SCREEN = { width: 1080, height: 1920 };
 export const HEADER_BOTTOM = 274;
 export const CAPTION_TOP = 300;
 
+// Кнопки под сообщением: поля 28 px; во всю ширину x 28–1049,
+// в два столбца 28–529 и 550–1049 (замерено по очищенным кадрам).
+const FULL = { x: 28, w: 1022 };
+const LEFT = { x: 28, w: 502 };
+const RIGHT = { x: 550, w: 500 };
+
 export const STEPS: TapStepProps[] = [
   {
     // Шаг 1. Внизу жми «🗂 Ещё»
     frame: '01_start_tap_more.png',
-    tap: { x: 682, y: 1878 },
-    button: { x: 370, y: 1800, w: 340, h: 96 },
+    tap: { x: 640, y: 1866 },
+    button: { x: 372, y: 1800, w: 336, h: 95 },
     captionBottom: 440,
     duration: 96,
     pop: null,
@@ -37,8 +43,8 @@ export const STEPS: TapStepProps[] = [
   {
     // Шаг 2. Под сообщением — «⚙️ Настройки»
     frame: '02_more_tap_settings.png',
-    tap: { x: 299, y: 1524 },
-    button: { x: 27, y: 1452, w: 304, h: 92 },
+    tap: { x: 300, y: 1514 },
+    button: { x: 28, y: 1452, w: 296, h: 93 },
     captionBottom: 400,
     duration: 76,
     pop: null,
@@ -46,8 +52,8 @@ export const STEPS: TapStepProps[] = [
   {
     // Шаг 3. «⌨️ Нижнее меню»
     frame: '03_settings_tap_menu.png',
-    tap: { x: 1016, y: 1446 },
-    button: { x: 27, y: 1398, w: 1028, h: 68 },
+    tap: { x: 990, y: 1438 },
+    button: { ...FULL, y: 1400, h: 68 },
     captionBottom: 440,
     duration: 76,
     pop: null,
@@ -55,8 +61,8 @@ export const STEPS: TapStepProps[] = [
   {
     // Шаг 4. «🧩 Кнопки внизу»
     frame: '04_menu_tap_buttons.png',
-    tap: { x: 1016, y: 1446 },
-    button: { x: 27, y: 1398, w: 1028, h: 68 },
+    tap: { x: 990, y: 1438 },
+    button: { ...FULL, y: 1400, h: 68 },
     captionBottom: 440,
     duration: 76,
     pop: null,
@@ -64,8 +70,8 @@ export const STEPS: TapStepProps[] = [
   {
     // Шаг 5. Добавь «👥 Др. группы»
     frame: '05_buttons_0.png',
-    tap: { x: 1016, y: 1058 },
-    button: { x: 546, y: 1012, w: 509, h: 66 },
+    tap: { x: 995, y: 1050 },
+    button: { ...RIGHT, y: 1012, h: 68 },
     captionBottom: 440,
     duration: 76,
     pop: null,
@@ -73,29 +79,29 @@ export const STEPS: TapStepProps[] = [
   {
     // Шаг 6. Добавь «👨‍🏫 Где препод»
     frame: '06_buttons_1.png',
-    tap: { x: 506, y: 1138 },
-    button: { x: 26, y: 1090, w: 509, h: 66 },
+    tap: { x: 475, y: 1127 },
+    button: { ...LEFT, y: 1090, h: 67 },
     captionBottom: 560,
     duration: 76,
-    pop: { x: 546, y: 1012, w: 509, h: 66 },
+    pop: { ...RIGHT, y: 1012, h: 68 },
   },
   {
     // Шаг 7. Добавь «🎓 Поток»
     frame: '07_buttons_2.png',
-    tap: { x: 1016, y: 1134 },
-    button: { x: 546, y: 1090, w: 509, h: 66 },
+    tap: { x: 995, y: 1127 },
+    button: { ...RIGHT, y: 1090, h: 67 },
     captionBottom: 560,
     duration: 76,
-    pop: { x: 26, y: 1090, w: 509, h: 66 },
+    pop: { ...LEFT, y: 1090, h: 67 },
   },
   {
     // Шаг 8. «👌 Готово — обновить меню»
     frame: '08_buttons_3.png',
-    tap: { x: 1016, y: 1446 },
-    button: { x: 27, y: 1400, w: 1028, h: 66 },
+    tap: { x: 990, y: 1438 },
+    button: { ...FULL, y: 1400, h: 68 },
     captionBottom: 560,
     duration: 76,
-    pop: { x: 546, y: 1090, w: 509, h: 66 },
+    pop: { ...RIGHT, y: 1090, h: 67 },
   },
 ];
 
