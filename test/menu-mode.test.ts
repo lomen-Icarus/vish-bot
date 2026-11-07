@@ -155,8 +155,8 @@ describe("⚙️ Нижнее меню и /menu", () => {
     const screen = await run(cb("s:menu"), repo);
     expect(String(screen.find((c) => c.method === "editMessageText")!.payload.text)).toContain("✅ <b>сворачивается</b>");
     const hide = await run(cb("menu:hidden"), repo);
-    // …и после выбора оно снова — настройки, уже с новой подписью.
-    expect(JSON.stringify(hide.find((c) => c.method === "editMessageText")!.payload.reply_markup)).toContain("⌨️ Нижнее меню: скрыто");
+    // …и после выбора экран остаётся в разделе, ✅ — на новом режиме.
+    expect(JSON.stringify(hide.find((c) => c.method === "editMessageText")!.payload.reply_markup)).toContain("✅ Скрыто");
     expect(repo.getUser(7)!.menuMode).toBe("hidden");
     const sent = hide.find((c) => c.method === "sendMessage")!;
     expect(sent.payload.reply_markup).toEqual({ remove_keyboard: true });

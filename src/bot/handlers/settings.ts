@@ -1,6 +1,6 @@
 import { Composer, InlineKeyboard } from "grammy";
 import type { BotContext } from "../context.js";
-import { BTN, DEFAULT_MENU, FIND_BTN, groupPicker, MENU_CHOICES, MENU_KEEP_ONE, menuButtonLabel, menuFor, normalizeMenu, panelRef, MENU_MODE_LABELS, MENU_MODES, REMINDER_KINDS, reminderOff, REMINDERS, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL, type MenuButton, type ReminderKind } from "../keyboards.js";
+import { BTN, DEFAULT_MENU, FIND_BTN, groupPicker, MENU_CHOICES, MENU_KEEP_ONE, menuButtonLabel, menuFor, normalizeMenu, panelRef, MENU_MODE_LABELS, MENU_MODES, REMINDER_KINDS, reminderOff, REMINDERS, menuSettingsKeyboard, SETTINGS_SECTION_OF, SETTINGS_SECTIONS, settingsKeyboard, TOPIC_HINTS, TOPIC_LABELS, TOPICS, WEBINAR_URL, type MenuButton, type ReminderKind, type SettingsSection } from "../keyboards.js";
 import { THEMES, THEME_LABELS } from "../../render/themes.js";
 import { needGroup, subgroupHint } from "../views.js";
 import { showGroupPicker } from "./schedule.js";
@@ -23,53 +23,76 @@ const QUIET_OPTIONS = [null, "22:00-07:00", "23:00-07:00", "00:00-08:00"] as con
 const FORMAT_OPTIONS = ["text", "image", "both"] as const;
 const TEACHER_VIEW_OPTIONS = ["bold", "plain", "off"] as const;
 
-function settingsText(ctx: BotContext): string {
-  const group = needGroup(ctx);
-  const lines = ["<b>⚙️ Настройки</b>"];
-  if (!group) lines.push("Группа не выбрана.");
-  lines.push("", "Нажимай на пункт, чтобы переключить.");
-  lines.push(
-    "",
-    "<b>👨‍🏫 Преподаватели</b>",
-    "Кто ведёт пару — в расписании дня, недели, потока и других групп, и на картинках тоже. «С выделением» — фамилия жирным, её видно с первого взгляда; «без выделения» — тем же шрифтом, что и аудитория; «не показывать» — строка короче.",
-    ...(ctx.deps.teachers ? [] : ["<i>Сейчас портал отдаёт фамилии только у дистанционных пар: для очных нужна учётка портала.</i>"]),
-    "",
-    "<b>Что за уведомления</b>",
-    "🔔 Изменения — переносы, замены аудиторий, отмены и новые пары твоей группы.",
-    ...(ctx.deps.renderer ? ["🎨 Оформление — как выглядят постеры: тёмная, журнальная, плакатная или лента."] : []),
-    "🎓 Сессия — то же самое для расписания зачётов и экзаменов.",
-    "⌨️ Нижнее меню — сворачивается значком ▦ в поле ввода; может сворачиваться само после каждого нажатия или быть скрыто совсем (вернуть — /menu).",
-    `💻 Дистант — отдельное напоминание перед онлайн-парой со ссылкой на вебинар (${WEBINAR_URL.replace(/^https?:\/\//, "")}).`,
-    ...(ctx.deps.config.SLIDES_TOKEN ? ["📎 Слайды — PDF со слайдами записанных онлайн-пар твоей группы в личку. По умолчанию выключено."] : []),
-    ...TOPICS.map((t) => `🏷 ${TOPIC_LABELS[t]} — ${TOPIC_HINTS[t]}.`),
-    "Темы — это рассылки от ВИШ, включи те, что хочешь получать.",
-  );
-  if ((ctx.deps.known?.count() ?? 0) > 0) {
-    lines.push(
-      "",
-      "<b>🕶 Усиленная анонимность</b>",
-      "Бот может узнать тебя по телеграм-нику из списка старост и поздороваться по имени. ФИО он ни у кого не спрашивает — регистрации тут нет.",
-      "Включишь анонимность — бот перестанет связывать этот аккаунт с человеком из списка: ни имени, ни «Привет, Вася». Выключишь обратно — всё вернётся.",
-    );
+/**
+ * Текст экрана настроек: на главном — одна строка, пояснения — в своём
+ * разделе (раньше вся справка висела над 22 кнопками).
+ */
+function settingsText(ctx: BotContext, section: SettingsSection): string {
+  const known = (ctx.deps.known?.count() ?? 0) > 0;
+  switch (section) {
+    case "group": {
+      const lines = ["<b>👥 Группа</b>", ""];
+      lines.push(ctx.user.teacherMode ? "Включён режим преподавателя: «Сегодня», «Неделя» и напоминания — по твоим парам." : "Своя группа и подгруппа — для «Сегодня», «Недели», напоминаний и изменений.");
+      lines.push("👀 Следить — изменения других групп тоже будут приходить.");
+      const watch = ctx.deps.repo.watchGroups(ctx.user.id);
+      if (watch.length) lines.push("", `Слежу за: ${watch.map((k) => esc(ctx.deps.service.group(k)?.title ?? k)).join(", ")}`);
+      return lines.join("\n");
+    }
+    case "notify":
+      return [
+        "<b>🔔 Что присылать</b>",
+        "",
+        "🔔 Изменения — переносы, замены аудиторий, отмены и новые пары твоей группы.",
+        "🎓 Сессия — то же самое для расписания зачётов и экзаменов.",
+        ...(ctx.deps.config.SLIDES_TOKEN ? ["📎 Слайды — PDF со слайдами записанных онлайн-пар твоей группы в личку."] : []),
+        "",
+        "Темы — рассылки от ВИШ, включи нужные:",
+        ...TOPICS.map((t) => `🏷 ${TOPIC_LABELS[t]} — ${TOPIC_HINTS[t]}.`),
+      ].join("\n");
+    case "remind":
+      return [
+        "<b>⏰ Напоминания о парах</b>",
+        "",
+        "Нажатие меняет время по кругу, до «выкл».",
+        `💻 Дистант — перед онлайн-парой, со ссылкой на вебинар (${WEBINAR_URL.replace(/^https?:\/\//, "")}).`,
+        "🤫 Тихие часы — в это время бот не присылает уведомления; изменения за ночь придут одним сообщением после.",
+      ].join("\n");
+    case "look":
+      return [
+        "<b>🖼 Вид расписания</b>",
+        "",
+        ...(ctx.deps.renderer ? ["🖼 Формат — текстом, картинкой или и так, и так.", "🎨 Оформление — как выглядят картинки: тёмная, журнальная, плакатная или лента."] : []),
+        "👨‍🏫 Преподаватели — кто ведёт пару: «с выделением» — фамилия жирным, «без выделения» — обычным шрифтом, «не показывать» — строка короче.",
+        ...(ctx.deps.teachers ? [] : ["<i>Сейчас портал отдаёт фамилии только у дистанционных пар: для очных нужна учётка портала.</i>"]),
+      ].join("\n");
+    case "main": {
+      const lines = ["<b>⚙️ Настройки</b>", ""];
+      if (!needGroup(ctx) && !ctx.user.teacherMode) lines.push("Группа не выбрана — начни с «👥 Группа».", "");
+      lines.push("В подписи раздела видно, что сейчас включено. Нажми, чтобы поменять.");
+      if (known) lines.push("", "🕶 Анонимность — бот не узнаёт тебя по нику из списка старост и не здоровается по имени.");
+      return lines.join("\n");
+    }
   }
-  const watch = ctx.deps.repo.watchGroups(ctx.user.id);
-  if (watch.length) lines.push("", `Слежу за: ${watch.map((k) => esc(ctx.deps.service.group(k)?.title ?? k)).join(", ")}`);
-  return lines.join("\n");
 }
 
-export async function renderSettings(ctx: BotContext, edit: boolean): Promise<void> {
+export async function renderSettings(ctx: BotContext, edit: boolean, section: SettingsSection = "main"): Promise<void> {
   const user = ctx.deps.repo.getUser(ctx.user.id) ?? ctx.user;
   const group = user.groupKey ? ctx.deps.service.group(user.groupKey) : null;
-  const kb = settingsKeyboard(user, group, {
-    topics: [...TOPICS],
-    hasImages: !!ctx.deps.renderer,
-    watchCount: ctx.deps.repo.watchGroups(user.id).length,
-    defaultTheme: ctx.deps.config.POSTER_THEME,
-    teacherCount: ctx.deps.repo.watchedTeachers(user.id).length,
-    slides: !!ctx.deps.config.SLIDES_TOKEN,
-    known: (ctx.deps.known?.count() ?? 0) > 0,
-  });
-  const text = settingsText({ ...ctx, user } as BotContext);
+  const kb = settingsKeyboard(
+    user,
+    group,
+    {
+      topics: [...TOPICS],
+      hasImages: !!ctx.deps.renderer,
+      watchCount: ctx.deps.repo.watchGroups(user.id).length,
+      defaultTheme: ctx.deps.config.POSTER_THEME,
+      teacherCount: ctx.deps.repo.watchedTeachers(user.id).length,
+      slides: !!ctx.deps.config.SLIDES_TOKEN,
+      known: (ctx.deps.known?.count() ?? 0) > 0,
+    },
+    section,
+  );
+  const text = settingsText({ ...ctx, user } as BotContext, section);
   if (edit) {
     try {
       await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: kb });
@@ -104,6 +127,14 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
   let toast: string | undefined;
 
   switch (field) {
+    case "open": {
+      await ctx.answerCallbackQuery();
+      const section = SETTINGS_SECTIONS.find((s) => s === arg) ?? "main";
+      return renderSettings(ctx, true, section);
+    }
+    case "home":
+      await ctx.answerCallbackQuery();
+      return renderSettings(ctx, true);
     case "close":
       await ctx.answerCallbackQuery();
       try {
@@ -202,7 +233,7 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
     case "menu": {
       // Выбор — в том же сообщении настроек: после него оно вернётся с новой подписью.
       await ctx.answerCallbackQuery();
-      await ctx.editMessageText(menuChoiceText(user.menuMode), { parse_mode: "HTML", reply_markup: menuChoiceKeyboard(user.menuMode) }).catch(() => undefined);
+      await renderMenuSettings(ctx);
       return;
     }
     case "buttons": {
@@ -231,7 +262,8 @@ settingsHandlers.callbackQuery(/^s:(\w+)(?::(.+))?$/, async (ctx) => {
   if (field === "subgroup" && patch.subgroup === 1 && !user.subgroup) {
     await ctx.reply(subgroupHint());
   }
-  await renderSettings(ctx, true);
+  // Экран остаётся в разделе этого пункта — и для нажатий со старых сообщений настроек.
+  await renderSettings(ctx, true, SETTINGS_SECTION_OF[field] ?? "main");
 });
 
 settingsHandlers.callbackQuery(/^wt:(.+)$/, async (ctx) => {
@@ -243,7 +275,7 @@ settingsHandlers.callbackQuery(/^wt:(.+)$/, async (ctx) => {
     } catch {
       /* ignore */
     }
-    await renderSettings(ctx, false);
+    await renderSettings(ctx, false, "group");
     return;
   }
   if (key === "clear") {
@@ -410,13 +442,19 @@ const MENU_MODE_DONE: Record<MenuMode, string> = {
 };
 
 function menuChoiceText(current: MenuMode): string {
-  return ["<b>⌨️ Нижнее меню</b>", "", ...MENU_MODES.map((m) => `${m === current ? "✅" : "▫️"} <b>${MENU_MODE_LABELS[m]}</b> — ${MENU_MODE_HINTS[m]}`)].join("\n");
+  return [
+    "<b>⌨️ Нижнее меню</b>",
+    "",
+    ...MENU_MODES.map((m) => `${m === current ? "✅" : "▫️"} <b>${MENU_MODE_LABELS[m]}</b> — ${MENU_MODE_HINTS[m]}`),
+    "",
+    "🧩 Кнопки внизу — собрать своё меню из любых разделов.",
+  ].join("\n");
 }
 
-function menuChoiceKeyboard(current: MenuMode): InlineKeyboard {
-  const kb = new InlineKeyboard();
-  for (const m of MENU_MODES) kb.text(`${m === current ? "✅ " : ""}${MENU_MODE_LABELS[m].charAt(0).toUpperCase()}${MENU_MODE_LABELS[m].slice(1)}`, `menu:${m}`).row();
-  return kb.text("◀️ К настройкам", "menu:back");
+/** Раздел «⌨️ Нижнее меню» — в том же сообщении настроек. */
+async function renderMenuSettings(ctx: BotContext): Promise<void> {
+  const user = ctx.deps.repo.getUser(ctx.user.id) ?? ctx.user;
+  await ctx.editMessageText(menuChoiceText(user.menuMode), { parse_mode: "HTML", reply_markup: menuSettingsKeyboard(user) }).catch(() => undefined);
 }
 
 /** Кнопки в чате меняются только новым сообщением: шлём его сразу, с новым меню (или с «убрать»). */
@@ -434,20 +472,25 @@ async function applyMenu(ctx: BotContext, mode: MenuMode, text: string): Promise
 settingsHandlers.callbackQuery(/^menu:(collapsible|once|hidden|back)$/, async (ctx) => {
   const choice = ctx.match[1]!;
   const current = (ctx.deps.repo.getUser(ctx.user.id) ?? ctx.user).menuMode;
-  if (choice === "back" || choice === current) {
-    // Тот же режим (или двойное нажатие) — ничего не шлём: меню не раскрывается зря.
-    await ctx.answerCallbackQuery(choice === "back" ? undefined : { text: "Уже так" });
+  if (choice === "back") {
+    await ctx.answerCallbackQuery();
     return renderSettings(ctx, true);
+  }
+  if (choice === current) {
+    // Тот же режим (или двойное нажатие) — ничего не шлём: меню не раскрывается зря.
+    await ctx.answerCallbackQuery({ text: "Уже так" });
+    return;
   }
   const mode = choice as MenuMode;
   await ctx.answerCallbackQuery({ text: `Нижнее меню: ${MENU_MODE_LABELS[mode]}` });
   await applyMenu(ctx, mode, MENU_MODE_DONE[mode]);
-  await renderSettings(ctx, true);
+  // Остаёмся в разделе: ✅ переезжает на выбранный режим.
+  await renderMenuSettings(ctx);
 });
 
 /** /menu — вернуть кнопки: скрытое меню снова становится «сворачивается». */
 settingsHandlers.command("menu", async (ctx) => {
-  if (ctx.user.menuMode === "hidden") return applyMenu(ctx, "collapsible", "Меню снова внизу 👇 Свернуть — значком ▦ в поле ввода, скрыть насовсем — ⚙️ Настройки → «Нижнее меню».");
+  if (ctx.user.menuMode === "hidden") return applyMenu(ctx, "collapsible", "Меню снова внизу 👇 Свернуть — значком ▦ в поле ввода, скрыть насовсем — ⚙️ Настройки → «⌨️ Нижнее меню».");
   await ctx.reply("Меню внизу 👇", { reply_markup: menuFor(ctx.user) });
 });
 
@@ -478,7 +521,7 @@ function buttonsKeyboard(ctx: BotContext, user: User): InlineKeyboard {
     if (i && i % 2 === 0) kb.row();
     kb.text(`${picked.has(b) ? "✅" : "➕"} ${menuButtonLabel(b, user.teacherMode)}`, `mb:t:${b}`);
   });
-  return kb.row().text("👌 Готово — обновить меню", "mb:done").row().text("↩️ Как было", "mb:reset").text("◀️ К настройкам", "mb:back");
+  return kb.row().text("👌 Готово — обновить меню", "mb:done").row().text("↩️ Как было", "mb:reset").text("◀️ Назад", "mb:back");
 }
 
 /** Новое меню — новым сообщением: кнопки внизу меняются только так. */
@@ -487,7 +530,7 @@ async function sendOwnMenu(ctx: BotContext, user: User): Promise<void> {
     user.menuMode === "hidden"
       ? "Сохранил. Нижнее меню сейчас скрыто — вернуть кнопки: /menu."
       : user.menuButtons
-        ? "Готово: меню внизу 👇 Вернуть как было — ⚙️ Настройки → 🧩 Кнопки внизу → ↩️ Как было."
+        ? "Готово: меню внизу 👇 Вернуть как было — ⚙️ Настройки → ⌨️ Нижнее меню → 🧩 Кнопки внизу → ↩️ Как было."
         : "Меню как у всех 👇";
   await ctx.reply(text, { reply_markup: menuFor(user) });
 }
@@ -496,14 +539,15 @@ settingsHandlers.callbackQuery(/^mb:(?:t:(\w+)|(done|reset|back))$/, async (ctx)
   const repo = ctx.deps.repo;
   const user = repo.getUser(ctx.user.id) ?? ctx.user;
   const action = ctx.match[2];
+  // «🧩 Кнопки внизу» — внутри раздела «⌨️ Нижнее меню»: туда и возвращаемся.
   if (action === "back") {
     await ctx.answerCallbackQuery();
-    return renderSettings(ctx, true);
+    return renderMenuSettings(ctx);
   }
   if (action === "done") {
     await ctx.answerCallbackQuery();
     await sendOwnMenu(ctx, user);
-    return renderSettings(ctx, true);
+    return renderMenuSettings(ctx);
   }
   if (action === "reset") {
     if (!user.menuButtons) return void (await ctx.answerCallbackQuery({ text: "Меню и так как у всех" }));
@@ -511,7 +555,7 @@ settingsHandlers.callbackQuery(/^mb:(?:t:(\w+)|(done|reset|back))$/, async (ctx)
     user.menuButtons = ctx.user.menuButtons = null;
     await ctx.answerCallbackQuery({ text: "Вернул меню как у всех" });
     await sendOwnMenu(ctx, user);
-    return renderSettings(ctx, true);
+    return renderMenuSettings(ctx);
   }
   const b = ctx.match[1] as MenuButton;
   if (!MENU_CHOICES.includes(b)) return void (await ctx.answerCallbackQuery());
