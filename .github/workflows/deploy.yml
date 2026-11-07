@@ -3,6 +3,11 @@ name: CI & Deploy
 on:
   push:
     branches: [main]
+    # Страница статуса выкладывается своим workflow (status-site.yml): правка только
+    # в status/ не пересобирает бота и не перезапускает записывалку.
+    paths-ignore:
+      - status/**
+      - .github/workflows/status-site.yml
   pull_request:
   workflow_dispatch:
 

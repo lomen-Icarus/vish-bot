@@ -1,0 +1,2671 @@
+{
+ "updated": "2026-11-07",
+ "groups": [
+  {
+   "id": "base",
+   "name": "Основа",
+   "about": "Стартовые правила: откуда данные, как часто, каким тоном."
+  },
+  {
+   "id": "schedule",
+   "name": "Расписание",
+   "about": "Как выглядит день, неделя и поток."
+  },
+  {
+   "id": "changes",
+   "name": "Изменения и напоминания",
+   "about": "Переносы, отмены и напоминания о парах."
+  },
+  {
+   "id": "news",
+   "name": "Новости и рассылки",
+   "about": "Объявления, конкурсы, события и доска."
+  },
+  {
+   "id": "people",
+   "name": "Преподаватели и поиск",
+   "about": "Найти человека и его расписание."
+  },
+  {
+   "id": "ai",
+   "name": "ИИ-помощник",
+   "about": "Вопросы словами вместо кнопок."
+  },
+  {
+   "id": "chats",
+   "name": "Бот в чатах",
+   "about": "Болталка, слайды и собрания в групповых чатах."
+  },
+  {
+   "id": "calibr",
+   "name": "Калибровка общения",
+   "about": "Как бот настраивался, чтобы студенту было комфортно с ним говорить."
+  },
+  {
+   "id": "recorder",
+   "name": "Записывалка и слайды",
+   "about": "Сервис, который снимает слайды вебинаров."
+  },
+  {
+   "id": "requests",
+   "name": "Заявки на запись",
+   "about": "Студент даёт учётку, чтобы записывали его группу."
+  },
+  {
+   "id": "calendar",
+   "name": "Календарь",
+   "about": "Пары в календаре телефона, Google и Яндексе."
+  },
+  {
+   "id": "menu",
+   "name": "Меню",
+   "about": "Кнопки, панели и inline-режим."
+  },
+  {
+   "id": "support",
+   "name": "Поддержка",
+   "about": "Министерство Жалоб."
+  },
+  {
+   "id": "max",
+   "name": "МАКС",
+   "about": "Тот же бот в мессенджере МАКС."
+  },
+  {
+   "id": "ppa",
+   "name": "Пересдачи",
+   "about": "Расписание ППА."
+  },
+  {
+   "id": "site",
+   "name": "Сайты бота",
+   "about": "Открытые страницы: Кворум, календарь, эта страница."
+  },
+  {
+   "id": "infra",
+   "name": "Серверы и домены",
+   "about": "Где живёт бот и как до него достучаться."
+  },
+  {
+   "id": "fixes",
+   "name": "Исправления и ревью",
+   "about": "Найденные ошибки и правки после ревью."
+  }
+ ],
+ "items": [
+  {
+   "id": "adr-1",
+   "adr": 1,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Откуда бот берёт расписание",
+   "text": "С портала tt.chuvsu.ru гостевым входом: учётка студента не нужна.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-2",
+   "adr": 2,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Только ВИШ",
+   "text": "Бот работает для очных групп Высшей инженерной школы, заочные скрыты.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-3",
+   "adr": 3,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Одна группа вместо нескольких",
+   "text": "Варианты одной группы на портале бот склеивает в одну, как её видит студент.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-4",
+   "adr": 4,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Как часто бот смотрит портал",
+   "text": "Каждые 6 минут днём по будням и субботам, раз в полчаса в остальное время.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-5",
+   "adr": 5,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Что считается изменением",
+   "text": "Новая, убранная или перенесённая пара, другая аудитория, время или формат на ближайшие 14 дней.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-6",
+   "adr": 6,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Напоминания",
+   "text": "До первой пары, перед каждой парой, перед дистантом со ссылкой и вечером на завтра.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-7",
+   "adr": 7,
+   "date": "2026-09-13",
+   "group": "schedule",
+   "kind": "feature",
+   "title": "Подгруппы",
+   "text": "Фильтр по подгруппе в настройках, по умолчанию видны обе.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-8",
+   "adr": 8,
+   "date": "2026-09-13",
+   "group": "schedule",
+   "kind": "feature",
+   "title": "Текст, картинка или оба",
+   "text": "Расписание приходит текстом, постером или и тем и другим.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-9",
+   "adr": 9,
+   "date": "2026-09-13",
+   "group": "schedule",
+   "kind": "feature",
+   "title": "Сессия",
+   "text": "Изменения в расписании сессии приходят тем, кто их включил.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-10",
+   "adr": 10,
+   "date": "2026-09-13",
+   "group": "news",
+   "kind": "feature",
+   "title": "Новости и объявления",
+   "text": "Три темы: конкурсы и стипендии, объявления, события ВИШ.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-11",
+   "adr": 11,
+   "date": "2026-09-13",
+   "group": "news",
+   "kind": "feature",
+   "title": "Предложить новость",
+   "text": "Сообщение уходит в редакцию Медиа ВИШ.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-12",
+   "adr": 12,
+   "date": "2026-09-13",
+   "group": "ai",
+   "kind": "feature",
+   "title": "ИИ отвечает на вопросы",
+   "text": "Спрашиваешь словами, ИИ смотрит расписание любой группы; у каждого свой дневной лимит.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-13",
+   "adr": 13,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Админка",
+   "text": "Команды для администраторов: статистика, здоровье бота, рассылки.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-14",
+   "adr": 14,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Тон",
+   "text": "Бот говорит на «ты», сдержанно.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-15",
+   "adr": 15,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "На чём написан",
+   "text": "Node.js, TypeScript, grammY и SQLite: вся база в одном файле.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-16",
+   "adr": 16,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Хостинг и автодеплой",
+   "text": "Бот живёт на хостинге с панелью и сам выкладывается из GitHub.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-17",
+   "adr": 17,
+   "date": "2026-09-13",
+   "group": "base",
+   "kind": "base",
+   "title": "Секреты",
+   "text": "Токены и пароли только на сервере и в GitHub Secrets, в коде их нет.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-18",
+   "adr": 18,
+   "date": "2026-09-13",
+   "group": "menu",
+   "kind": "feature",
+   "title": "Расписание в любом чате",
+   "text": "Набираешь «@бот 12-23 завтра» в любом чате и вставляешь день.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-19",
+   "adr": 19,
+   "date": "2026-09-13",
+   "group": "people",
+   "kind": "feature",
+   "title": "Расписание преподавателей",
+   "text": "Поиск по фамилии и имени в любом порядке.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-20",
+   "adr": 20,
+   "date": "2026-09-13",
+   "group": "schedule",
+   "kind": "feature",
+   "title": "Поток",
+   "text": "Все группы одного набора на одном экране, общие лекции объединены.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-21",
+   "adr": 21,
+   "date": "2026-09-13",
+   "group": "news",
+   "kind": "feature",
+   "title": "Новости из каналов по хэштегам",
+   "text": "Пост с #конкурс, #объявление или #событие уходит подписчикам темы.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-22",
+   "adr": 22,
+   "date": "2026-09-13",
+   "group": "menu",
+   "kind": "feature",
+   "title": "Меню из 12 кнопок",
+   "text": "Первое нижнее меню: сегодня, завтра, неделя, поток, изменения и другие.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-23",
+   "adr": 23,
+   "date": "2026-09-13",
+   "group": "news",
+   "kind": "feature",
+   "title": "ИИ читает новости за тебя",
+   "text": "Раз в день бот просматривает каналы, VK и сайт ВИШ и раскладывает посты по темам.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-24",
+   "adr": 24,
+   "date": "2026-09-13",
+   "group": "calendar",
+   "kind": "feature",
+   "title": "Расписание в календаре телефона",
+   "text": "Личная ссылка-подписка или файл .ics с парами до конца семестра.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-25",
+   "adr": 25,
+   "date": "2026-09-13",
+   "group": "news",
+   "kind": "feature",
+   "title": "Рассылка с подтверждением",
+   "text": "Перед отправкой видно, кому и скольким уйдёт, отмена на каждом шаге.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-26",
+   "adr": 26,
+   "date": "2026-09-15",
+   "group": "news",
+   "kind": "feature",
+   "title": "Доска объявлений",
+   "text": "Важная рассылка висит в «Изменениях» 24 часа.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-27",
+   "adr": 27,
+   "date": "2026-09-15",
+   "group": "changes",
+   "kind": "change",
+   "title": "Только свежие изменения",
+   "text": "В «Изменениях» только будущие пары за последние 14 дней, старое исчезает само.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-28",
+   "adr": 28,
+   "date": "2026-09-15",
+   "group": "changes",
+   "kind": "feature",
+   "title": "Следить за чужой группой",
+   "text": "Можно получать изменения другой группы и одной кнопкой перестать.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-29",
+   "adr": 29,
+   "date": "2026-09-15",
+   "group": "schedule",
+   "kind": "feature",
+   "title": "Постеры листаются на месте",
+   "text": "Стрелки меняют картинку в том же сообщении, чётность недели в шапке.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-30",
+   "adr": 30,
+   "date": "2026-09-15",
+   "group": "base",
+   "kind": "base",
+   "title": "Без тревожных значков",
+   "text": "Ярко-красные значки не пугают зря, мягкие оттенки можно.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-31",
+   "adr": 31,
+   "date": "2026-09-15",
+   "group": "people",
+   "kind": "feature",
+   "title": "Преподаватели без учётки портала",
+   "text": "Бот узнаёт преподавателей со страницы вебинаров, куда пускают гостей.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-32",
+   "adr": 32,
+   "date": "2026-09-15",
+   "group": "changes",
+   "kind": "feature",
+   "title": "Тихие часы не теряют изменения",
+   "text": "Что пришло ночью, бот присылает утром одним сообщением.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-33",
+   "adr": 33,
+   "date": "2026-09-15",
+   "group": "ai",
+   "kind": "feature",
+   "title": "Поиск знает преподавателей",
+   "text": "ИИ отвечает, что и у кого ведёт преподаватель и где его ближайшая пара.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-34",
+   "adr": 34,
+   "date": "2026-09-15",
+   "group": "people",
+   "kind": "feature",
+   "title": "Поиск прощает опечатки",
+   "text": "Одна или две ошибки в фамилии не мешают найти человека.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-35",
+   "adr": 35,
+   "date": "2026-09-15",
+   "group": "ai",
+   "kind": "feature",
+   "title": "Лимиты ИИ меняются кнопками",
+   "text": "Админ поднимает квоту на сегодня, завтра она возвращается сама.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-36",
+   "adr": 36,
+   "date": "2026-09-15",
+   "group": "news",
+   "kind": "change",
+   "title": "Объявления включены всем",
+   "text": "Только важное: дистант, отмены, дедлайны. Конкурсы по желанию.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-37",
+   "adr": 37,
+   "date": "2026-09-15",
+   "group": "schedule",
+   "kind": "change",
+   "title": "Убрана кнопка «сегодня»",
+   "text": "Между стрелками её читали как дату, теперь путаницы нет.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-38",
+   "adr": 38,
+   "date": "2026-09-15",
+   "group": "calibr",
+   "kind": "feature",
+   "title": "Поиск студента по фамилии",
+   "text": "Включается отдельно, данные только на сервере, каждый запрос в журнале и тратит лимит.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-39",
+   "adr": 39,
+   "date": "2026-09-15",
+   "group": "menu",
+   "kind": "change",
+   "title": "Бот честен про inline",
+   "text": "Обещает «@бот 12-23» только когда это правда включено.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-40",
+   "adr": 40,
+   "date": "2026-09-21",
+   "group": "schedule",
+   "kind": "feature",
+   "title": "Послезавтра и послепослезавтра",
+   "text": "Бот понимает слова-даты любой длины, и в личке, и в inline.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-41",
+   "adr": 41,
+   "date": "2026-09-21",
+   "group": "menu",
+   "kind": "feature",
+   "title": "Все экраны в inline",
+   "text": "День, неделя, поток и общие пары любой группы прямо из чата.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-42",
+   "adr": 42,
+   "date": "2026-09-21",
+   "group": "people",
+   "kind": "feature",
+   "title": "Карта преподавателей",
+   "text": "Кто ведёт у ВИШ, какие группы и предметы, кафедра и фото.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-43",
+   "adr": 43,
+   "date": "2026-09-21",
+   "group": "people",
+   "kind": "change",
+   "title": "Фото после расписания",
+   "text": "Сначала расписание, потом фото: вверх никто не листает.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-44",
+   "adr": 44,
+   "date": "2026-09-21",
+   "group": "people",
+   "kind": "feature",
+   "title": "Следить за преподавателем",
+   "text": "Вечером его завтрашний день, утром сегодняшний.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-45",
+   "adr": 45,
+   "date": "2026-09-21",
+   "group": "schedule",
+   "kind": "feature",
+   "title": "Время конца пары",
+   "text": "Видно везде: в дне, неделе, потоке и на постерах.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-46",
+   "adr": 46,
+   "date": "2026-09-21",
+   "group": "changes",
+   "kind": "feature",
+   "title": "Изменения в календарь файлом",
+   "text": "Под каждым уведомлением кнопка с файлом для календаря.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-47",
+   "adr": 47,
+   "date": "2026-09-21",
+   "group": "recorder",
+   "kind": "feature",
+   "title": "Записывалка слайдов",
+   "text": "Отдельный сервис заходит на вебинар, снимает слайды и отдаёт боту PDF.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-48",
+   "adr": 48,
+   "date": "2026-09-21",
+   "group": "changes",
+   "kind": "fix",
+   "title": "Доставка без потерь",
+   "text": "Изменение считается доставленным только после успешной отправки.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-49",
+   "adr": 49,
+   "date": "2026-09-21",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Длинные названия групп не ломают кнопки",
+   "text": "Ключ группы обрезается по байтам, Telegram больше не отвергает клавиатуру.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-50",
+   "adr": 50,
+   "date": "2026-09-21",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Токены не попадают в ошибки",
+   "text": "В тексте сетевой ошибки остаются только адрес и путь.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-51",
+   "adr": 51,
+   "date": "2026-09-24",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Правки по ревью, раунд 8",
+   "text": "Время в журналах сравнивается в одном формате, новости только от админов чата.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-52",
+   "adr": 52,
+   "date": "2026-09-24",
+   "group": "people",
+   "kind": "feature",
+   "title": "Единая карточка человека",
+   "text": "Преподаватели и студенты ищутся одним поиском и выглядят одинаково.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-53",
+   "adr": 53,
+   "date": "2026-09-24",
+   "group": "people",
+   "kind": "feature",
+   "title": "Расписание по фамилии в inline",
+   "text": "«@бот Фамилия завтра» показывает день человека, неточное совпадение даёт варианты.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-54",
+   "adr": 54,
+   "date": "2026-09-24",
+   "group": "schedule",
+   "kind": "change",
+   "title": "ЛК, ПР, ЛБ",
+   "text": "Короткие типы пар, преподаватель в той же строке.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-55",
+   "adr": 55,
+   "date": "2026-09-24",
+   "group": "people",
+   "kind": "feature",
+   "title": "Режим преподавателя",
+   "text": "Преподаватель получает то же меню, только «своя группа» это он сам.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-56",
+   "adr": 56,
+   "date": "2026-09-24",
+   "group": "menu",
+   "kind": "change",
+   "title": "/start одним сообщением",
+   "text": "Приветствие, выбор группы и кнопка «Спросить» сразу.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-57",
+   "adr": 57,
+   "date": "2026-09-24",
+   "group": "schedule",
+   "kind": "feature",
+   "title": "Панель предметов",
+   "text": "/subjects: все пары предмета за семестр таблицей, прошедшие отмечены. Пока тест.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-58",
+   "adr": 58,
+   "date": "2026-09-24",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Бот в групповых чатах",
+   "text": "Отвечает на «@бот…» и на ответы своим сообщениям с помощью ИИ.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-59",
+   "adr": 59,
+   "date": "2026-09-24",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Сценарий болталки",
+   "text": "Готовые ответы владельца главнее идей модели.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-60",
+   "adr": 60,
+   "date": "2026-09-24",
+   "group": "chats",
+   "kind": "change",
+   "title": "Слышит обращения в группе",
+   "text": "Как выключить privacy mode, чтобы бот слышал «@бот привет».",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-61",
+   "adr": 61,
+   "date": "2026-09-24",
+   "group": "people",
+   "kind": "fix",
+   "title": "Справочник с нового адреса",
+   "text": "Портал переехал, бот берёт список оттуда, старый адрес запасной.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-62",
+   "adr": 62,
+   "date": "2026-09-25",
+   "group": "menu",
+   "kind": "change",
+   "title": "Кнопка «ИИ поисковик»",
+   "text": "Подпись честно говорит, что поиск идёт через ИИ.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-63",
+   "adr": 63,
+   "date": "2026-09-25",
+   "group": "people",
+   "kind": "feature",
+   "title": "Преподавателя узнают сразу",
+   "text": "На /start преподаватель видит своё расписание без выбора группы.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-64",
+   "adr": 64,
+   "date": "2026-09-25",
+   "group": "calibr",
+   "kind": "feature",
+   "title": "Пасхалка",
+   "text": "Тёплая карточка для одного из первых помощников бота.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-65",
+   "adr": 65,
+   "date": "2026-09-25",
+   "group": "people",
+   "kind": "change",
+   "title": "Свои преподаватели первыми",
+   "text": "При равном совпадении преподаватель ВИШ стоит выше однофамильцев.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-66",
+   "adr": 66,
+   "date": "2026-09-25",
+   "group": "people",
+   "kind": "feature",
+   "title": "Карточка человека картинкой",
+   "text": "Расписание человека приходит постером той же темы, что у групп.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-67",
+   "adr": 67,
+   "date": "2026-09-25",
+   "group": "recorder",
+   "kind": "fix",
+   "title": "Записывалка не теряет пары",
+   "text": "Неудачную попытку она повторяет раз в минуту до конца пары.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-68",
+   "adr": 68,
+   "date": "2026-09-25",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Правки по ревью",
+   "text": "Однофамильцы, поиск и мелочи после ревью.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-69",
+   "adr": 69,
+   "date": "2026-09-25",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Ревью всего проекта",
+   "text": "Шесть ревьюеров прочитали весь код: падение от кривого адреса, утечка токена в лог и другое.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-70",
+   "adr": 70,
+   "date": "2026-09-28",
+   "group": "recorder",
+   "kind": "fix",
+   "title": "Сертификаты портала",
+   "text": "Портал отдаёт неполную цепочку сертификатов, записывалка теперь всё равно входит.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-71",
+   "adr": 71,
+   "date": "2026-09-28",
+   "group": "recorder",
+   "kind": "feature",
+   "title": "Записывалка на своём сервере",
+   "text": "Выкладка на VPS через SSH и Docker.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-72",
+   "adr": 72,
+   "date": "2026-09-28",
+   "group": "recorder",
+   "kind": "fix",
+   "title": "Слайды кусками",
+   "text": "Большой PDF уходит частями, если сервер режет размер.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-73",
+   "adr": 73,
+   "date": "2026-09-28",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Знакомство с чатом",
+   "text": "Бот спрашивает, что это за группа, и запоминает ответ.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-74",
+   "adr": 74,
+   "date": "2026-09-28",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Слайды в тему чата",
+   "text": "«@бот сюда слайды по физике», и слайды приходят в эту тему.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-75",
+   "adr": 75,
+   "date": "2026-09-28",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Собрание без пар",
+   "text": "Бот сверяет время собрания с парами группы.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-76",
+   "adr": 76,
+   "date": "2026-09-28",
+   "group": "chats",
+   "kind": "change",
+   "title": "Мягкий отказ",
+   "text": "Вместо сухого «отвечаю только про расписание» живая фраза.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-77",
+   "adr": 77,
+   "date": "2026-09-28",
+   "group": "calibr",
+   "kind": "feature",
+   "title": "Обращение по имени",
+   "text": "Тех, кого бот знает, он может назвать по имени; фамилии и ники модели не передаются.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-78",
+   "adr": 78,
+   "date": "2026-09-28",
+   "group": "calibr",
+   "kind": "feature",
+   "title": "Знакомства в чате",
+   "text": "«Это Имя Фамилия 12-23», и бот запоминает человека.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-79",
+   "adr": 79,
+   "date": "2026-09-28",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Сонный бот ночью",
+   "text": "С 23 до 5 бот отвечает чуть сонно, лимит на это не тратится.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-80",
+   "adr": 80,
+   "date": "2026-09-28",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Идеи для бота",
+   "text": "Предложенная функция записывается и уходит автору.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-81",
+   "adr": 81,
+   "date": "2026-09-28",
+   "group": "calibr",
+   "kind": "feature",
+   "title": "Ответ на грубость",
+   "text": "На грубость бот отвечает по-доброму.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-82",
+   "adr": 82,
+   "date": "2026-09-28",
+   "group": "recorder",
+   "kind": "change",
+   "title": "Слайды в личку по желанию",
+   "text": "PDF в личку только тем, кто включил; главный путь через тему чата.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-83",
+   "adr": 83,
+   "date": "2026-09-28",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Правки по ревью чатов",
+   "text": "Разовая просьба слайдов больше не превращается в подписку.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-84",
+   "adr": 84,
+   "date": "2026-09-29",
+   "group": "recorder",
+   "kind": "infra",
+   "title": "Свой образ записывалки",
+   "text": "Для браузера нужен свой Docker-образ, панель его не давала.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-85",
+   "adr": 85,
+   "date": "2026-09-29",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Слайды: модель в курсе",
+   "text": "ИИ знает о подписках и находит предмет по разговорному названию.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-86",
+   "adr": 86,
+   "date": "2026-09-29",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Ответ гифкой",
+   "text": "В сценарии можно ответить гифкой, стикером или фото.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-87",
+   "adr": 87,
+   "date": "2026-09-29",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Знакомство своими словами",
+   "text": "Бот понимает «знакомься, это…» в свободной форме.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-88",
+   "adr": 88,
+   "date": "2026-09-29",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Правки по ревью знакомств",
+   "text": "Список старост не выдаётся ответом, знакомства строже.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-89",
+   "adr": 89,
+   "date": "2026-09-30",
+   "group": "recorder",
+   "kind": "feature",
+   "title": "Второй профиль портала",
+   "text": "Для групп набора 2025 своя учётка вебинаров.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-90",
+   "adr": 90,
+   "date": "2026-09-30",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Второй профиль: правки по ревью",
+   "text": "Студент одного набора не заходит под своим именем на чужие пары.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-91",
+   "adr": 91,
+   "date": "2026-10-02",
+   "group": "schedule",
+   "kind": "fix",
+   "title": "Второй трек группы",
+   "text": "Группа с хвостом «-2» на портале больше не теряется.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-92",
+   "adr": 92,
+   "date": "2026-10-04",
+   "group": "changes",
+   "kind": "change",
+   "title": "«На сегодня» и «на будущее»",
+   "text": "Срочное отдельно, остальное списком по дням.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-93",
+   "adr": 93,
+   "date": "2026-10-06",
+   "group": "changes",
+   "kind": "change",
+   "title": "Изменения одним сообщением",
+   "text": "Всё, что поменялось за раз, приходит одним сообщением; «перенесена» вместо «отменена».",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-94",
+   "adr": 94,
+   "date": "2026-10-06",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Правки по ревью изменений",
+   "text": "Последнее изменение пары главнее предыдущих.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-95",
+   "adr": 95,
+   "date": "2026-10-06",
+   "group": "menu",
+   "kind": "fix",
+   "title": "Меню сворачивается",
+   "text": "На телефоне нижнее меню теперь можно скрыть.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-96",
+   "adr": 96,
+   "date": "2026-10-06",
+   "group": "menu",
+   "kind": "change",
+   "title": "Сворачивать после нажатия",
+   "text": "Нажал кнопку, и меню само свернулось.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-97",
+   "adr": 97,
+   "date": "2026-10-06",
+   "group": "menu",
+   "kind": "change",
+   "title": "«Спросить?» снова в /start",
+   "text": "Вернувшемуся приходит меню и кнопка вопроса.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-98",
+   "adr": 98,
+   "date": "2026-10-06",
+   "group": "changes",
+   "kind": "change",
+   "title": "Напоминания в выбранном формате",
+   "text": "Текст, картинка или оба, и под ними «Отключить» с «Вернуть».",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-99",
+   "adr": 99,
+   "date": "2026-10-12",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Слайды не доходили с сервера",
+   "text": "Неверный адрес и слишком большие PDF: обе причины исправлены.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-100",
+   "adr": 100,
+   "date": "2026-10-14",
+   "group": "menu",
+   "kind": "change",
+   "title": "Меню 2 × 3 и панели",
+   "text": "Шесть частых кнопок внизу, остальное в «Найти» и «Ещё».",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-101",
+   "adr": 101,
+   "date": "2026-10-15",
+   "group": "menu",
+   "kind": "change",
+   "title": "Кнопка «Поддержка»",
+   "text": "«Жалоба» стала «Поддержкой», в календаре своё время напоминания.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-102",
+   "adr": 102,
+   "date": "2026-10-15",
+   "group": "menu",
+   "kind": "change",
+   "title": "«Ещё» и «Где препод»",
+   "text": "Значки говорят, что за кнопкой.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-103",
+   "adr": 103,
+   "date": "2026-10-16",
+   "group": "recorder",
+   "kind": "change",
+   "title": "Третья учётка вебинаров",
+   "text": "Записываются пары 4 курса.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-104",
+   "adr": 104,
+   "date": "2026-10-16",
+   "group": "recorder",
+   "kind": "fix",
+   "title": "Перезапуск не стирает снятое",
+   "text": "Кадры пары сохраняются на диск по ходу съёмки.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-105",
+   "adr": 105,
+   "date": "2026-10-16",
+   "group": "recorder",
+   "kind": "change",
+   "title": "Очерёдность записи",
+   "text": "Сначала пары, для которых есть своя учётка; некоторые предметы можно пропускать.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-106",
+   "adr": 106,
+   "date": "2026-10-16",
+   "group": "recorder",
+   "kind": "feature",
+   "title": "Слайды под расписанием дня",
+   "text": "Кнопка «Слайды» у записанной пары и по просьбе в личке.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-107",
+   "adr": 107,
+   "date": "2026-10-16",
+   "group": "requests",
+   "kind": "feature",
+   "title": "Проверка учётки через кабинет",
+   "text": "Первый шаг к заявкам: логин проверяется без вебинара.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-108",
+   "adr": 108,
+   "date": "2026-10-16",
+   "group": "requests",
+   "kind": "feature",
+   "title": "Заявки, этап 1",
+   "text": "Учётка студента шифруется, расшифровать её может только записывалка.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-109",
+   "adr": 109,
+   "date": "2026-10-16",
+   "group": "infra",
+   "kind": "infra",
+   "title": "Запасной адрес для записывалки",
+   "text": "Если основной домен лёг, слайды идут через запасной.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-110",
+   "adr": 110,
+   "date": "2026-10-17",
+   "group": "infra",
+   "kind": "infra",
+   "title": "Запасной адрес для календаря",
+   "text": "Бот сам переключает ссылки, если основной домен не работает.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-111",
+   "adr": 111,
+   "date": "2026-10-17",
+   "group": "infra",
+   "kind": "fix",
+   "title": "Проверка адреса через публичный DNS",
+   "text": "Бот видит домен так же, как телефоны студентов.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-112",
+   "adr": 112,
+   "date": "2026-10-17",
+   "group": "requests",
+   "kind": "feature",
+   "title": "Заявки, этап 2A",
+   "text": "Бот и записывалка обмениваются заявками.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-113",
+   "adr": 113,
+   "date": "2026-10-17",
+   "group": "requests",
+   "kind": "feature",
+   "title": "Заявки, этап 2B",
+   "text": "Форма «Записывать мою группу» шифрует пароль прямо в телефоне.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-114",
+   "adr": 114,
+   "date": "2026-10-17",
+   "group": "infra",
+   "kind": "infra",
+   "title": "Вход для России",
+   "text": "Сервер в Москве, чтобы форма открывалась у российских провайдеров.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-115",
+   "adr": 115,
+   "date": "2026-10-17",
+   "group": "requests",
+   "kind": "feature",
+   "title": "Заявки, этап 2C",
+   "text": "Админ одобряет или отклоняет, студент может отозвать учётку.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-116",
+   "adr": 116,
+   "date": "2026-10-17",
+   "group": "requests",
+   "kind": "change",
+   "title": "Учётки в слотах",
+   "text": "Одна пара записывается одной учёткой.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-117",
+   "adr": 117,
+   "date": "2026-10-17",
+   "group": "requests",
+   "kind": "feature",
+   "title": "Общая учётка под присмотром",
+   "text": "Бот проверяет, жива ли общая учётка.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-118",
+   "adr": 118,
+   "date": "2026-10-17",
+   "group": "requests",
+   "kind": "feature",
+   "title": "Чей слот",
+   "text": "Админ подписывает, чья учётка стоит в слоте.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-119",
+   "adr": 119,
+   "date": "2026-10-17",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Ревью заявок: безопасность",
+   "text": "Поддельные запросы к форме больше не роняют бота по памяти.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-120",
+   "adr": 120,
+   "date": "2026-10-17",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Ревью: слоты и записывалка",
+   "text": "Занятость слота видна и для учёток с сервера.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-121",
+   "adr": 121,
+   "date": "2026-10-17",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Ревью: интерфейс",
+   "text": "Кнопка меню снимает ожидание ввода.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-122",
+   "adr": 122,
+   "date": "2026-10-17",
+   "group": "support",
+   "kind": "change",
+   "title": "«Поддержка» отдельно от ИИ",
+   "text": "Вопрос про пары больше не уходит админу обращением.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-123",
+   "adr": 123,
+   "date": "2026-10-18",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Повторное ревью: отзыв слота",
+   "text": "Отзыв убирает только свою учётку.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-124",
+   "adr": 124,
+   "date": "2026-10-18",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Повторное ревью: ожидание ввода",
+   "text": "Кнопка меню снимает только ожидание текста.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-125",
+   "adr": 125,
+   "date": "2026-10-18",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Повторное ревью: записывалка",
+   "text": "Меньше входов под учётками студентов.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-126",
+   "adr": 126,
+   "date": "2026-10-18",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Повторное ревью: чистка",
+   "text": "В тестах только выдуманные имена.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-127",
+   "adr": 127,
+   "date": "2026-10-18",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Третье ревью: слоты и обращения",
+   "text": "Чья учётка в слоте, теперь видно по отчёту записывалки.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-128",
+   "adr": 128,
+   "date": "2026-10-18",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Третье ревью: слайды",
+   "text": "Части одного PDF собираются вместе.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-129",
+   "adr": 129,
+   "date": "2026-10-18",
+   "group": "ppa",
+   "kind": "feature",
+   "title": "Пересдачи",
+   "text": "Расписание пересдач группы; отмеченные долги в своём расписании и напоминаниях.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-130",
+   "adr": 130,
+   "date": "2026-10-18",
+   "group": "ppa",
+   "kind": "feature",
+   "title": "ИИ знает про пересдачи",
+   "text": "На вопрос о пересдачах ИИ отвечает расписанием.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-131",
+   "adr": 131,
+   "date": "2026-10-18",
+   "group": "ai",
+   "kind": "feature",
+   "title": "ИИ про все группы сразу",
+   "text": "«Когда кончаются пары у всех групп завтра» теперь одним ответом.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-132",
+   "adr": 132,
+   "date": "2026-10-18",
+   "group": "ai",
+   "kind": "fix",
+   "title": "Год в датах ИИ",
+   "text": "ИИ больше не путает 21 октября этого года с прошлым.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-133",
+   "adr": 133,
+   "date": "2026-10-18",
+   "group": "chats",
+   "kind": "change",
+   "title": "День в чате картинкой",
+   "text": "Бот прикладывает постер вместо пересказа своими словами.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-134",
+   "adr": 134,
+   "date": "2026-10-18",
+   "group": "chats",
+   "kind": "feature",
+   "title": "Личные ответы",
+   "text": "Свои реплики для отдельных людей рядом со сценарием.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-135",
+   "adr": 135,
+   "date": "2026-10-19",
+   "group": "menu",
+   "kind": "feature",
+   "title": "Свои кнопки внизу",
+   "text": "Каждый сам выбирает кнопки нижнего меню.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-136",
+   "adr": 136,
+   "date": "2026-10-20",
+   "group": "infra",
+   "kind": "infra",
+   "title": "Сертификат календаря на сервере",
+   "text": "Сертификат для календаря выпускается проверкой через сайт.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-137",
+   "adr": 137,
+   "date": "2026-10-20",
+   "group": "calendar",
+   "kind": "feature",
+   "title": "Календари групп от админа",
+   "text": "Организатор мероприятий получает календари всех групп.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-138",
+   "adr": 138,
+   "date": "2026-10-20",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Календари групп: правки по ревью",
+   "text": "«Отозвать все» отзывает действительно все ссылки.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-139",
+   "adr": 139,
+   "date": "2026-10-21",
+   "group": "max",
+   "kind": "feature",
+   "title": "Бот в МАКС",
+   "text": "Тот же бот в МАКС через мост, без второй копии кода.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-140",
+   "adr": 140,
+   "date": "2026-10-22",
+   "group": "max",
+   "kind": "change",
+   "title": "МАКС: меню и кнопки",
+   "text": "Меню под сообщениями, «Найти с ИИ», «Др. группы».",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-141",
+   "adr": 141,
+   "date": "2026-10-22",
+   "group": "max",
+   "kind": "change",
+   "title": "МАКС: один экран",
+   "text": "Под экраном одна кнопка «Меню», чат не засоряется.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-142",
+   "adr": 142,
+   "date": "2026-10-24",
+   "group": "calendar",
+   "kind": "feature",
+   "title": "Календарь, этап 1",
+   "text": "Полгода прошлого в подписке, воронка в /stats, защита от пустых страниц портала.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-143",
+   "adr": 143,
+   "date": "2026-10-24",
+   "group": "recorder",
+   "kind": "feature",
+   "title": "Что пишет записывалка сейчас",
+   "text": "/rec_now показывает идущие вебинары и кого не записали из-за лимита.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-144",
+   "adr": 144,
+   "date": "2026-10-24",
+   "group": "calendar",
+   "kind": "feature",
+   "title": "Календарь, этап 4: Google",
+   "text": "Бот сам пишет пары в Google Календарь. Пока только у админов.",
+   "status": "progress",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-145",
+   "adr": 145,
+   "date": "2026-10-25",
+   "group": "calendar",
+   "kind": "feature",
+   "title": "Календарь, этап 4: Яндекс",
+   "text": "Прямая запись в Яндекс Календарь. Пока только у админов.",
+   "status": "progress",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-146",
+   "adr": 146,
+   "date": "2026-10-26",
+   "group": "support",
+   "kind": "feature",
+   "title": "Разблокировка в Министерстве Жалоб",
+   "text": "Блок отправителя теперь можно снять.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-147",
+   "adr": 147,
+   "date": "2026-11-07",
+   "group": "news",
+   "kind": "feature",
+   "title": "Рассылка без звука",
+   "text": "Админ выбирает: со звуком или тихо.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-forget",
+   "date": "2026-09-15",
+   "group": "base",
+   "kind": "feature",
+   "title": "Забыть меня",
+   "text": "/forget после подтверждения стирает всё, что бот знает о человеке.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-themes",
+   "date": "2026-09-15",
+   "group": "schedule",
+   "kind": "feature",
+   "title": "Свой вид постера",
+   "text": "Каждый выбирает тему постера: тёмная, журнальная, плакатная или лента.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-poster-proc",
+   "date": "2026-09-15",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Постеры в отдельном процессе",
+   "text": "Тяжёлая картинка больше не роняет бота.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-teachers-all",
+   "date": "2026-09-22",
+   "group": "people",
+   "kind": "feature",
+   "title": "Преподаватели во всех расписаниях",
+   "text": "Одна система с запасным гостевым входом.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-teacher-not-change",
+   "date": "2026-09-22",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Преподаватель не изменение",
+   "text": "Появление преподавателя у пары больше не рассылается как изменение.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-false-changes",
+   "date": "2026-09-22",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Уборка ложных изменений",
+   "text": "Лишние записи убраны из «Изменений», есть ручная команда.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-whois",
+   "date": "2026-09-22",
+   "group": "people",
+   "kind": "feature",
+   "title": "Сверка списка с ботом",
+   "text": "Команда для админа: кто из списка уже пользуется ботом.",
+   "status": "done",
+   "review": {
+    "claude": "ok",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-vps-docker",
+   "date": "2026-09-28",
+   "group": "infra",
+   "kind": "infra",
+   "title": "Сервер записывалки ставится сам",
+   "text": "Деплой сам ставит Docker и чинит недонастроенные пакеты.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-deploy-diag",
+   "date": "2026-09-28",
+   "group": "infra",
+   "kind": "infra",
+   "title": "Понятные ошибки выкладки",
+   "text": "Если сервер не найден, CI говорит, что именно не так.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-env-empty",
+   "date": "2026-09-28",
+   "group": "fixes",
+   "kind": "fix",
+   "title": "Пустая строка в .env",
+   "text": "Пустое значение из образца больше не прячет настоящее.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-health-slides",
+   "date": "2026-09-29",
+   "group": "recorder",
+   "kind": "feature",
+   "title": "/health про слайды",
+   "text": "Сколько записей принято и когда пришла последняя.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-rec-audio",
+   "date": "2026-09-29",
+   "group": "recorder",
+   "kind": "fix",
+   "title": "Кадр без окна звука",
+   "text": "Записывалка закрывает диалог аудио и снимает кадр шире.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-quorum",
+   "date": "2026-10-21",
+   "group": "site",
+   "kind": "feature",
+   "title": "Страница «Кворум»",
+   "text": "Сколько студентов каждой группы уже в боте, обновляется раз в минуту.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-cal-stage2",
+   "date": "2026-10-21",
+   "group": "calendar",
+   "kind": "feature",
+   "title": "Календарь, этап 2: дружим с Яндексом",
+   "text": "Как включить подписку в Яндексе и на Android, и честные сроки обновления.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-quorum-anthem",
+   "date": "2026-10-22",
+   "group": "site",
+   "kind": "feature",
+   "title": "Кворум: гимн",
+   "text": "Тихий гимн при открытии и кнопка «Выключить звук».",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-cal-stage3",
+   "date": "2026-10-24",
+   "group": "calendar",
+   "kind": "feature",
+   "title": "Календарь, этап 3: официальный вход",
+   "text": "Главная и политика конфиденциальности для входа через Google и Яндекс.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-port",
+   "date": "2026-10-25",
+   "group": "infra",
+   "kind": "infra",
+   "title": "HTTPS от сервера до бота",
+   "text": "Московский сервер ходит к боту по защищённому адресу, порт бота 48505.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "g-status",
+   "date": "2026-11-07",
+   "group": "site",
+   "kind": "feature",
+   "title": "Эта страница",
+   "text": "Дорожная карта, ревью и технический долг на status.secretvish.ru.",
+   "status": "progress",
+   "review": {
+    "claude": "none",
+    "author": "none",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "p-mood",
+   "group": "chats",
+   "kind": "plan",
+   "title": "Настроение бота",
+   "text": "Присылая файл с вебинара, бот ждёт лайков и огоньков. Настроение от 0 до 100, выше не собрать; упадёт, и бот расстроится и перестанет с вами разговаривать.",
+   "status": "plan",
+   "review": {
+    "claude": "na",
+    "author": "na",
+    "senior": "na"
+   }
+  },
+  {
+   "id": "p-audio",
+   "group": "recorder",
+   "kind": "plan",
+   "title": "Аудио лекций",
+   "text": "Бот слушает вебинар, присылает аудиоверсию лекции и пишет в чат по инструкции.",
+   "status": "plan",
+   "review": {
+    "claude": "na",
+    "author": "na",
+    "senior": "na"
+   }
+  },
+  {
+   "id": "p-personal",
+   "group": "schedule",
+   "kind": "plan",
+   "title": "Персонализация",
+   "text": "Бот разберётся, в какой ты подгруппе, перестанет заходить на чужие вебинары, будет посещать вебинары вне расписания и подбирать пересдачи тем, кого перевели из группы в группу.",
+   "status": "plan",
+   "review": {
+    "claude": "na",
+    "author": "na",
+    "senior": "na"
+   }
+  },
+  {
+   "id": "p-cal-all",
+   "group": "calendar",
+   "kind": "plan",
+   "title": "Google и Яндекс для всех",
+   "text": "Прямая запись в календарь выходит из прототипа для админов.",
+   "status": "plan",
+   "review": {
+    "claude": "na",
+    "author": "na",
+    "senior": "na"
+   }
+  },
+  {
+   "id": "p-max-webhook",
+   "group": "max",
+   "kind": "plan",
+   "title": "МАКС через вебхук",
+   "text": "Бот будет получать события МАКС по вебхуку, как советует сам мессенджер.",
+   "status": "plan",
+   "review": {
+    "claude": "na",
+    "author": "na",
+    "senior": "na"
+   }
+  },
+  {
+   "id": "p-holidays",
+   "group": "schedule",
+   "kind": "plan",
+   "title": "Переносы выходных",
+   "text": "Бот узнает производственный календарь и перенесённые праздники.",
+   "status": "plan",
+   "review": {
+    "claude": "na",
+    "author": "na",
+    "senior": "na"
+   }
+  },
+  {
+   "id": "p-album",
+   "group": "news",
+   "kind": "plan",
+   "title": "Альбомы из канала целиком",
+   "text": "Альбом с хэштегом уйдёт подписчикам всеми фото, а не одним.",
+   "status": "plan",
+   "review": {
+    "claude": "na",
+    "author": "na",
+    "senior": "na"
+   }
+  },
+  {
+   "id": "p-news-poison",
+   "group": "news",
+   "kind": "plan",
+   "title": "Сломанная новость не держит остальные",
+   "text": "Одна нечитаемая новость перестанет мешать своей пачке.",
+   "status": "plan",
+   "review": {
+    "claude": "na",
+    "author": "na",
+    "senior": "na"
+   }
+  },
+  {
+   "id": "p-node24",
+   "group": "infra",
+   "kind": "plan",
+   "title": "Переезд на Node 24",
+   "text": "Поддержка Node 22 кончается 30 апреля 2027 года.",
+   "status": "plan",
+   "review": {
+    "claude": "na",
+    "author": "na",
+    "senior": "na"
+   }
+  }
+ ]
+}

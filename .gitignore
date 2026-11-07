@@ -26,3 +26,6 @@ chat-qa.csv.bak
 # Личные ответы болталки «ник;частота;сообщение» — в них ники, только на сервере
 chat-personal.csv
 chat-personal.csv.bak
+# Страница статуса: данные в git, сборка и шоты Hallmark — нет
+!status/data/
+status/.hallmark/shots/

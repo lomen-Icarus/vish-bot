@@ -1,0 +1,29 @@
+[
+ {
+  "shape": "custom: ledger-led status page",
+  "theme": "brand (ВИШ ЧГУ)",
+  "axes": "light/geometric-sans/chromatic-blue",
+  "hero": "Stage: head left, glass counts lens under it, ВИШботик in a round glass lens beside",
+  "nav": "wordmark left, four anchors",
+  "footer": "wordmark over one line and three links",
+  "imagery": "user mascot art, used twice (hero lens, mood plan)",
+  "photos": [],
+  "entry": "none",
+  "fingerprint": "field-hero/ledger/plans-try/stats-row/debt-bar/light-foot",
+  "sections": [
+   "hero",
+   "ledger",
+   "plans",
+   "reviews",
+   "debt",
+   "footer"
+  ],
+  "signature": "ВИШботик in a round liquid-glass lens beside a glass lens counting real updates",
+  "waived": [
+   "44c"
+  ],
+  "prompt": "status.secretvish.ru: roadmap of bot updates, three reviews, tech debt diagram, VISH brand, mascot, liquid glass",
+  "date": "2026-11-07",
+  "mode": "build"
+ }
+]
