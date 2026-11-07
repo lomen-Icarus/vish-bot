@@ -2299,6 +2299,21 @@
    }
   },
   {
+   "id": "adr-148",
+   "adr": 148,
+   "date": "2026-11-07",
+   "group": "menu",
+   "kind": "change",
+   "title": "Настройки разделами",
+   "text": "Вместо 22 переключателей списком разделы, и в подписи каждого видно, что включено.",
+   "status": "done",
+   "review": {
+    "claude": "none",
+    "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
    "id": "g-forget",
    "date": "2026-09-15",
    "group": "base",
