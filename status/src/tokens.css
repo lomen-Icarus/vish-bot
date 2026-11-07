@@ -1,0 +1,99 @@
+/* Layout: светлый лист брендбука ВИШ, синее поле обложки в первом экране, прямые углы плашек,
+   стекло только у «линз» (панель счёта и полоса фильтров), как стеклянные элементы видео-концовки. */
+@font-face { font-family: "Montserrat"; font-style: normal; font-weight: 400; font-display: swap; src: url("./fonts/montserrat-cyrillic-400-normal.woff2") format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Montserrat"; font-style: normal; font-weight: 400; font-display: swap; src: url("./fonts/montserrat-latin-400-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Montserrat"; font-style: normal; font-weight: 600; font-display: swap; src: url("./fonts/montserrat-cyrillic-600-normal.woff2") format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Montserrat"; font-style: normal; font-weight: 600; font-display: swap; src: url("./fonts/montserrat-latin-600-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Montserrat"; font-style: normal; font-weight: 800; font-display: swap; src: url("./fonts/montserrat-cyrillic-800-normal.woff2") format("woff2"); unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Montserrat"; font-style: normal; font-weight: 800; font-display: swap; src: url("./fonts/montserrat-latin-800-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+:root {
+  color-scheme: light;
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
+  --text-xs: 0.8125rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.25rem; --text-xl: 1.5625rem; --text-2xl: 1.953rem; --text-3xl: 2.441rem;
+  --text-display-s: clamp(2.25rem, 4vw + 0.5rem, 3.75rem); --text-display: clamp(2.75rem, 5vw + 1rem, 5.5rem);
+  --text-section: clamp(2rem, 2.5vw + 1rem, 3.5rem); --text-title: clamp(1.125rem, 0.5vw + 0.95rem, 1.375rem); --text-lead: clamp(1.125rem, 0.35vw + 1rem, 1.375rem);
+  --text-figure: clamp(5rem, 9vw + 1rem, 10rem);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --ease-in: cubic-bezier(0.7, 0, 0.84, 0); --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
+  --container: 1360px; --gutter: 64px; --gap-columns: 32px; --section-gap-s: 120px; --section-gap: 144px; --section-gap-l: 176px;
+  --z-base: 1; --z-raised: 10; --z-dropdown: 100; --z-sticky: 200; --z-sticky-nav: 300; --z-modal: 400; --z-toast: 500; --z-tooltip: 600;
+
+  /* Лист: pattern-100 брендбука (#f1f2f2), подтянутый к синему; плашки светлее листа. */
+  --color-paper: oklch(96.2% 0.005 253);
+  --color-paper-2: oklch(99.3% 0.003 253);
+  --color-paper-3: oklch(93.4% 0.008 253);
+  /* Текст: graphite (#424242) брендбука, заголовки: vish-blue (#385e8a). */
+  --color-ink: oklch(36.5% 0.014 253);
+  --color-ink-2: oklch(47.4% 0.084 253);
+  --color-muted: oklch(49% 0.025 253);
+  --color-rule: oklch(87.5% 0.015 253);
+  /* Кнопка: vish-blue с белой надписью (6,7:1). Голубой vish-cyan (#00a1e3): только графика. */
+  --color-accent: oklch(47.4% 0.084 253);
+  --color-accent-2: oklch(42% 0.08 253);
+  --color-accent-ink: oklch(99.3% 0.003 253);
+  --color-signal: oklch(67.1% 0.146 237);
+  --color-focus: oklch(48.7% 0.119 243);
+  /* Синее поле обложки и суперграфика vish-blue-2 / vish-blue-3, тёмный буклет navy-900. */
+  --color-field: oklch(47.4% 0.084 253);
+  --color-field-2: oklch(48.6% 0.086 254);
+  --color-field-3: oklch(50.6% 0.091 253);
+  --color-field-ink: oklch(99.3% 0.003 253);
+  --color-field-muted: oklch(87.5% 0.019 251);
+  --color-deep: oklch(32.1% 0.071 239);
+  --color-deep-ink: oklch(97% 0.006 245);
+  --color-deep-muted: oklch(85% 0.025 245);
+  /* Стекло «линз». */
+  --glass-tint: oklch(28% 0.06 250 / 0.42);
+  --glass-glint: oklch(99.3% 0.003 253 / 0.1);
+  --glass-edge: oklch(99.3% 0.003 253 / 0.38);
+  --glass-shine: oklch(99.3% 0.003 253 / 0.55);
+  --glass-shade: oklch(20% 0.04 253 / 0.18);
+  --glass-bar: oklch(96.2% 0.005 253 / 0.72);
+  /* Шкала долга: светлота по синему, от тёмного к светлому. */
+  --debt-1: oklch(32% 0.071 239); --debt-2: oklch(38.5% 0.09 241); --debt-3: oklch(45% 0.11 243); --debt-4: oklch(51% 0.125 242);
+  --debt-5: oklch(57% 0.13 240); --debt-6: oklch(63.5% 0.135 238); --debt-7: oklch(70% 0.12 237);
+  --color-ok: oklch(47% 0.11 155); --color-notes: oklch(52% 0.12 65);
+
+  --font-display: "Montserrat", Arial, ui-sans-serif, sans-serif;
+  --font-body: "Montserrat", Arial, ui-sans-serif, sans-serif;
+  --font-outlier: var(--font-body);
+  --display-weight: 800;
+  --radius-card: 0; --radius-pill: 999px; --radius-lens: 28px; --rule-hair: 1px; --shadow-card: none;
+  --tracking-display: -0.01em;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-paper: oklch(19% 0.035 243); --color-paper-2: oklch(22.5% 0.04 243); --color-paper-3: oklch(26% 0.045 243);
+    --color-ink: oklch(93% 0.012 245); --color-ink-2: oklch(93% 0.012 245); --color-muted: oklch(79% 0.025 245);
+    --color-rule: oklch(33% 0.04 243);
+    --color-accent: oklch(78% 0.1 238); --color-accent-2: oklch(84% 0.08 238); --color-accent-ink: oklch(20% 0.04 243);
+    --color-signal: oklch(74% 0.12 237); --color-focus: oklch(80% 0.1 238);
+    --color-field: oklch(32.1% 0.071 239); --color-field-2: oklch(35% 0.08 241); --color-field-3: oklch(38% 0.088 242);
+    --color-field-ink: oklch(97% 0.006 245); --color-field-muted: oklch(85% 0.025 245);
+    --color-deep: oklch(23% 0.05 241); --color-deep-ink: oklch(95% 0.008 245); --color-deep-muted: oklch(80% 0.025 245);
+    --glass-tint: oklch(14% 0.03 245 / 0.42); --glass-glint: oklch(95% 0.01 245 / 0.12); --glass-edge: oklch(90% 0.02 245 / 0.22); --glass-shine: oklch(95% 0.01 245 / 0.28); --glass-shade: oklch(5% 0.02 245 / 0.3);
+    --glass-bar: oklch(19% 0.035 243 / 0.72);
+    --debt-1: oklch(92% 0.04 236); --debt-2: oklch(85% 0.07 237); --debt-3: oklch(78% 0.095 238); --debt-4: oklch(71% 0.11 239);
+    --debt-5: oklch(64.5% 0.115 240); --debt-6: oklch(58% 0.11 241); --debt-7: oklch(52% 0.1 242);
+    --color-ok: oklch(78% 0.12 155); --color-notes: oklch(82% 0.12 80);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-paper: oklch(19% 0.035 243); --color-paper-2: oklch(22.5% 0.04 243); --color-paper-3: oklch(26% 0.045 243);
+  --color-ink: oklch(93% 0.012 245); --color-ink-2: oklch(93% 0.012 245); --color-muted: oklch(79% 0.025 245);
+  --color-rule: oklch(33% 0.04 243);
+  --color-accent: oklch(78% 0.1 238); --color-accent-2: oklch(84% 0.08 238); --color-accent-ink: oklch(20% 0.04 243);
+  --color-signal: oklch(74% 0.12 237); --color-focus: oklch(80% 0.1 238);
+  --color-field: oklch(32.1% 0.071 239); --color-field-2: oklch(35% 0.08 241); --color-field-3: oklch(38% 0.088 242);
+  --color-field-ink: oklch(97% 0.006 245); --color-field-muted: oklch(85% 0.025 245);
+  --color-deep: oklch(23% 0.05 241); --color-deep-ink: oklch(95% 0.008 245); --color-deep-muted: oklch(80% 0.025 245);
+  --glass-tint: oklch(14% 0.03 245 / 0.42); --glass-glint: oklch(95% 0.01 245 / 0.12); --glass-edge: oklch(90% 0.02 245 / 0.22); --glass-shine: oklch(95% 0.01 245 / 0.28); --glass-shade: oklch(5% 0.02 245 / 0.3);
+  --glass-bar: oklch(19% 0.035 243 / 0.72);
+  --debt-1: oklch(92% 0.04 236); --debt-2: oklch(85% 0.07 237); --debt-3: oklch(78% 0.095 238); --debt-4: oklch(71% 0.11 239);
+  --debt-5: oklch(64.5% 0.115 240); --debt-6: oklch(58% 0.11 241); --debt-7: oklch(52% 0.1 242);
+  --color-ok: oklch(78% 0.12 155); --color-notes: oklch(82% 0.12 80);
+}

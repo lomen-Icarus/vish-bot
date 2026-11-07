@@ -1,0 +1,79 @@
+name: Status site
+
+# Страница https://status.secretvish.ru: собирается из status/ и выкладывается на VPS
+# отдельно от бота и записывалки — правка дорожной карты ничего не перезапускает.
+on:
+  push:
+    branches: [main]
+    paths:
+      - status/**
+      - .github/workflows/status-site.yml
+  pull_request:
+    paths:
+      - status/**
+      - .github/workflows/status-site.yml
+  workflow_dispatch:
+
+concurrency:
+  group: status-site
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build
+        run: node status/build.mjs
+      - name: Package
+        run: |
+          mkdir -p pkg/site
+          cp -r status/dist/. pkg/site/
+          cp -r status/deploy pkg/deploy
+          tar -C pkg -czf status-site.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: status-site
+          path: status-site.tar.gz
+          retention-days: 7
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SSH_HOST: ${{ secrets.RECORDER_SSH_HOST }}
+      SSH_USER: ${{ secrets.RECORDER_SSH_USER }}
+      SSH_PORT: ${{ secrets.RECORDER_SSH_PORT }}
+      SSH_KEY: ${{ secrets.RECORDER_SSH_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.RECORDER_SSH_KNOWN_HOSTS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: status/deploy
+      - uses: actions/download-artifact@v4
+        with:
+          name: status-site
+      - name: Deploy to the VPS (SSH)
+        if: env.SSH_HOST != '' && env.SSH_KEY != ''
+        run: |
+          set -euo pipefail
+          user="${SSH_USER:-root}"
+          port="${SSH_PORT:-22}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "${SSH_KNOWN_HOSTS:-}" ]; then printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts; else ssh-keyscan -T 20 -p "$port" -H "$SSH_HOST" > ~/.ssh/known_hosts; fi
+          opts=(-i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20)
+          scp "${opts[@]}" -P "$port" status-site.tar.gz status/deploy/update-status.sh "$user@$SSH_HOST:/tmp/"
+          ssh "${opts[@]}" -p "$port" "$user@$SSH_HOST" "bash /tmp/update-status.sh /tmp/status-site.tar.gz"
+      - name: No VPS secrets
+        if: env.SSH_HOST == '' || env.SSH_KEY == ''
+        run: echo "::warning::Нет секретов RECORDER_SSH_HOST / RECORDER_SSH_KEY — страница собрана, но не выложена"

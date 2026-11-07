@@ -36,3 +36,5 @@ Telegram-бот расписания ВИШ ЧувГУ. Подробности: 
 - В логах — только id и цифры, без имён и текста сообщений. Репозиторий публичный: в логи Actions ничего личного.
 - Миграции БД — только дописывать в конец `src/db/migrations.ts`.
 - Перед пушем: `npm run typecheck`, `npm test`, `npm run build`, `tsc` в `recorder/`.
+- Каждое обновление — строка в `status/data/roadmap.json` (страница https://status.secretvish.ru): номер решения, дата, группа, простое описание без тире, статус, ревью `claude` / `author` / `senior`. Claude ставит `claude: "ok"` только после ревью кода; `author` и `senior` — только со слов владельца. Новые планы — со статусом `plan`. Проверка: `node status/build.mjs --check` и `test/status-site.test.ts`.
+- Технический долг — `docs/TECH_DEBT.md` по правилам аудита; цифры для страницы — `status/data/debt.json` (обновлять вместе с отчётом).
