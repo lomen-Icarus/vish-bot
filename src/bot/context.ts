@@ -28,6 +28,8 @@ export interface PendingState {
   text?: string;
   /** For broadcast: whether the admin asked to pin it to the board. */
   board?: boolean;
+  /** For broadcast: send without sound (disable_notification). Default — with sound. */
+  silent?: boolean;
   /** «Министерство Жалоб»: отправить анонимно; ticket — на какое обращение отвечает админ. */
   anon?: boolean;
   ticket?: number;

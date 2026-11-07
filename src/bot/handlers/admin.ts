@@ -594,9 +594,10 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go(?::\d+)?|topic:\w+|c\d)$/, as
   }
   if (action !== "go") {
     // Target chosen: ask for confirmation.
-    setPending(ctx.deps, ctx.user.id, { kind: "broadcast-confirm", chatId: pending.chatId, messageId: pending.messageId, text: pending.text, target: action, board: false }, 15 * 60_000);
+    const silent = pending.silent === true;
+    setPending(ctx.deps, ctx.user.id, { kind: "broadcast-confirm", chatId: pending.chatId, messageId: pending.messageId, text: pending.text, target: action, board: false, silent }, 15 * 60_000);
     await ctx.answerCallbackQuery();
-    await showConfirm(ctx, action, false, !!pending.text, pending.messageId);
+    await showConfirm(ctx, action, false, silent, !!pending.text, pending.messageId);
     return;
   }
   if (pending.kind !== "broadcast-confirm" || !pending.target) {
@@ -611,14 +612,17 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go(?::\d+)?|topic:\w+|c\d)$/, as
   }
   const { users, label } = resolveTarget(ctx, pending.target);
   const board = pending.board === true;
+  const silent = pending.silent === true;
+  const how = silent ? " (без звука)" : "";
   clearPending(ctx.deps, ctx.user.id);
   await ctx.answerCallbackQuery();
-  await ctx.editMessageText(`Отправляю ${label}: ${users.length} чел…`);
+  await ctx.editMessageText(`Отправляю ${label}${how}: ${users.length} чел…`);
   let ok = 0;
   let failed = 0;
   for (const u of users) {
     try {
-      await ctx.api.copyMessage(u.id, pending.chatId, pending.messageId);
+      // Тихо — сообщение приходит как обычно, но без звука и вибрации (в МАКС мост ставит notify: false).
+      await ctx.api.copyMessage(u.id, pending.chatId, pending.messageId, silent ? { disable_notification: true } : undefined);
       ok++;
     } catch (err) {
       failed++;
@@ -634,27 +638,33 @@ adminOnly.callbackQuery(/^bc:(all|cancel|course|go(?::\d+)?|topic:\w+|c\d)$/, as
     boardNote = `\nНа доске объявлений ${BOARD_HOURS} ч как #${id}.`;
     kb = new InlineKeyboard().text("🗑 Убрать с доски", `ann:rm:${id}`);
   }
-  await ctx.reply(`Рассылка ${label} завершена: доставлено ${ok}, не доставлено ${failed}.${boardNote}`, { reply_markup: kb });
+  await ctx.reply(`Рассылка ${label}${how} завершена: доставлено ${ok}, не доставлено ${failed}.${boardNote}`, { reply_markup: kb });
 });
 
-/** The confirmation screen, with the board toggle. */
-async function showConfirm(ctx: BotContext, target: string, board: boolean, hasText: boolean, messageId: number): Promise<void> {
+/** The confirmation screen, with the board and sound toggles. */
+async function showConfirm(ctx: BotContext, target: string, board: boolean, silent: boolean, hasText: boolean, messageId: number): Promise<void> {
   const { users, label } = resolveTarget(ctx, target);
   const kb = new InlineKeyboard().text(`✅ Отправить ${users.length} чел.`, `bc:go:${messageId}`).row();
+  kb.text(silent ? "🔕 Уведомление: без звука" : "🔔 Уведомление: со звуком", "bc:silent").row();
   if (hasText) kb.text(`📌 На доску объявлений: ${board ? `да, ${BOARD_HOURS} ч` : "нет"}`, "bc:board").row();
   kb.text("◀️ Другая аудитория", "bc:back").text("✖️ Отмена", "bc:cancel");
+  const sound = silent ? "\n\nПридёт без звука и вибрации — человек увидит сообщение, когда откроет Telegram или МАКС." : "";
   const note = hasText ? `\n\nДоска объявлений висит в «${BTN.more} → ${MORE_BTN.changes}» и видна всем, кто откроет этот экран. Вешай туда только важное.` : "";
-  await ctx.editMessageText(`Отправить ${label}: <b>${users.length}</b> чел.?${note}\n\nЭто нельзя отменить после нажатия.`, { parse_mode: "HTML", reply_markup: kb });
+  await ctx.editMessageText(`Отправить ${label}: <b>${users.length}</b> чел.?${sound}${note}\n\nЭто нельзя отменить после нажатия.`, { parse_mode: "HTML", reply_markup: kb });
 }
 
-adminOnly.callbackQuery("bc:board", async (ctx) => {
+/** Переключатели экрана подтверждения: доска объявлений и звук. */
+adminOnly.callbackQuery(/^bc:(board|silent)$/, async (ctx) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || pending.kind !== "broadcast-confirm" || !pending.target) return void (await ctx.answerCallbackQuery({ text: "Начни заново: /broadcast", show_alert: true }));
-  const board = !pending.board;
-  setPending(ctx.deps, ctx.user.id, { ...pending, board }, 15 * 60_000);
-  await ctx.answerCallbackQuery({ text: board ? `Повешу на доску на ${BOARD_HOURS} ч` : "На доску не вешаю" });
+  const which = ctx.match[1];
+  const board = which === "board" ? !pending.board : pending.board === true;
+  const silent = which === "silent" ? !pending.silent : pending.silent === true;
+  setPending(ctx.deps, ctx.user.id, { ...pending, board, silent }, 15 * 60_000);
+  const hint = which === "board" ? (board ? `Повешу на доску на ${BOARD_HOURS} ч` : "На доску не вешаю") : silent ? "Отправлю без звука" : "Отправлю со звуком";
+  await ctx.answerCallbackQuery({ text: hint });
   try {
-    await showConfirm(ctx, pending.target, board, !!pending.text, pending.messageId ?? 0);
+    await showConfirm(ctx, pending.target, board, silent, !!pending.text, pending.messageId ?? 0);
   } catch {
     /* ignore */
   }
@@ -663,7 +673,7 @@ adminOnly.callbackQuery("bc:board", async (ctx) => {
 adminOnly.callbackQuery("bc:back", async (ctx) => {
   const pending = takePending(ctx.deps, ctx.user.id);
   if (!pending || !pending.chatId || !pending.messageId) return void (await ctx.answerCallbackQuery({ text: "Начни заново: /broadcast", show_alert: true }));
-  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: pending.chatId, messageId: pending.messageId, text: pending.text }, 15 * 60_000);
+  setPending(ctx.deps, ctx.user.id, { kind: "broadcast-target", chatId: pending.chatId, messageId: pending.messageId, text: pending.text, silent: pending.silent }, 15 * 60_000);
   await ctx.answerCallbackQuery();
   await ctx.editMessageText("Кому отправить?", { reply_markup: targetKeyboard() });
 });
