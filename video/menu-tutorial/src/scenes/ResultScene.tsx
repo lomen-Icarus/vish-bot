@@ -13,17 +13,11 @@ const IMAGE = '09_result.png';
 export const ResultScene: React.FC = () => {
   const frame = useCurrentFrame();
 
-  const z = interpolate(frame, [50, 115], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-    easing: Easing.bezier(0.45, 0, 0.55, 1),
-  });
-
   return (
     <PhoneScreen
       frame={IMAGE}
       focus={{ x: 540, y: 1740 }}
-      scale={1 + 0.1 * z}
+      scale={1}
       captionBottom={440}
     >
       {NEW_MENU_BUTTONS.map((r, i) => {

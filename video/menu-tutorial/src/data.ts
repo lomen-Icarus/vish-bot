@@ -13,14 +13,14 @@ export type TapStepProps = {
   button: Rect;
   /** Нижняя граница тёмной плашки шага (верх у всех — 300) */
   captionBottom: number;
-  /** Во сколько раз приближать к месту нажатия */
-  zoom: number;
+  /** Длина сцены в кадрах (30 fps), включая 10 кадров перехода в конце */
+  duration: number;
   /** Кнопка, сменившая ➕ на ✅ после прошлого шага — «поп» в начале сцены */
   pop: Rect | null;
 };
 
 export const SCREEN = { width: 1080, height: 1920 };
-/** Шапка чата + «Закреплённое сообщение» — неподвижны при зуме */
+/** Шапка чата + «Закреплённое сообщение» — неподвижны при зуме финала */
 export const HEADER_BOTTOM = 274;
 export const CAPTION_TOP = 300;
 
@@ -31,7 +31,7 @@ export const STEPS: TapStepProps[] = [
     tap: { x: 682, y: 1878 },
     button: { x: 370, y: 1800, w: 340, h: 96 },
     captionBottom: 440,
-    zoom: 1.25,
+    duration: 96,
     pop: null,
   },
   {
@@ -40,7 +40,7 @@ export const STEPS: TapStepProps[] = [
     tap: { x: 299, y: 1524 },
     button: { x: 27, y: 1452, w: 304, h: 92 },
     captionBottom: 400,
-    zoom: 1.25,
+    duration: 76,
     pop: null,
   },
   {
@@ -49,7 +49,7 @@ export const STEPS: TapStepProps[] = [
     tap: { x: 1016, y: 1446 },
     button: { x: 27, y: 1398, w: 1028, h: 68 },
     captionBottom: 440,
-    zoom: 1.2,
+    duration: 76,
     pop: null,
   },
   {
@@ -58,7 +58,7 @@ export const STEPS: TapStepProps[] = [
     tap: { x: 1016, y: 1446 },
     button: { x: 27, y: 1398, w: 1028, h: 68 },
     captionBottom: 440,
-    zoom: 1.2,
+    duration: 76,
     pop: null,
   },
   {
@@ -67,7 +67,7 @@ export const STEPS: TapStepProps[] = [
     tap: { x: 1016, y: 1058 },
     button: { x: 546, y: 1012, w: 509, h: 66 },
     captionBottom: 440,
-    zoom: 1.22,
+    duration: 76,
     pop: null,
   },
   {
@@ -76,7 +76,7 @@ export const STEPS: TapStepProps[] = [
     tap: { x: 506, y: 1138 },
     button: { x: 26, y: 1090, w: 509, h: 66 },
     captionBottom: 560,
-    zoom: 1.22,
+    duration: 76,
     pop: { x: 546, y: 1012, w: 509, h: 66 },
   },
   {
@@ -85,7 +85,7 @@ export const STEPS: TapStepProps[] = [
     tap: { x: 1016, y: 1134 },
     button: { x: 546, y: 1090, w: 509, h: 66 },
     captionBottom: 560,
-    zoom: 1.22,
+    duration: 76,
     pop: { x: 26, y: 1090, w: 509, h: 66 },
   },
   {
@@ -94,7 +94,7 @@ export const STEPS: TapStepProps[] = [
     tap: { x: 1016, y: 1446 },
     button: { x: 27, y: 1400, w: 1028, h: 66 },
     captionBottom: 560,
-    zoom: 1.2,
+    duration: 76,
     pop: { x: 546, y: 1090, w: 509, h: 66 },
   },
 ];

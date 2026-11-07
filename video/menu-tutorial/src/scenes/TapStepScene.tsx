@@ -3,39 +3,36 @@ import { Easing, interpolate, useCurrentFrame } from 'remotion';
 import { TapStepProps } from '../data';
 import { ButtonFlash, FrameCrop, PhoneScreen, TapFinger } from '../Screen';
 
-/** Длина сцены шага (включая по 10 кадров на переходы) */
-export const TAP_STEP_DURATION = 100;
-/** Кадр нажатия внутри сцены */
-const TAP_AT = 52;
+/**
+ * Через сколько кадров после нажатия сцена начинает уходить в следующую.
+ * Переход длится 10 кадров: ответ бота появляется через ~0.13 с после
+ * нажатия и виден полностью через ~0.47 с — без паузы «бот думает».
+ */
+export const RESPONSE_DELAY = 4;
+export const TRANSITION_FRAMES = 10;
 
 /**
- * Один шаг: общий план → наезд к кнопке → палец нажимает →
- * кнопка вспыхивает → камера возвращается к общему плану.
+ * Один шаг без зума: экран стоит, палец подлетает к кнопке, нажимает,
+ * кнопка вспыхивает — и сразу приходит ответ бота (следующая сцена).
  */
 export const TapStepScene: React.FC<TapStepProps> = ({
   frame: image,
   tap,
   button,
   captionBottom,
-  zoom,
+  duration,
   pop,
 }) => {
   const frame = useCurrentFrame();
+  const tapAt = duration - TRANSITION_FRAMES - RESPONSE_DELAY;
 
-  // 0 — общий план, 1 — приближено к месту нажатия
-  const z = interpolate(frame, [18, 42, 68, 88], [0, 1, 1, 0], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-    easing: Easing.bezier(0.45, 0, 0.55, 1),
-  });
-
-  // «Поп» кнопки, где ➕ только что сменился на ✅
-  const popScale = interpolate(frame, [8, 16, 30], [1, 1.09, 1], {
+  // «Поп» кнопки, где ➕ только что сменился на ✅ — сразу после появления экрана
+  const popScale = interpolate(frame, [3, 9, 22], [1, 1.09, 1], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
     easing: Easing.bezier(0.33, 1, 0.68, 1),
   });
-  const popGlow = interpolate(frame, [8, 16, 36], [0, 1, 0], {
+  const popGlow = interpolate(frame, [3, 9, 28], [0, 1, 0], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
@@ -44,7 +41,7 @@ export const TapStepScene: React.FC<TapStepProps> = ({
     <PhoneScreen
       frame={image}
       focus={tap}
-      scale={1 + (zoom - 1) * z}
+      scale={1}
       captionBottom={captionBottom}
     >
       {pop ? (
@@ -58,8 +55,8 @@ export const TapStepScene: React.FC<TapStepProps> = ({
           }}
         />
       ) : null}
-      <ButtonFlash rect={button} at={TAP_AT} />
-      <TapFinger point={tap} at={TAP_AT} />
+      <ButtonFlash rect={button} at={tapAt} />
+      <TapFinger point={tap} at={tapAt} />
     </PhoneScreen>
   );
 };
