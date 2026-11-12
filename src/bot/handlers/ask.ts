@@ -11,6 +11,7 @@ import { loadProfile, profileLessons } from "../../people/profile.js";
 import { aiAllowance, aiLimits } from "../../ai/limits.js";
 import type { AskMentions } from "../../ai/ask.js";
 import { teacherVishTag } from "./teachers.js";
+import { webinarTeacherVish } from "../../portal/teachers.js";
 import { showPerson, webinarRef } from "../people.js";
 import { hitLabel } from "../../people/search.js";
 import { refKey, type PersonRef } from "../../people/ref.js";
@@ -116,8 +117,8 @@ function appendMentions(ctx: BotContext, kb: InlineKeyboard, mentions: AskMentio
   const tagged = mentions.teachers.map((t) => ({ t, vish: !!teacherVishTag(ctx.deps.repo, t.id, t.name) }));
   tagged.sort((a, b) => Number(a.vish) - Number(b.vish));
   for (const { t, vish } of tagged) add(hitLabel({ role: "teacher", name: t.name, vish }), `ppo:${refKey({ kind: "teacher", id: t.id })}`);
-  // Преподаватель онлайн-пары ВИШ — всегда наш, карта для этого не нужна.
-  for (const w of mentions.webinarTeachers) add(hitLabel({ role: "teacher", name: w.name, vish: true, webinarOnly: true }), `ppo:${refKey(webinarRef(w.name))}`);
+  // Преподаватель онлайн-пары «наш», только если среди его групп есть группа ВИШ.
+  for (const w of mentions.webinarTeachers) add(hitLabel({ role: "teacher", name: w.name, vish: webinarTeacherVish(ctx.deps.repo, w.name), webinarOnly: true }), `ppo:${refKey(webinarRef(w.name))}`);
   for (const st of mentions.students) add(hitLabel({ role: "student", name: st.name, vish: true, groupTitle: st.groupTitle }), `ppo:${refKey({ kind: "student", id: st.id })}`);
   for (const key of mentions.groupKeys) {
     const g = ctx.deps.service.group(key);

@@ -127,6 +127,8 @@ export class WebinarService {
     private readonly portal: PortalClient,
     private readonly repo: Repo,
     private readonly facultyId: number,
+    /** Можно ли сейчас снимать жетон «(ВИШ)»: только в учебные недели семестра. */
+    private readonly tokenRevocable: () => boolean = () => false,
   ) {}
 
   private rowsOn(date: LocalDate): WebinarRow[] {
@@ -178,29 +180,43 @@ export class WebinarService {
   }
 
   /**
-   * Преподаватели онлайн-пар попадают в общую карту: страница вебинаров — это
-   * факультет ВИШ, поэтому все они относятся к ВИШ, даже когда учётки портала
-   * нет и полный справочник недоступен.
+   * Преподаватели онлайн-пар попадают в общую карту. Жетон «(ВИШ)» — только
+   * тем, у кого среди групп вебинаров есть группа ВИШ: на странице бывают и
+   * пары других институтов. Вебинаров с ВИШ за два месяца не осталось — в
+   * учебные недели жетон снимается, в сессию и каникулы остаётся.
    */
   syncTeacherMap(): number {
+    const revocable = this.tokenRevocable();
+    const now = new Date().toISOString();
+    const seen = new Set<string>();
     let n = 0;
     for (const t of this.teachers()) {
+      const key = teacherMapKey(null, t.name);
+      seen.add(key);
       const vishGroups = t.groups.filter(isVishGroupTitle);
+      const evidence = vishGroups.length > 0;
+      const prev = this.repo.teacherMapByKey(key);
+      const kept = !evidence && prev?.vish === true && !revocable;
       this.repo.upsertTeacherMap({
-        key: teacherMapKey(null, t.name),
+        key,
         teacherId: null,
         name: t.name,
-        vish: vishGroups.length > 0,
-        groups: vishGroups.slice(0, 40),
+        vish: evidence || kept,
+        vishSeenAt: evidence ? now : null,
+        groups: (evidence ? vishGroups : kept ? (prev?.groups ?? []) : []).slice(0, 40),
         subjects: t.subjects.slice(0, 40),
         department: null,
         degree: t.degree ?? null,
         photoUrl: null,
         photoFileId: null,
         source: "webinar",
-        checkedAt: new Date().toISOString(),
+        checkedAt: now,
       });
       n++;
+    }
+    // Кто пропал со страницы вебинаров совсем, сам уже не обновится.
+    if (revocable) {
+      for (const r of this.repo.teacherMapAll(true)) if (r.teacherId == null && r.source === "webinar" && !seen.has(r.key)) this.repo.revokeTeacherVish(r.key);
     }
     return n;
   }

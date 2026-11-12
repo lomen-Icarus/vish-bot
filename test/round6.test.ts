@@ -149,7 +149,7 @@ describe("неделя текстом", () => {
 });
 
 describe("карта преподавателей и слежение", () => {
-  it("копит пометку ВИШ и не теряет её при повторном обходе", () => {
+  it("хранит пометку ВИШ как записали: оставить или снять, решает обход, а не база", () => {
     const repo = new Repo(openDatabase(":memory:"));
     repo.seedTeacherMap("t1", 1, "Иванова И. И.");
     expect(repo.teacherMapById(1)?.vish).toBe(false);
@@ -157,9 +157,14 @@ describe("карта преподавателей и слежение", () => {
     const row = repo.teacherMapById(1)!;
     expect(row.vish).toBe(true);
     expect(row.groups).toEqual(["ВИШ-12-23"]);
-    // Повторный обход без групп (например, у преподавателя сейчас нет пар) не снимает пометку.
+    expect(row.vishSeenAt).toBeNull();
+    // Дата «видели пару ВИШ» не затирается записью без неё.
+    repo.upsertTeacherMap({ ...row, vishSeenAt: "2026-11-01T00:00:00.000Z" });
+    repo.upsertTeacherMap({ ...row, vishSeenAt: null });
+    expect(repo.teacherMapById(1)!.vishSeenAt).toBe("2026-11-01T00:00:00.000Z");
+    // Снятие жетона: обход пишет vish: false, и база больше не возвращает его сама.
     repo.upsertTeacherMap({ ...row, vish: false, groups: [], subjects: [] });
-    expect(repo.teacherMapById(1)!.vish).toBe(true);
+    expect(repo.teacherMapById(1)!.vish).toBe(false);
     // Фото помним по file_id, чтобы не качать его с портала снова.
     repo.setTeacherPhotoFileId("t1", "AgACphoto");
     expect(repo.teacherMapById(1)!.photoFileId).toBe("AgACphoto");

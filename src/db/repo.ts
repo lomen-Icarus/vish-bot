@@ -347,6 +347,8 @@ export interface TeacherMapRow {
   photoFileId: string | null;
   source: "portal" | "webinar";
   checkedAt: string | null;
+  /** Когда в последний раз видели у него пару группы ВИШ (его страница портала или вебинары). */
+  vishSeenAt?: string | null;
 }
 
 function rowToTeacherMap(r: Record<string, unknown>): TeacherMapRow {
@@ -371,6 +373,7 @@ function rowToTeacherMap(r: Record<string, unknown>): TeacherMapRow {
     photoFileId: r.photo_file_id == null || String(r.photo_file_id) === "" ? null : String(r.photo_file_id),
     source: r.source === "portal" ? "portal" : "webinar",
     checkedAt: r.checked_at == null ? null : String(r.checked_at),
+    vishSeenAt: r.vish_seen_at == null ? null : String(r.vish_seen_at),
   };
 }
 
@@ -1186,12 +1189,15 @@ export class Repo {
   upsertTeacherMap(row: TeacherMapRow): void {
     this.db
       .prepare(
-        `INSERT INTO teacher_map (key, teacher_id, name, vish, groups_json, subjects_json, department, degree, photo_url, photo_file_id, source, checked_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO teacher_map (key, teacher_id, name, vish, groups_json, subjects_json, department, degree, photo_url, photo_file_id, source, checked_at, vish_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(key) DO UPDATE SET
            teacher_id = COALESCE(excluded.teacher_id, teacher_map.teacher_id),
            name = excluded.name,
-           vish = MAX(excluded.vish, teacher_map.vish),
+           -- Жетон «(ВИШ)» записывается как есть: оставить его или снять, решает
+           -- вызывающий (он знает, идёт ли сейчас семестр), а не база.
+           vish = excluded.vish,
+           vish_seen_at = COALESCE(excluded.vish_seen_at, teacher_map.vish_seen_at),
            groups_json = excluded.groups_json,
            subjects_json = excluded.subjects_json,
            department = COALESCE(excluded.department, teacher_map.department),
@@ -1216,6 +1222,7 @@ export class Repo {
         row.photoFileId ?? null,
         row.source,
         row.checkedAt ?? nowIso(),
+        row.vishSeenAt ?? null,
       );
   }
 
@@ -1248,14 +1255,20 @@ export class Repo {
   markTeacherVish(key: string, teacherId: number | null, name: string, groups: string[]): void {
     this.db
       .prepare(
-        `INSERT INTO teacher_map (key, teacher_id, name, vish, groups_json, subjects_json, source, checked_at)
-         VALUES (?, ?, ?, 1, ?, '[]', 'portal', NULL)
+        `INSERT INTO teacher_map (key, teacher_id, name, vish, groups_json, subjects_json, source, checked_at, vish_seen_at)
+         VALUES (?, ?, ?, 1, ?, '[]', 'portal', NULL, ?)
          ON CONFLICT(key) DO UPDATE SET
            teacher_id = COALESCE(excluded.teacher_id, teacher_map.teacher_id),
            vish = 1,
+           vish_seen_at = excluded.vish_seen_at,
            groups_json = excluded.groups_json`,
       )
-      .run(key, teacherId, name, JSON.stringify(groups.slice(0, 40)));
+      .run(key, teacherId, name, JSON.stringify(groups.slice(0, 40)), nowIso());
+  }
+
+  /** Снять жетон «(ВИШ)»: пар у групп ВИШ у человека больше нет. */
+  revokeTeacherVish(key: string): void {
+    this.db.prepare("UPDATE teacher_map SET vish = 0, groups_json = '[]' WHERE key = ?").run(key);
   }
 
   /**

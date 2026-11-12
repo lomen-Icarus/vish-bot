@@ -13,7 +13,7 @@ import type { Occurrence } from "../schedule/model.js";
 import { addDays, todayMsk, type LocalDate } from "../time.js";
 import { logger } from "../logger.js";
 import type { ParsedScheduleDay } from "chuvsu-js/parsers";
-import { nameMatch, nameMatchScore, normName, shortName, type NameMatch } from "../text/match.js";
+import { nameMatch, nameMatchScore, normName, samePerson, shortName, type NameMatch } from "../text/match.js";
 import { createHash } from "node:crypto";
 import { parseGroupName } from "../schedule/groups.js";
 import type { TeacherMapRow } from "../db/repo.js";
@@ -76,6 +76,52 @@ export function teacherMapByName(repo: Pick<Repo, "teacherMapByKey">, name: stri
 export function isVishGroupTitle(title: string): boolean {
   const p = parseGroupName(title);
   return !!p && (p.prefix === "ВИШ" || p.prefix === "ОЗВИШ");
+}
+
+/**
+ * Жетон «(ВИШ)» — «ведёт пары у групп ВИШ». Выдаётся только по делу: группа
+ * ВИШ на собственной странице преподавателя или в его вебинарах. Снимается,
+ * когда проверка таких пар не нашла, — но только в учебные недели семестра.
+ *
+ * С 15-й недели (зачёты, потом сессия и каникулы) и до 3-й недели следующего
+ * семестра групп в расписании преподавателя может не быть вовсе: это не «ушёл
+ * из ВИШ», и жетоны в это время заморожены. Семестр не откалиброван — тоже.
+ */
+export const VISH_TOKEN_REVOKE_WEEKS = { from: 3, to: 14 } as const;
+
+export function vishTokenRevocable(schedule: Pick<ScheduleService, "weekInfo">, date: LocalDate = todayMsk()): boolean {
+  const week = schedule.weekInfo(date).week;
+  return week != null && week >= VISH_TOKEN_REVOKE_WEEKS.from && week <= VISH_TOKEN_REVOKE_WEEKS.to;
+}
+
+/** Жетон самого преподавателя со страницы вебинаров (строка карты по его имени, как оно там написано). */
+export function webinarTeacherVish(repo: Pick<Repo, "teacherMapByKey">, name: string, groups: string[] = []): boolean {
+  return groups.some(isVishGroupTitle) || repo.teacherMapByKey(teacherMapKey(null, name))?.vish === true;
+}
+
+/**
+ * Жетон со страницы вебинаров для человека из справочника. Вебинары знают
+ * преподавателя только по имени, часто по «Фамилия И. О.», а в университете
+ * есть и полные тёзки, и люди с одинаковыми инициалами. Если под это имя в
+ * справочнике подходит больше одного человека, жетон не наследует никто:
+ * каждый получит его только за группу ВИШ на собственной странице.
+ */
+export function webinarTokenFor(repo: Pick<Repo, "teacherMapByKey">, name: string, portalRows: () => TeacherMapRow[]): TeacherMapRow | null {
+  const row = teacherMapByName(repo, name);
+  if (!row?.vish) return null;
+  const ids = new Set<number>();
+  for (const r of portalRows()) if (r.teacherId != null && samePerson(r.name, row.name)) ids.add(r.teacherId);
+  return ids.size > 1 ? null : row;
+}
+
+/** Есть ли у человека жетон «(ВИШ)»: одна проверка для всех разделов бота. */
+export function hasVishToken(repo: Pick<Repo, "teacherMapByKey" | "teacherMapById" | "teacherMapAll">, teacherId: number | null, name: string): boolean {
+  // Преподаватель только со страницы вебинаров: его собственная строка.
+  if (teacherId == null) return teacherMapByName(repo, name)?.vish === true;
+  const row = repo.teacherMapById(teacherId);
+  if (row) return row.vish;
+  // Обход до него ещё не дошёл: жетон по вебинарам, если имя однозначно.
+  return webinarTokenFor(repo, name, () => repo.teacherMapAll()) != null;
 }
 
 export class TeacherService {
@@ -310,15 +356,21 @@ export class TeacherService {
       }
       const vishGroups = [...groups].filter(isVishGroupTitle);
       const key = teacherMapKey(teacherId, page.fullName ?? fallbackName ?? String(teacherId));
-      // Тот же человек мог прийти со страницы вебинаров (ключ по имени) — там
-      // уже известно, что он наш. Не теряем это, если сейчас у него пар нет.
-      const fromWebinars = teacherMapByName(this.repo, page.fullName ?? fallbackName ?? "");
+      // Тот же человек мог вести у ВИШ только онлайн: страница вебинаров знает
+      // его по имени. Берём это, только если имя в справочнике однозначно.
+      const fromWebinars = webinarTokenFor(this.repo, page.fullName ?? fallbackName ?? "", () => this.mapRows());
+      const evidence = vishGroups.length > 0 || fromWebinars != null;
+      // Пар ВИШ не нашлось: в учебные недели жетон снимаем, в сессию и
+      // каникулы (расписание пустое у всех) оставляем как был.
+      const prev = this.repo.teacherMapById(teacherId);
+      const kept = !evidence && prev?.vish === true && !vishTokenRevocable(this.schedule);
       this.repo.upsertTeacherMap({
         key,
         teacherId,
         name: page.fullName ?? fallbackName ?? `#${teacherId}`,
-        vish: vishGroups.length > 0 || fromWebinars?.vish === true,
-        groups: (vishGroups.length ? vishGroups : (fromWebinars?.groups ?? [])).slice(0, 40),
+        vish: evidence || kept,
+        vishSeenAt: evidence ? new Date().toISOString() : null,
+        groups: (vishGroups.length ? vishGroups : (fromWebinars?.groups ?? (kept ? (prev?.groups ?? []) : []))).slice(0, 40),
         subjects: [...subjects].slice(0, 40),
         department: page.info?.department ?? null,
         degree: page.info?.degree ?? null,
@@ -386,8 +438,7 @@ export class TeacherService {
 
   /** Ведёт ли человек у ВИШ по карте: та самая пометка «(ВИШ)» рядом с фамилией. */
   isVish(teacherId: number | null, name?: string): boolean {
-    const row = (teacherId != null ? this.repo.teacherMapById(teacherId) : null) ?? (name ? teacherMapByName(this.repo, name) : null);
-    return row?.vish === true;
+    return hasVishToken(this.repo, teacherId, name ?? "");
   }
 
   /**

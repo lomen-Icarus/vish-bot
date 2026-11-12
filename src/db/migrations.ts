@@ -589,4 +589,12 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE support_blocks ADD COLUMN ticket_id INTEGER;
   UPDATE support_blocks SET ticket_id = (SELECT MAX(id) FROM support_tickets t WHERE t.user_id = support_blocks.user_id);
   `,
+  // Жетон «(ВИШ)»: дата, когда у преподавателя в последний раз видели пару
+  // группы ВИШ. Раньше жетон наследовался по «Фамилия И. О.» и не снимался, так
+  // что часть выдана не тем: уже помеченных ставим в начало очереди обхода,
+  // он перепроверит каждого по его собственной странице.
+  `
+  ALTER TABLE teacher_map ADD COLUMN vish_seen_at TEXT;
+  UPDATE teacher_map SET checked_at = NULL WHERE vish = 1 AND teacher_id IS NOT NULL;
+  `,
 ];

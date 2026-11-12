@@ -5,7 +5,7 @@
 import { Composer } from "grammy";
 import type { BotContext } from "../context.js";
 import { BTN, btnLabels } from "../keyboards.js";
-import { teacherMapByName } from "../../portal/teachers.js";
+import { hasVishToken } from "../../portal/teachers.js";
 import { promptPeople } from "../people.js";
 import { webinarNameKey } from "../../people/ref.js";
 
@@ -29,6 +29,5 @@ export function webinarKey(name: string): string {
  * невозможно понять, кто из них ведёт у нашей школы.
  */
 export function teacherVishTag(repo: BotContext["deps"]["repo"], teacherId: number | null, name: string): string {
-  const row = (teacherId != null ? repo.teacherMapById(teacherId) : null) ?? teacherMapByName(repo, name);
-  return row?.vish ? " (ВИШ)" : "";
+  return hasVishToken(repo, teacherId, name) ? " (ВИШ)" : "";
 }

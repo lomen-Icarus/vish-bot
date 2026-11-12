@@ -11,7 +11,7 @@ import { Notifier } from "./notify/dispatcher.js";
 import { startScheduler } from "./scheduler/index.js";
 import { createPooledRenderer } from "./render/pool.js";
 import { AskService, type StudentLookup } from "./ai/ask.js";
-import { TeacherService } from "./portal/teachers.js";
+import { TeacherService, vishTokenRevocable } from "./portal/teachers.js";
 import { WebinarService } from "./portal/webinars.js";
 import { NewsScanner } from "./news/scanner.js";
 import type { Deps } from "./bot/context.js";
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   const teachers = config.PORTAL_LOGIN && config.PORTAL_PASSWORD ? new TeacherService(portal, repo, service, config.FACULTY_ID) : null;
   if (!teachers) logger.info("teacher schedules disabled: PORTAL_LOGIN/PORTAL_PASSWORD not set");
   // The webinar page is guest-readable and is the only source of teacher names without an account.
-  const webinars = new WebinarService(portal, repo, config.FACULTY_ID);
+  const webinars = new WebinarService(portal, repo, config.FACULTY_ID, () => vishTokenRevocable(service));
   // «Сыск»: файл со студентами лежит только на хостинге и в репозиторий не попадает.
   const students = config.POISK ? new StudentDirectory(config.POISK_DB) : null;
   // Узнавание по нику — отдельный файл и отдельный модуль: ники не должны

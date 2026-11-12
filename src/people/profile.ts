@@ -13,7 +13,7 @@
 import type { Deps } from "../bot/context.js";
 import type { User, WebinarRow } from "../db/repo.js";
 import type { TeacherRef } from "../portal/teachers.js";
-import { teacherMapByName } from "../portal/teachers.js";
+import { hasVishToken, webinarTeacherVish } from "../portal/teachers.js";
 import type { WebinarTeacher } from "../portal/webinars.js";
 import type { StudentRecord } from "../students/directory.js";
 import { resolveStudentGroup, whereNowText } from "../students/locate.js";
@@ -64,8 +64,7 @@ export function studentsEnabled(deps: Deps): boolean {
 }
 
 function teacherVish(deps: Deps, teacherId: number | null, name: string): boolean {
-  const row = (teacherId != null ? deps.repo.teacherMapById(teacherId) : null) ?? teacherMapByName(deps.repo, name);
-  return row?.vish === true;
+  return hasVishToken(deps.repo, teacherId, name);
 }
 
 function joinParts(parts: Array<string | null | undefined>): string {
@@ -108,13 +107,15 @@ async function webinarProfile(deps: Deps, key: string): Promise<PersonProfile | 
       logger.debug({ err: String(err) }, "people: webinar teacher lookup in the directory failed");
     }
   }
+  // На странице вебинаров бывают пары и других институтов: «наш» — только тот,
+  // у кого среди групп есть группа ВИШ.
+  const vish = webinarTeacherVish(deps.repo, w.name, w.groups);
   return {
     ref: { kind: "webinar", key },
     role: "teacher",
     name: w.name,
-    // Страница вебинаров — факультет ВИШ: все, кто там ведёт, — наши.
-    vish: true,
-    subtitle: joinParts(["Преподаватель ВИШ", w.position, w.degree]),
+    vish,
+    subtitle: joinParts([vish ? "Преподаватель ВИШ" : "Преподаватель", w.position, w.degree]),
     note: deps.teachers ? "В справочнике портала не нашёлся — видны только онлайн-пары." : "Видны только онлайн-пары: очные пары портал показывает лишь с учёткой.",
     webinar: w,
   };

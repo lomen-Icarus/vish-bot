@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-07",
+ "updated": "2026-11-12",
  "groups": [
   {
    "id": "base",
@@ -2310,6 +2310,21 @@
    "review": {
     "claude": "none",
     "author": "ok",
+    "senior": "none"
+   }
+  },
+  {
+   "id": "adr-149",
+   "adr": 149,
+   "date": "2026-11-12",
+   "group": "people",
+   "kind": "fix",
+   "title": "Жетон «(ВИШ)» только по делу",
+   "text": "Пометка ставится за пары у групп ВИШ, тёзкам не достаётся, на сессию и каникулы сохраняется.",
+   "status": "progress",
+   "review": {
+    "claude": "none",
+    "author": "none",
     "senior": "none"
    }
   },

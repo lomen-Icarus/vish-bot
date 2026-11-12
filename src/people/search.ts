@@ -12,7 +12,7 @@
 import type { Deps } from "../bot/context.js";
 import { shortName, samePerson } from "../text/match.js";
 import { todayMsk } from "../time.js";
-import { teacherMapByName } from "../portal/teachers.js";
+import { hasVishToken, webinarTeacherVish } from "../portal/teachers.js";
 import { studentsEnabled } from "./profile.js";
 import { shortGroupTitle } from "../schedule/groups.js";
 import { webinarNameKey, type PersonRef, type PersonRole } from "./ref.js";
@@ -55,8 +55,7 @@ export interface PeopleSearchOptions {
 }
 
 function teacherVish(deps: Deps, teacherId: number | null, name: string): boolean {
-  const row = (teacherId != null ? deps.repo.teacherMapById(teacherId) : null) ?? teacherMapByName(deps.repo, name);
-  return row?.vish === true;
+  return hasVishToken(deps.repo, teacherId, name);
 }
 
 /** Можно ли этому человеку сейчас искать студентов (дневной лимит; админы без лимита). */
@@ -80,7 +79,7 @@ export async function searchPeople(deps: Deps, query: string, opts: PeopleSearch
     }
     for (const w of deps.webinars?.searchScored(q, 5) ?? []) {
       if (hits.some((h) => h.role === "teacher" && samePerson(h.name, w.teacher.name))) continue;
-      hits.push({ ref: { kind: "webinar", key: webinarNameKey(w.teacher.name) }, role: "teacher", name: w.teacher.name, fuzzy: w.fuzzy, score: w.score, vish: true, webinarOnly: true });
+      hits.push({ ref: { kind: "webinar", key: webinarNameKey(w.teacher.name) }, role: "teacher", name: w.teacher.name, fuzzy: w.fuzzy, score: w.score, vish: webinarTeacherVish(deps.repo, w.teacher.name, w.teacher.groups), webinarOnly: true });
     }
   }
 
@@ -136,7 +135,7 @@ function shortGroup(title: string | undefined): string {
 
 /** Подпись кнопки с человеком — одна и та же в любом разделе бота. */
 export function hitLabel(h: Pick<PersonHit, "role" | "name" | "vish" | "webinarOnly" | "groupTitle">): string {
-  if (h.role === "teacher") return `👨‍🏫 ${h.name}${h.vish ? (h.webinarOnly ? " (ВИШ, дистант)" : " (ВИШ)") : ""}`.slice(0, 60);
+  if (h.role === "teacher") return `👨‍🏫 ${h.name}${h.vish ? (h.webinarOnly ? " (ВИШ, дистант)" : " (ВИШ)") : h.webinarOnly ? " (дистант)" : ""}`.slice(0, 60);
   return `🎓 ${h.name} · ${shortGroup(h.groupTitle)}`.slice(0, 60);
 }
 
